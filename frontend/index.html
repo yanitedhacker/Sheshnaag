@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CVE Threat Radar - AI-Driven Vulnerability Intelligence</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        [x-cloak] { display: none !important; }
+        .gradient-bg {
+            background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%);
+        }
+        .card-gradient {
+            background: linear-gradient(180deg, rgba(30, 27, 75, 0.9) 0%, rgba(49, 46, 129, 0.6) 100%);
+        }
+        .glow-critical { box-shadow: 0 0 20px rgba(239, 68, 68, 0.3); }
+        .glow-high { box-shadow: 0 0 20px rgba(249, 115, 22, 0.3); }
+        .pulse-dot {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen text-gray-100">
+    <div x-data="dashboard()" x-init="init()" class="min-h-screen">
+        <!-- Header -->
+        <header class="border-b border-indigo-800/50 bg-indigo-950/50 backdrop-blur-sm sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-gradient-to-br from-red-500 to-orange-500 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-radar text-white text-lg"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-xl font-bold text-white">CVE Threat Radar</h1>
+                            <p class="text-xs text-indigo-300">AI-Driven Vulnerability Intelligence</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <button @click="syncFeeds()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition flex items-center space-x-2">
+                            <i class="fas fa-sync" :class="syncing ? 'animate-spin' : ''"></i>
+                            <span>Sync Feeds</span>
+                        </button>
+                        <div class="flex items-center space-x-2 text-sm text-indigo-300">
+                            <span class="w-2 h-2 bg-green-400 rounded-full pulse-dot"></span>
+                            <span>Live</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-7xl mx-auto px-4 py-6">
+            <!-- Stats Row -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <!-- Total CVEs -->
+                <div class="card-gradient rounded-xl p-4 border border-indigo-800/30">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-indigo-300 text-sm">Total CVEs</p>
+                            <p class="text-2xl font-bold text-white" x-text="stats.total_cves || '—'"></p>
+                        </div>
+                        <div class="w-12 h-12 bg-indigo-600/30 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-database text-indigo-400 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Critical -->
+                <div class="card-gradient rounded-xl p-4 border border-red-800/30 glow-critical">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-red-300 text-sm">Critical</p>
+                            <p class="text-2xl font-bold text-red-400" x-text="riskSummary.risk_level_distribution?.CRITICAL || 0"></p>
+                        </div>
+                        <div class="w-12 h-12 bg-red-600/30 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-exclamation-triangle text-red-400 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- High -->
+                <div class="card-gradient rounded-xl p-4 border border-orange-800/30 glow-high">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-orange-300 text-sm">High Risk</p>
+                            <p class="text-2xl font-bold text-orange-400" x-text="riskSummary.risk_level_distribution?.HIGH || 0"></p>
+                        </div>
+                        <div class="w-12 h-12 bg-orange-600/30 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-bolt text-orange-400 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- With Exploits -->
+                <div class="card-gradient rounded-xl p-4 border border-purple-800/30">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-purple-300 text-sm">With Exploits</p>
+                            <p class="text-2xl font-bold text-purple-400" x-text="riskSummary.cves_with_exploits || 0"></p>
+                        </div>
+                        <div class="w-12 h-12 bg-purple-600/30 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-bug text-purple-400 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column: Top Priorities -->
+                <div class="lg:col-span-2">
+                    <div class="card-gradient rounded-xl border border-indigo-800/30">
+                        <div class="p-4 border-b border-indigo-800/30">
+                            <h2 class="text-lg font-semibold text-white flex items-center">
+                                <i class="fas fa-list-ol text-orange-400 mr-2"></i>
+                                Top Patch Priorities
+                            </h2>
+                        </div>
+                        <div class="p-4">
+                            <div class="space-y-3">
+                                <template x-for="(cve, index) in topPriorities" :key="cve.cve_id">
+                                    <div class="bg-indigo-900/30 rounded-lg p-4 hover:bg-indigo-900/50 transition cursor-pointer" @click="showCveDetail(cve.cve_id)">
+                                        <div class="flex items-start justify-between">
+                                            <div class="flex items-start space-x-3">
+                                                <span class="w-8 h-8 bg-indigo-700/50 rounded-lg flex items-center justify-center text-sm font-bold text-indigo-200" x-text="index + 1"></span>
+                                                <div>
+                                                    <div class="flex items-center space-x-2">
+                                                        <span class="font-mono font-semibold text-white" x-text="cve.cve_id"></span>
+                                                        <span class="px-2 py-0.5 text-xs rounded-full font-medium"
+                                                            :class="{
+                                                                'bg-red-500/20 text-red-400': cve.risk_level === 'CRITICAL',
+                                                                'bg-orange-500/20 text-orange-400': cve.risk_level === 'HIGH',
+                                                                'bg-yellow-500/20 text-yellow-400': cve.risk_level === 'MEDIUM',
+                                                                'bg-green-500/20 text-green-400': cve.risk_level === 'LOW'
+                                                            }"
+                                                            x-text="cve.risk_level">
+                                                        </span>
+                                                        <span x-show="cve.exploit_available" class="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full">
+                                                            <i class="fas fa-bug mr-1"></i>Exploit
+                                                        </span>
+                                                    </div>
+                                                    <p class="text-sm text-indigo-300 mt-1 line-clamp-2" x-text="cve.description"></p>
+                                                </div>
+                                            </div>
+                                            <div class="text-right">
+                                                <div class="text-2xl font-bold"
+                                                    :class="{
+                                                        'text-red-400': cve.overall_risk_score >= 80,
+                                                        'text-orange-400': cve.overall_risk_score >= 60 && cve.overall_risk_score < 80,
+                                                        'text-yellow-400': cve.overall_risk_score >= 40 && cve.overall_risk_score < 60,
+                                                        'text-green-400': cve.overall_risk_score < 40
+                                                    }"
+                                                    x-text="Math.round(cve.overall_risk_score)">
+                                                </div>
+                                                <div class="text-xs text-indigo-400">Risk Score</div>
+                                            </div>
+                                        </div>
+                                        <div class="mt-3 flex items-center space-x-4 text-xs text-indigo-400">
+                                            <span><i class="fas fa-shield mr-1"></i>CVSS: <span x-text="cve.cvss_score || 'N/A'"></span></span>
+                                            <span><i class="fas fa-percentage mr-1"></i>Exploit Prob: <span x-text="(cve.exploit_probability * 100).toFixed(0) + '%'"></span></span>
+                                        </div>
+                                    </div>
+                                </template>
+                                <div x-show="topPriorities.length === 0" class="text-center py-8 text-indigo-400">
+                                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                                    <p>No CVE data available. Click "Sync Feeds" to fetch data.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Charts & Info -->
+                <div class="space-y-6">
+                    <!-- Risk Distribution Chart -->
+                    <div class="card-gradient rounded-xl border border-indigo-800/30 p-4">
+                        <h3 class="text-sm font-semibold text-white mb-4 flex items-center">
+                            <i class="fas fa-chart-pie text-indigo-400 mr-2"></i>
+                            Risk Distribution
+                        </h3>
+                        <canvas id="riskChart" height="200"></canvas>
+                    </div>
+
+                    <!-- Exploit Probability -->
+                    <div class="card-gradient rounded-xl border border-indigo-800/30 p-4">
+                        <h3 class="text-sm font-semibold text-white mb-4 flex items-center">
+                            <i class="fas fa-crosshairs text-red-400 mr-2"></i>
+                            Avg. Exploit Probability
+                        </h3>
+                        <div class="flex items-center justify-center">
+                            <div class="relative w-32 h-32">
+                                <svg class="w-full h-full transform -rotate-90">
+                                    <circle cx="64" cy="64" r="56" stroke="currentColor" stroke-width="8" fill="none" class="text-indigo-900/50"></circle>
+                                    <circle cx="64" cy="64" r="56" stroke="currentColor" stroke-width="8" fill="none" 
+                                        class="text-orange-500"
+                                        :stroke-dasharray="2 * Math.PI * 56"
+                                        :stroke-dashoffset="2 * Math.PI * 56 * (1 - (riskSummary.average_exploit_probability || 0))">
+                                    </circle>
+                                </svg>
+                                <div class="absolute inset-0 flex items-center justify-center">
+                                    <span class="text-2xl font-bold text-white" x-text="((riskSummary.average_exploit_probability || 0) * 100).toFixed(1) + '%'"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity -->
+                    <div class="card-gradient rounded-xl border border-indigo-800/30 p-4">
+                        <h3 class="text-sm font-semibold text-white mb-4 flex items-center">
+                            <i class="fas fa-clock text-green-400 mr-2"></i>
+                            Recent Critical CVEs (7 days)
+                        </h3>
+                        <div class="text-center">
+                            <span class="text-4xl font-bold text-green-400" x-text="riskSummary.recent_critical_cves || 0"></span>
+                            <p class="text-sm text-indigo-400 mt-1">New critical vulnerabilities</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CVE Search Section -->
+            <div class="mt-6 card-gradient rounded-xl border border-indigo-800/30">
+                <div class="p-4 border-b border-indigo-800/30">
+                    <h2 class="text-lg font-semibold text-white flex items-center">
+                        <i class="fas fa-search text-blue-400 mr-2"></i>
+                        Search CVEs
+                    </h2>
+                </div>
+                <div class="p-4">
+                    <div class="flex space-x-4">
+                        <input type="text" x-model="searchQuery" @keyup.enter="searchCves()"
+                            placeholder="Search by CVE ID, keyword, or product..."
+                            class="flex-1 bg-indigo-900/30 border border-indigo-700/50 rounded-lg px-4 py-2 text-white placeholder-indigo-400 focus:outline-none focus:border-indigo-500">
+                        <select x-model="searchRiskLevel" class="bg-indigo-900/30 border border-indigo-700/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500">
+                            <option value="">All Risk Levels</option>
+                            <option value="CRITICAL">Critical</option>
+                            <option value="HIGH">High</option>
+                            <option value="MEDIUM">Medium</option>
+                            <option value="LOW">Low</option>
+                        </select>
+                        <button @click="searchCves()" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition">
+                            Search
+                        </button>
+                    </div>
+                    
+                    <!-- Search Results -->
+                    <div x-show="searchResults.length > 0" class="mt-4 space-y-2">
+                        <template x-for="result in searchResults" :key="result.cve_id">
+                            <div class="bg-indigo-900/20 rounded-lg p-3 hover:bg-indigo-900/40 transition cursor-pointer" @click="showCveDetail(result.cve_id)">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center space-x-3">
+                                        <span class="font-mono font-medium text-white" x-text="result.cve_id"></span>
+                                        <span class="px-2 py-0.5 text-xs rounded-full"
+                                            :class="{
+                                                'bg-red-500/20 text-red-400': result.risk?.risk_level === 'CRITICAL',
+                                                'bg-orange-500/20 text-orange-400': result.risk?.risk_level === 'HIGH',
+                                                'bg-yellow-500/20 text-yellow-400': result.risk?.risk_level === 'MEDIUM',
+                                                'bg-green-500/20 text-green-400': result.risk?.risk_level === 'LOW',
+                                                'bg-gray-500/20 text-gray-400': !result.risk?.risk_level
+                                            }"
+                                            x-text="result.risk?.risk_level || 'UNSCORED'">
+                                        </span>
+                                    </div>
+                                    <span class="text-sm text-indigo-400" x-text="'CVSS: ' + (result.cvss_v3_score || 'N/A')"></span>
+                                </div>
+                                <p class="text-sm text-indigo-300 mt-1 line-clamp-1" x-text="result.description"></p>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- CVE Detail Modal -->
+        <div x-show="showModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="showModal = false">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-black/70" @click="showModal = false"></div>
+                <div class="relative bg-indigo-950 rounded-xl max-w-2xl w-full border border-indigo-800/50 shadow-2xl">
+                    <div class="p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-xl font-bold text-white" x-text="selectedCve?.cve_id"></h3>
+                            <button @click="showModal = false" class="text-indigo-400 hover:text-white">
+                                <i class="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+                        
+                        <div x-show="selectedCve" class="space-y-4">
+                            <!-- Risk Score -->
+                            <div class="bg-indigo-900/30 rounded-lg p-4">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <span class="text-sm text-indigo-400">Risk Score</span>
+                                        <div class="text-3xl font-bold"
+                                            :class="{
+                                                'text-red-400': selectedCve?.risk?.overall_score >= 80,
+                                                'text-orange-400': selectedCve?.risk?.overall_score >= 60,
+                                                'text-yellow-400': selectedCve?.risk?.overall_score >= 40,
+                                                'text-green-400': selectedCve?.risk?.overall_score < 40
+                                            }"
+                                            x-text="selectedCve?.risk?.overall_score?.toFixed(1) || 'N/A'">
+                                        </div>
+                                    </div>
+                                    <span class="px-3 py-1 text-sm rounded-full font-medium"
+                                        :class="{
+                                            'bg-red-500/20 text-red-400': selectedCve?.risk?.risk_level === 'CRITICAL',
+                                            'bg-orange-500/20 text-orange-400': selectedCve?.risk?.risk_level === 'HIGH',
+                                            'bg-yellow-500/20 text-yellow-400': selectedCve?.risk?.risk_level === 'MEDIUM',
+                                            'bg-green-500/20 text-green-400': selectedCve?.risk?.risk_level === 'LOW'
+                                        }"
+                                        x-text="selectedCve?.risk?.risk_level || 'UNSCORED'">
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Description -->
+                            <div>
+                                <h4 class="text-sm font-medium text-indigo-400 mb-2">Description</h4>
+                                <p class="text-sm text-indigo-200" x-text="selectedCve?.description"></p>
+                            </div>
+
+                            <!-- Details Grid -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="bg-indigo-900/20 rounded-lg p-3">
+                                    <span class="text-xs text-indigo-400">CVSS v3 Score</span>
+                                    <p class="text-lg font-semibold text-white" x-text="selectedCve?.cvss_v3_score || 'N/A'"></p>
+                                </div>
+                                <div class="bg-indigo-900/20 rounded-lg p-3">
+                                    <span class="text-xs text-indigo-400">Exploit Probability</span>
+                                    <p class="text-lg font-semibold text-white" x-text="((selectedCve?.risk?.exploit_probability || 0) * 100).toFixed(1) + '%'"></p>
+                                </div>
+                                <div class="bg-indigo-900/20 rounded-lg p-3">
+                                    <span class="text-xs text-indigo-400">Attack Vector</span>
+                                    <p class="text-lg font-semibold text-white" x-text="selectedCve?.attack_vector || 'N/A'"></p>
+                                </div>
+                                <div class="bg-indigo-900/20 rounded-lg p-3">
+                                    <span class="text-xs text-indigo-400">Published</span>
+                                    <p class="text-lg font-semibold text-white" x-text="selectedCve?.published_date?.split('T')[0] || 'N/A'"></p>
+                                </div>
+                            </div>
+
+                            <!-- Explanation -->
+                            <div x-show="selectedCve?.risk?.explanation">
+                                <h4 class="text-sm font-medium text-indigo-400 mb-2">AI Explanation</h4>
+                                <p class="text-sm text-indigo-200 bg-indigo-900/20 rounded-lg p-3" x-text="selectedCve?.risk?.explanation"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        function dashboard() {
+            return {
+                stats: {},
+                riskSummary: {},
+                topPriorities: [],
+                searchResults: [],
+                searchQuery: '',
+                searchRiskLevel: '',
+                syncing: false,
+                showModal: false,
+                selectedCve: null,
+                riskChart: null,
+
+                async init() {
+                    await this.loadDashboard();
+                    this.initCharts();
+                },
+
+                async loadDashboard() {
+                    try {
+                        const response = await fetch(`${API_BASE}/api/dashboard`);
+                        const data = await response.json();
+                        
+                        this.stats = data.cve_statistics || {};
+                        this.riskSummary = data.risk_summary || {};
+                        this.topPriorities = data.top_priorities || [];
+                        
+                        this.updateCharts();
+                    } catch (error) {
+                        console.error('Failed to load dashboard:', error);
+                    }
+                },
+
+                async syncFeeds() {
+                    this.syncing = true;
+                    try {
+                        await fetch(`${API_BASE}/api/feeds/sync/cves?days=7`, { method: 'POST' });
+                        await fetch(`${API_BASE}/api/risk/calculate`, { method: 'POST' });
+                        await this.loadDashboard();
+                    } catch (error) {
+                        console.error('Sync failed:', error);
+                    }
+                    this.syncing = false;
+                },
+
+                async searchCves() {
+                    try {
+                        let url = `${API_BASE}/api/cves/?page_size=10`;
+                        if (this.searchQuery) url += `&keyword=${encodeURIComponent(this.searchQuery)}`;
+                        if (this.searchRiskLevel) url += `&risk_level=${this.searchRiskLevel}`;
+                        
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        this.searchResults = data.results || [];
+                    } catch (error) {
+                        console.error('Search failed:', error);
+                    }
+                },
+
+                async showCveDetail(cveId) {
+                    try {
+                        const response = await fetch(`${API_BASE}/api/cves/${cveId}`);
+                        this.selectedCve = await response.json();
+                        this.showModal = true;
+                    } catch (error) {
+                        console.error('Failed to load CVE details:', error);
+                    }
+                },
+
+                initCharts() {
+                    const ctx = document.getElementById('riskChart').getContext('2d');
+                    this.riskChart = new Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Critical', 'High', 'Medium', 'Low'],
+                            datasets: [{
+                                data: [0, 0, 0, 0],
+                                backgroundColor: [
+                                    'rgba(239, 68, 68, 0.8)',
+                                    'rgba(249, 115, 22, 0.8)',
+                                    'rgba(234, 179, 8, 0.8)',
+                                    'rgba(34, 197, 94, 0.8)'
+                                ],
+                                borderWidth: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: { color: '#a5b4fc' }
+                                }
+                            }
+                        }
+                    });
+                },
+
+                updateCharts() {
+                    if (this.riskChart && this.riskSummary.risk_level_distribution) {
+                        const dist = this.riskSummary.risk_level_distribution;
+                        this.riskChart.data.datasets[0].data = [
+                            dist.CRITICAL || 0,
+                            dist.HIGH || 0,
+                            dist.MEDIUM || 0,
+                            dist.LOW || 0
+                        ];
+                        this.riskChart.update();
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+</html>

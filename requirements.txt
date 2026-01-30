@@ -1,0 +1,50 @@
+# ===========================================
+# CVE Threat Radar - Requirements
+# ===========================================
+
+# Core Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# Database
+sqlalchemy>=2.0.30
+aiosqlite>=0.20.0
+
+# Data Validation
+pydantic>=2.8.0
+pydantic-settings>=2.3.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# HTTP Clients
+requests>=2.32.0
+aiohttp>=3.10.0
+
+# HTML Parsing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# ===========================================
+# Machine Learning
+# ===========================================
+numpy>=2.0.0
+pandas>=2.2.0
+scikit-learn>=1.5.0
+xgboost>=2.0.0
+shap>=0.45.0
+joblib>=1.4.0
+
+# ===========================================
+# Monitoring & Utilities
+# ===========================================
+prometheus-client>=0.20.0
+structlog>=24.1.0
+
+# ===========================================
+# Development & Testing
+# ===========================================
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+httpx>=0.27.0
