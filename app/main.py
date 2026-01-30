@@ -1,15 +1,46 @@
-"""Main FastAPI application."""
+"""
+Main FastAPI application.
+
+Author: Archishman Paul
+
+===========================================================================
+   ______     ______     ______     ______   __  __     ______     ______  
+  /\  ___\   /\  == \   /\  ___\   /\__  _\ /\ \_\ \   /\  == \   /\  ___\ 
+  \ \ \____  \ \  __<   \ \  __\   \/_/\ \/ \ \  __ \  \ \  __<   \ \ \____ 
+   \ \_____\  \ \_____\  \ \_____\    \ \_\  \ \_\ \_\  \ \_\ \_\  \ \_____\\
+    \/_____/   \/_____/   \/_____/     \/_/   \/_/\/_/   \/_/ /_/   \/_____/
+                                                                            
+           T H R E A T   R A D A R   -   A I   P O W E R E D
+===========================================================================
+
+Welcome to CVE Threat Radar!
+
+This is where everything comes together - the API endpoints, the ML models,
+the database, and the dashboard. FastAPI was chosen for its async support,
+automatic OpenAPI docs, and blazing fast performance.
+
+Built with passion by Archishman Paul.
+===========================================================================
+"""
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from prometheus_client import make_asgi_app
 
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.api.routes import cve_router, risk_router, asset_router, feed_router
+
+# Get project root directory
+PROJECT_ROOT = Path(__file__).parent.parent
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 # Configure logging
 logging.basicConfig(
@@ -72,6 +103,19 @@ app.include_router(cve_router)
 app.include_router(risk_router)
 app.include_router(asset_router)
 app.include_router(feed_router)
+
+# Mount static files for frontend
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+
+@app.get("/dashboard", tags=["Frontend"])
+async def serve_dashboard():
+    """Serve the frontend dashboard."""
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return {"error": "Dashboard not found"}
 
 
 @app.get("/", tags=["Health"])

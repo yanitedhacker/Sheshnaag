@@ -1,4 +1,22 @@
-"""Feature engineering for CVE risk prediction."""
+"""
+Feature engineering for CVE risk prediction.
+
+Author: Archishman Paul
+
+This is where the magic happens. After spending way too many hours reading 
+security research papers and analyzing real-world exploit patterns, I 
+distilled everything into 40+ features that actually matter.
+
+The key insight? CVSS scores alone are terrible predictors. What really 
+matters is the combination of:
+  - How easy is it to exploit? (attack complexity, privileges needed)
+  - Is there already exploit code in the wild?
+  - How many systems are affected?
+  - Is this a "sexy" vulnerability type that attackers love? (RCE, SQLi, etc.)
+
+Feature engineering is an art. These features represent my understanding 
+of what makes a vulnerability dangerous in practice, not just in theory.
+"""
 
 import logging
 from datetime import datetime, timedelta

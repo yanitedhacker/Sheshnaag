@@ -1,4 +1,22 @@
-"""SHAP-based explainability for risk predictions."""
+"""
+SHAP-based explainability for risk predictions.
+
+Author: Archishman Paul
+
+"Why is this CVE high risk?" 
+
+That's the question every security analyst asks when they see a score.
+A black-box model that just spits out numbers isn't useful in the real 
+world. Security teams need to understand WHY so they can:
+  - Validate the model's reasoning
+  - Explain to management why patching is urgent
+  - Build trust in AI-driven recommendations
+
+SHAP (SHapley Additive exPlanations) gives us exactly that. For every 
+prediction, we can show which features pushed the risk up or down.
+
+This module is my answer to the "explainable AI" challenge in security.
+"""
 
 import logging
 from typing import Dict, Any, List, Optional

@@ -1,4 +1,26 @@
-"""Risk aggregation engine for prioritizing CVE patches."""
+"""
+Risk aggregation engine for prioritizing CVE patches.
+
+Author: Archishman Paul
+
+This is the command center. All the ML predictions, feature scores, and 
+business context come together here to produce a single, actionable 
+priority list.
+
+The philosophy is simple: a vulnerability's risk isn't just about its 
+CVSS score. It's about:
+  - Likelihood of exploitation (our ML prediction)
+  - Impact if exploited (CVSS helps here)
+  - Exposure in YOUR environment (asset context)
+  - How long it's been in the wild (temporal factors)
+
+I weighted these factors based on what I've learned from security 
+practitioners. The weights are configurable, but the defaults reflect 
+real-world prioritization needs.
+
+The goal? Help security teams sleep better at night by patching what 
+actually matters first.
+"""
 
 import logging
 from datetime import datetime

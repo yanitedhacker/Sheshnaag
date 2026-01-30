@@ -1,4 +1,21 @@
-"""NVD (National Vulnerability Database) API client."""
+"""
+NVD (National Vulnerability Database) API client.
+
+Author: Archishman Paul
+
+The NVD is the gold standard for vulnerability data. This client handles 
+all the quirks of their API:
+  - Rate limiting (6 seconds between requests without API key)
+  - Pagination for large result sets
+  - CVSS vector parsing
+  - CPE (product identifier) extraction
+
+Pro tip: Get an NVD API key! It increases your rate limit by 10x.
+https://nvd.nist.gov/developers/request-an-api-key
+
+Fun fact: I wrote this client at 2 AM after discovering that the NVD API 
+returns dates in a format that Python's datetime doesn't like by default.
+"""
 
 import asyncio
 import logging

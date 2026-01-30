@@ -1,4 +1,15 @@
-"""Application configuration settings."""
+"""
+Application configuration settings.
+
+Author: Archishman Paul
+
+Configuration management done right. All settings are loaded from 
+environment variables with sensible defaults for development.
+
+The 12-factor app methodology recommends separating config from code.
+This module follows that principle - no hardcoded secrets, no 
+environment-specific logic scattered across the codebase.
+"""
 
 from functools import lru_cache
 from pydantic_settings import BaseSettings

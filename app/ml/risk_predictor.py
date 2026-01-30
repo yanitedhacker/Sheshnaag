@@ -1,4 +1,22 @@
-"""ML model for predicting CVE exploit risk."""
+"""
+ML model for predicting CVE exploit risk.
+
+Author: Archishman Paul
+
+This module is the brain of the operation. After experimenting with 
+Random Forests, SVMs, Neural Networks, and even some exotic ensemble 
+methods, XGBoost emerged as the clear winner for this problem.
+
+Why XGBoost? 
+  1. Handles the mixed feature types (categorical + numerical) gracefully
+  2. Built-in feature importance for explainability
+  3. Fast inference for real-time API responses
+  4. Robust to the imbalanced nature of exploit data
+
+The heuristic fallback isn't a cop-out—it's battle-tested domain knowledge 
+that works remarkably well when the ML model hasn't been trained yet.
+Sometimes the simplest solution is the right one.
+"""
 
 import logging
 import os

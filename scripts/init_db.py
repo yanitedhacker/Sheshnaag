@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""Initialize database and create sample data."""
+"""
+Initialize database and create sample data.
+
+Author: Archishman Paul
+
+This script sets up everything you need to get started:
+  1. Creates all database tables
+  2. Populates sample CVE data (real CVE IDs with realistic data)
+  3. Creates sample assets to demonstrate vulnerability mapping
+  4. Calculates initial risk scores
+
+The sample CVEs are based on real high-profile vulnerabilities that made 
+headlines. I picked these specifically because they represent different 
+attack patterns and severity levels - good for demonstrating the ML model's 
+ability to differentiate risk.
+
+Run this once after cloning, and you're ready to go!
+"""
 
 import sys
 import os
