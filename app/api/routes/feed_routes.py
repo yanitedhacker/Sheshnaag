@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_sync_session
+from app.core.security import require_scope
 from app.ingestion.feed_aggregator import FeedAggregator
+from app.models.ops import FeedSyncState
 
 router = APIRouter(prefix="/api/feeds", tags=["Threat Feeds"])
 
@@ -20,7 +22,7 @@ class SyncResponse(BaseModel):
     results: Optional[dict] = None
 
 
-@router.post("/sync/cves")
+@router.post("/sync/cves", dependencies=[Depends(require_scope("admin"))])
 async def sync_cves(
     days: int = Query(7, ge=1, le=90, description="Number of days to sync"),
     session: Session = Depends(get_sync_session)
@@ -43,7 +45,7 @@ async def sync_cves(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/sync/exploits")
+@router.post("/sync/exploits", dependencies=[Depends(require_scope("admin"))])
 async def sync_exploits(
     cve_ids: Optional[list] = None,
     session: Session = Depends(get_sync_session)
@@ -66,7 +68,7 @@ async def sync_exploits(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/sync/full")
+@router.post("/sync/full", dependencies=[Depends(require_scope("admin"))])
 async def full_sync(
     days: int = Query(30, ge=1, le=365, description="Number of days to sync"),
     session: Session = Depends(get_sync_session)
@@ -84,6 +86,27 @@ async def full_sync(
             "status": "completed",
             "message": "Full sync completed",
             "results": results
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/incremental", dependencies=[Depends(require_scope("admin"))])
+async def incremental_sync(
+    days: int = Query(7, ge=1, le=90, description="Lookback window for CVEs"),
+    exploit_limit: int = Query(2000, ge=100, le=10000, description="Max exploit records"),
+    session: Session = Depends(get_sync_session),
+):
+    """
+    Incremental sync using persisted cursors for NVD and Exploit-DB.
+    """
+    aggregator = FeedAggregator(session)
+    try:
+        results = await aggregator.sync_with_state(days=days, exploit_limit=exploit_limit)
+        return {
+            "status": "completed",
+            "message": "Incremental sync completed",
+            "results": results,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -119,12 +142,24 @@ def get_feed_status(
         func.count(CVE.id)
     ).group_by(CVE.source).all()
     
+    sync_states = session.query(FeedSyncState).all()
     return {
         "total_cves": total_cves,
         "total_exploits": total_exploits,
         "latest_cve_update": latest_cve.isoformat() if latest_cve else None,
         "latest_exploit_update": latest_exploit.isoformat() if latest_exploit else None,
         "cves_by_source": {source: count for source, count in cves_by_source},
+        "sync_state": [
+            {
+                "source": s.source,
+                "status": s.status,
+                "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None,
+                "last_success_at": s.last_success_at.isoformat() if s.last_success_at else None,
+                "cursor": s.cursor,
+                "last_error": s.last_error,
+            }
+            for s in sync_states
+        ],
         "status": "healthy" if total_cves > 0 else "empty",
         "checked_at": datetime.utcnow().isoformat()
     }

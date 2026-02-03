@@ -1,0 +1,30 @@
+# Python virtualenvs (huge, never needed in image build)
+venv/
+.venv/
+
+# Python caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Tests, local tooling, and outputs
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local runtime/artifacts
+logs/
+*.log
+
+# Project docs and perf lab artifacts not needed in image
+lab/
+

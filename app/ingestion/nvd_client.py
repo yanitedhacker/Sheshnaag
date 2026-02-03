@@ -102,10 +102,10 @@ class NVDClient:
                 logger.error("NVD API request timeout")
                 raise
     
-    async def fetch_recent_cves(self, days: int = 7) -> List[Dict[str, Any]]:
-        """Fetch CVEs modified in the last N days."""
+    async def fetch_recent_cves(self, days: int = 7, since: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """Fetch CVEs modified in the last N days or since a given timestamp."""
         end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=days)
+        start_date = since or (end_date - timedelta(days=days))
         
         all_cves = []
         start_index = 0
@@ -127,7 +127,7 @@ class NVDClient:
             start_index += len(vulnerabilities)
             await asyncio.sleep(self.RATE_LIMIT_DELAY)
         
-        logger.info(f"Fetched {len(all_cves)} CVEs from last {days} days")
+        logger.info(f"Fetched {len(all_cves)} CVEs since {start_date.isoformat()}")
         return all_cves
     
     def parse_cve(self, nvd_cve: Dict[str, Any]) -> Dict[str, Any]:
@@ -281,29 +281,31 @@ class NVDClient:
             session.add(cve)
             session.flush()  # Get the ID
         
-        # Update references
-        if not existing_cve:
-            for ref_data in parsed_cve.get("references", []):
-                ref = CVEReference(
-                    cve_id=cve.id,
-                    url=ref_data["url"],
-                    source=ref_data["source"],
-                    tags=ref_data["tags"]
-                )
-                session.add(ref)
-        
-        # Update affected products
-        if not existing_cve:
-            for prod_data in parsed_cve.get("affected_products", []):
-                prod = AffectedProduct(
-                    cve_id=cve.id,
-                    vendor=prod_data["vendor"],
-                    product=prod_data["product"],
-                    version=prod_data["version"],
-                    version_start=prod_data["version_start"],
-                    version_end=prod_data["version_end"],
-                    cpe_uri=prod_data["cpe_uri"]
-                )
-                session.add(prod)
+        # Update references (replace for idempotency)
+        if existing_cve:
+            session.query(CVEReference).filter(CVEReference.cve_id == cve.id).delete()
+        for ref_data in parsed_cve.get("references", []):
+            ref = CVEReference(
+                cve_id=cve.id,
+                url=ref_data["url"],
+                source=ref_data["source"],
+                tags=ref_data["tags"]
+            )
+            session.add(ref)
+
+        # Update affected products (replace for idempotency)
+        if existing_cve:
+            session.query(AffectedProduct).filter(AffectedProduct.cve_id == cve.id).delete()
+        for prod_data in parsed_cve.get("affected_products", []):
+            prod = AffectedProduct(
+                cve_id=cve.id,
+                vendor=prod_data["vendor"],
+                product=prod_data["product"],
+                version=prod_data["version"],
+                version_start=prod_data["version_start"],
+                version_end=prod_data["version_end"],
+                cpe_uri=prod_data["cpe_uri"]
+            )
+            session.add(prod)
         
         return cve

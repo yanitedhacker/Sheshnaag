@@ -56,6 +56,7 @@ class CVE(Base):
     affected_products = relationship("AffectedProduct", back_populates="cve", cascade="all, delete-orphan")
     exploits = relationship("Exploit", back_populates="cve", cascade="all, delete-orphan")
     risk_scores = relationship("RiskScore", back_populates="cve", cascade="all, delete-orphan")
+    patches = relationship("Patch", secondary="patch_cves", back_populates="cves")
     
     def __repr__(self):
         return f"<CVE {self.cve_id}>"

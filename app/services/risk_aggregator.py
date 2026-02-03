@@ -23,7 +23,7 @@ actually matters first.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session
@@ -33,8 +33,7 @@ from app.models.cve import CVE
 from app.models.risk_score import RiskScore, RiskHistory
 from app.models.asset import Asset, AssetVulnerability
 from app.ml.feature_engineering import FeatureEngineer
-from app.ml.risk_predictor import RiskPredictor
-from app.ml.explainer import RiskExplainer
+from app.ml.model_registry import get_explainer, get_predictor
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +49,8 @@ class RiskAggregator:
     def __init__(self, session: Session):
         self.session = session
         self.feature_engineer = FeatureEngineer(session)
-        self.predictor = RiskPredictor()
-        self.explainer = RiskExplainer(self.predictor)
-        
-        # Try to load trained model
-        self.predictor.load_model()
+        self.predictor = get_predictor()
+        self.explainer = get_explainer()
     
     def calculate_cve_risk(self, cve: CVE) -> RiskScore:
         """
@@ -136,15 +132,47 @@ class RiskAggregator:
             "errors": []
         }
         
-        for cve in cves:
-            try:
-                self.calculate_cve_risk(cve)
-                results["scores_created"] += 1
-            except Exception as e:
-                logger.error(f"Error calculating risk for {cve.cve_id}: {e}")
-                results["errors"].append({"cve_id": cve.cve_id, "error": str(e)})
-            
-            results["total_processed"] += 1
+        if not cves:
+            return results
+
+        try:
+            features_df = self.feature_engineer.extract_features_batch(cves)
+            probas, lowers, uppers = self.predictor.predict_exploit_probabilities_batch(features_df)
+
+            for idx, cve in enumerate(cves):
+                try:
+                    features = features_df.iloc[idx].to_dict()
+                    exploit_prob = float(probas[idx])
+                    conf_lower = float(lowers[idx])
+                    conf_upper = float(uppers[idx])
+                    risk_scores = self.predictor.calculate_risk_score(features, exploit_prob)
+                    explanation = self.explainer.explain_prediction(features, risk_scores)
+
+                    risk_score = RiskScore(
+                        cve_id=cve.id,
+                        overall_score=risk_scores["overall_score"],
+                        exploit_probability=exploit_prob,
+                        impact_score=risk_scores["impact_score"],
+                        exposure_score=risk_scores["exposure_score"],
+                        temporal_score=risk_scores["temporal_score"],
+                        risk_level=risk_scores["risk_level"],
+                        confidence_score=1.0 - (conf_upper - conf_lower),
+                        confidence_band_lower=conf_lower,
+                        confidence_band_upper=conf_upper,
+                        top_features=explanation["top_features"],
+                        explanation=explanation["text_explanation"],
+                        model_version=self.predictor.model_version,
+                    )
+                    self.session.add(risk_score)
+                    results["scores_created"] += 1
+                except Exception as e:
+                    logger.error(f"Error calculating risk for {cve.cve_id}: {e}")
+                    results["errors"].append({"cve_id": cve.cve_id, "error": str(e)})
+                finally:
+                    results["total_processed"] += 1
+        except Exception as e:
+            logger.error(f"Batch risk calculation failed: {e}")
+            results["errors"].append({"error": str(e)})
         
         # Update priority rankings
         self._update_priority_rankings()
@@ -168,6 +196,7 @@ class RiskAggregator:
         self,
         limit: int = 10,
         risk_level: Optional[str] = None,
+        has_exploit: Optional[bool] = None,
         asset_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -185,6 +214,9 @@ class RiskAggregator:
         
         if risk_level:
             query = query.filter(RiskScore.risk_level == risk_level)
+
+        if has_exploit is not None:
+            query = query.filter(CVE.exploit_available == has_exploit)
         
         if asset_id:
             query = query.join(AssetVulnerability, AssetVulnerability.cve_id == CVE.id)
@@ -303,7 +335,3 @@ class RiskAggregator:
                 change_reason=reason
             )
             self.session.add(history)
-
-
-# Import timedelta for the module
-from datetime import timedelta

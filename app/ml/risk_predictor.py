@@ -18,11 +18,12 @@ that works remarkably well when the ML model hasn't been trained yet.
 Sometimes the simplest solution is the right one.
 """
 
+import hashlib
 import logging
 import os
-import pickle
 from typing import Dict, Any, List, Optional, Tuple
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -183,6 +184,38 @@ class RiskPredictor:
         upper = min(1, proba + confidence_margin)
         
         return proba, lower, upper
+
+    def predict_exploit_probabilities_batch(
+        self,
+        features_df: pd.DataFrame,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Predict exploit probabilities for a batch of CVEs.
+
+        Returns:
+            Tuple of (proba, lower, upper) arrays.
+        """
+        if self.exploit_model is None:
+            # Heuristic per row
+            probs = []
+            lowers = []
+            uppers = []
+            for _, row in features_df.iterrows():
+                p, lo, hi = self._heuristic_exploit_probability(row.to_dict())
+                probs.append(p)
+                lowers.append(lo)
+                uppers.append(hi)
+            return np.array(probs), np.array(lowers), np.array(uppers)
+
+        X = features_df[self.feature_names]
+        X_scaled = self.scaler.transform(X)
+        proba = self.exploit_model.predict_proba(X_scaled)[:, 1]
+
+        # Simplified confidence bounds
+        confidence_margin = 0.1 * (1 - np.abs(proba - 0.5) * 2)
+        lower = np.maximum(0, proba - confidence_margin)
+        upper = np.minimum(1, proba + confidence_margin)
+        return proba, lower, upper
     
     def _heuristic_exploit_probability(
         self,
@@ -309,38 +342,79 @@ class RiskPredictor:
         }
     
     def save_model(self, path: Optional[str] = None):
-        """Save trained model to disk."""
+        """
+        Save trained model to disk using joblib.
+
+        Uses joblib for safer serialization compared to pickle.
+        Also creates a checksum file for integrity verification.
+        """
         save_path = path or self.model_path
         os.makedirs(save_path, exist_ok=True)
-        
+
+        model_file = os.path.join(save_path, "risk_model.joblib")
+        checksum_file = os.path.join(save_path, "risk_model.sha256")
+
         model_data = {
             "exploit_model": self.exploit_model,
             "scaler": self.scaler,
             "feature_names": self.feature_names,
             "model_version": self.model_version
         }
-        
-        with open(os.path.join(save_path, "risk_model.pkl"), "wb") as f:
-            pickle.dump(model_data, f)
-        
-        logger.info(f"Model saved to {save_path}")
-    
-    def load_model(self, path: Optional[str] = None):
-        """Load trained model from disk."""
-        load_path = path or self.model_path
-        model_file = os.path.join(load_path, "risk_model.pkl")
-        
-        if not os.path.exists(model_file):
-            logger.warning(f"No model found at {model_file}")
-            return False
-        
+
+        # Save model using joblib
+        joblib.dump(model_data, model_file)
+
+        # Create checksum for integrity verification
         with open(model_file, "rb") as f:
-            model_data = pickle.load(f)
-        
+            checksum = hashlib.sha256(f.read()).hexdigest()
+        with open(checksum_file, "w") as f:
+            f.write(checksum)
+
+        logger.info(f"Model saved to {save_path} with checksum verification")
+
+    def load_model(self, path: Optional[str] = None):
+        """
+        Load trained model from disk with integrity verification.
+
+        Verifies the model file checksum before loading to prevent
+        loading of tampered model files.
+        """
+        load_path = path or self.model_path
+
+        # Try new joblib format first, then fall back to legacy pickle
+        model_file = os.path.join(load_path, "risk_model.joblib")
+        checksum_file = os.path.join(load_path, "risk_model.sha256")
+        legacy_model_file = os.path.join(load_path, "risk_model.pkl")
+
+        # Check for new format
+        if os.path.exists(model_file):
+            # Verify integrity if checksum exists
+            if os.path.exists(checksum_file):
+                with open(checksum_file, "r") as f:
+                    expected_checksum = f.read().strip()
+                with open(model_file, "rb") as f:
+                    actual_checksum = hashlib.sha256(f.read()).hexdigest()
+                if actual_checksum != expected_checksum:
+                    logger.error("Model file integrity check failed! File may be corrupted or tampered.")
+                    raise ValueError("Model file integrity check failed!")
+                logger.info("Model integrity verified")
+
+            model_data = joblib.load(model_file)
+
+        # Fall back to legacy pickle format for backwards compatibility
+        elif os.path.exists(legacy_model_file):
+            logger.warning(f"Loading legacy pickle model from {legacy_model_file}. Consider re-saving in joblib format.")
+            import pickle
+            with open(legacy_model_file, "rb") as f:
+                model_data = pickle.load(f)
+        else:
+            logger.warning(f"No model found at {load_path}")
+            return False
+
         self.exploit_model = model_data["exploit_model"]
         self.scaler = model_data["scaler"]
         self.feature_names = model_data["feature_names"]
         self.model_version = model_data["model_version"]
-        
+
         logger.info(f"Model loaded from {load_path}")
         return True

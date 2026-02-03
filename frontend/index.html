@@ -61,7 +61,8 @@
             <!-- Stats Row -->
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <!-- Total CVEs -->
-                <div class="card-gradient rounded-xl p-4 border border-indigo-800/30">
+                <div class="card-gradient rounded-xl p-4 border border-indigo-800/30 cursor-pointer hover:bg-indigo-900/20 transition"
+                     @click="applyQuickFilter({ clear: true })">
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-indigo-300 text-sm">Total CVEs</p>
@@ -74,7 +75,8 @@
                 </div>
 
                 <!-- Critical -->
-                <div class="card-gradient rounded-xl p-4 border border-red-800/30 glow-critical">
+                <div class="card-gradient rounded-xl p-4 border border-red-800/30 glow-critical cursor-pointer hover:bg-indigo-900/20 transition"
+                     @click="applyQuickFilter({ riskLevel: 'CRITICAL' })">
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-red-300 text-sm">Critical</p>
@@ -87,7 +89,8 @@
                 </div>
 
                 <!-- High -->
-                <div class="card-gradient rounded-xl p-4 border border-orange-800/30 glow-high">
+                <div class="card-gradient rounded-xl p-4 border border-orange-800/30 glow-high cursor-pointer hover:bg-indigo-900/20 transition"
+                     @click="applyQuickFilter({ riskLevel: 'HIGH' })">
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-orange-300 text-sm">High Risk</p>
@@ -100,7 +103,8 @@
                 </div>
 
                 <!-- With Exploits -->
-                <div class="card-gradient rounded-xl p-4 border border-purple-800/30">
+                <div class="card-gradient rounded-xl p-4 border border-purple-800/30 cursor-pointer hover:bg-indigo-900/20 transition"
+                     @click="applyQuickFilter({ hasExploit: true })">
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-purple-300 text-sm">With Exploits</p>
@@ -116,61 +120,150 @@
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <!-- Left Column: Top Priorities -->
                 <div class="lg:col-span-2">
-                    <div class="card-gradient rounded-xl border border-indigo-800/30">
+                    <!-- Top Priority CVEs -->
+                    <div class="card-gradient rounded-xl border border-indigo-800/30 mb-6">
                         <div class="p-4 border-b border-indigo-800/30">
-                            <h2 class="text-lg font-semibold text-white flex items-center">
-                                <i class="fas fa-list-ol text-orange-400 mr-2"></i>
-                                Top Patch Priorities
-                            </h2>
+                            <div class="flex items-center justify-between gap-3">
+                                <h2 class="text-lg font-semibold text-white flex items-center">
+                                    <i class="fas fa-fire text-red-400 mr-2"></i>
+                                    Top Priority CVEs
+                                </h2>
+                                <div class="flex items-center gap-2">
+                                    <template x-if="activeRiskLevel || activeHasExploit">
+                                        <button @click="applyQuickFilter({ clear: true })"
+                                            class="px-3 py-1 rounded-lg text-xs font-medium bg-indigo-900/40 hover:bg-indigo-900/60 border border-indigo-700/40 text-indigo-200 transition">
+                                            Clear filter
+                                        </button>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                                <span class="text-indigo-400">Active:</span>
+                                <span class="px-2 py-0.5 rounded-full bg-indigo-900/40 border border-indigo-700/30 text-indigo-200"
+                                      x-text="activeRiskLevel ? activeRiskLevel : 'ALL'"></span>
+                                <span x-show="activeHasExploit"
+                                      class="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-200">
+                                    Exploits only
+                                </span>
+                                <span class="ml-auto text-indigo-400" x-text="(topPriorities?.length || 0) + ' shown'"></span>
+                            </div>
                         </div>
                         <div class="p-4">
-                            <div class="space-y-3">
-                                <template x-for="(cve, index) in topPriorities" :key="cve.cve_id">
-                                    <div class="bg-indigo-900/30 rounded-lg p-4 hover:bg-indigo-900/50 transition cursor-pointer" @click="showCveDetail(cve.cve_id)">
-                                        <div class="flex items-start justify-between">
-                                            <div class="flex items-start space-x-3">
-                                                <span class="w-8 h-8 bg-indigo-700/50 rounded-lg flex items-center justify-center text-sm font-bold text-indigo-200" x-text="index + 1"></span>
-                                                <div>
-                                                    <div class="flex items-center space-x-2">
-                                                        <span class="font-mono font-semibold text-white" x-text="cve.cve_id"></span>
-                                                        <span class="px-2 py-0.5 text-xs rounded-full font-medium"
-                                                            :class="{
-                                                                'bg-red-500/20 text-red-400': cve.risk_level === 'CRITICAL',
-                                                                'bg-orange-500/20 text-orange-400': cve.risk_level === 'HIGH',
-                                                                'bg-yellow-500/20 text-yellow-400': cve.risk_level === 'MEDIUM',
-                                                                'bg-green-500/20 text-green-400': cve.risk_level === 'LOW'
-                                                            }"
-                                                            x-text="cve.risk_level">
-                                                        </span>
-                                                        <span x-show="cve.exploit_available" class="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full">
-                                                            <i class="fas fa-bug mr-1"></i>Exploit
-                                                        </span>
-                                                    </div>
-                                                    <p class="text-sm text-indigo-300 mt-1 line-clamp-2" x-text="cve.description"></p>
+                            <div class="space-y-3 max-h-[560px] overflow-y-auto pr-1">
+                                <template x-for="(c, index) in topPriorities" :key="c.cve_id">
+                                    <div class="bg-indigo-900/30 rounded-lg p-4 hover:bg-indigo-900/50 transition cursor-pointer"
+                                         @click="showCveDetail(c.cve_id)">
+                                        <div class="flex items-start justify-between gap-4">
+                                            <div class="min-w-0">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="w-8 h-8 bg-indigo-700/50 rounded-lg flex items-center justify-center text-sm font-bold text-indigo-200"
+                                                          x-text="index + 1"></span>
+                                                    <span class="font-mono font-semibold text-white" x-text="c.cve_id"></span>
+                                                    <span class="px-2 py-0.5 text-xs rounded-full"
+                                                          :class="{
+                                                            'bg-red-500/20 text-red-400': c.risk_level === 'CRITICAL',
+                                                            'bg-orange-500/20 text-orange-400': c.risk_level === 'HIGH',
+                                                            'bg-yellow-500/20 text-yellow-400': c.risk_level === 'MEDIUM',
+                                                            'bg-green-500/20 text-green-400': c.risk_level === 'LOW',
+                                                            'bg-gray-500/20 text-gray-400': !c.risk_level
+                                                          }"
+                                                          x-text="c.risk_level || 'UNSCORED'"></span>
+                                                    <span x-show="c.exploit_available"
+                                                          class="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-200 rounded-full">
+                                                        <i class="fas fa-bug mr-1"></i>Exploit
+                                                    </span>
+                                                </div>
+                                                <p class="text-sm text-indigo-300 mt-1 line-clamp-2" x-text="c.description"></p>
+                                                <div class="mt-2 flex items-center gap-3 text-xs text-indigo-400">
+                                                    <span><i class="fas fa-shield-alt mr-1"></i><span x-text="'CVSS: ' + (c.cvss_score ?? 'N/A')"></span></span>
+                                                    <span><i class="fas fa-crosshairs mr-1"></i><span x-text="'Exploit prob: ' + (((c.exploit_probability || 0) * 100).toFixed(1)) + '%'"></span></span>
                                                 </div>
                                             </div>
-                                            <div class="text-right">
-                                                <div class="text-2xl font-bold"
-                                                    :class="{
-                                                        'text-red-400': cve.overall_risk_score >= 80,
-                                                        'text-orange-400': cve.overall_risk_score >= 60 && cve.overall_risk_score < 80,
-                                                        'text-yellow-400': cve.overall_risk_score >= 40 && cve.overall_risk_score < 60,
-                                                        'text-green-400': cve.overall_risk_score < 40
-                                                    }"
-                                                    x-text="Math.round(cve.overall_risk_score)">
-                                                </div>
-                                                <div class="text-xs text-indigo-400">Risk Score</div>
+                                            <div class="text-right shrink-0">
+                                                <div class="text-2xl font-bold text-emerald-300" x-text="(c.overall_risk_score ?? 0).toFixed(1)"></div>
+                                                <div class="text-xs text-indigo-400">Risk score</div>
                                             </div>
                                         </div>
-                                        <div class="mt-3 flex items-center space-x-4 text-xs text-indigo-400">
-                                            <span><i class="fas fa-shield mr-1"></i>CVSS: <span x-text="cve.cvss_score || 'N/A'"></span></span>
-                                            <span><i class="fas fa-percentage mr-1"></i>Exploit Prob: <span x-text="(cve.exploit_probability * 100).toFixed(0) + '%'"></span></span>
+                                        <div class="mt-3">
+                                            <div class="h-2 rounded-full bg-indigo-900/50 overflow-hidden">
+                                                <div class="h-2 rounded-full bg-emerald-500/80"
+                                                     :style="`width: ${Math.min(100, Math.max(0, Math.round((c.overall_risk_score || 0))))}%`"></div>
+                                            </div>
                                         </div>
                                     </div>
                                 </template>
                                 <div x-show="topPriorities.length === 0" class="text-center py-8 text-indigo-400">
                                     <i class="fas fa-inbox text-4xl mb-2"></i>
-                                    <p>No CVE data available. Click "Sync Feeds" to fetch data.</p>
+                                    <p>No CVEs match this filter.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card-gradient rounded-xl border border-indigo-800/30">
+                        <div class="p-4 border-b border-indigo-800/30">
+                            <div class="flex items-center justify-between gap-3">
+                                <h2 class="text-lg font-semibold text-white flex items-center">
+                                    <i class="fas fa-list-ol text-orange-400 mr-2"></i>
+                                    Patch Decisions
+                                </h2>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs text-indigo-300">Simulate delay</span>
+                                    <select x-model.number="patchDelayDays" @change="loadPatchPriorities()" class="bg-indigo-900/30 border border-indigo-700/50 rounded-lg px-3 py-1 text-white text-sm focus:outline-none focus:border-indigo-500">
+                                        <option :value="0">Patch now</option>
+                                        <option :value="7">Delay 7 days</option>
+                                        <option :value="14">Delay 14 days</option>
+                                        <option :value="30">Delay 30 days</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="p-4">
+                            <div class="space-y-3 max-h-[560px] overflow-y-auto pr-1">
+                                <template x-for="(p, index) in patchPriorities" :key="p.patch_id">
+                                    <div class="bg-indigo-900/30 rounded-lg p-4 hover:bg-indigo-900/50 transition cursor-pointer" @click="showPatchDetail(p.patch_id)">
+                                        <div class="flex items-start justify-between">
+                                            <div class="flex items-start space-x-3">
+                                                <span class="w-8 h-8 bg-indigo-700/50 rounded-lg flex items-center justify-center text-sm font-bold text-indigo-200" x-text="index + 1"></span>
+                                                <div>
+                                                    <div class="flex items-center space-x-2">
+                                                        <span class="font-mono font-semibold text-white" x-text="p.patch_id"></span>
+                                                        <span class="px-2 py-0.5 text-xs rounded-full font-medium"
+                                                            :class="{
+                                                                'bg-red-500/20 text-red-400': p.decision === 'PATCH_NOW',
+                                                                'bg-orange-500/20 text-orange-400': p.decision === 'SCHEDULE',
+                                                                'bg-green-500/20 text-green-400': p.decision === 'DEFER'
+                                                            }"
+                                                            x-text="p.decision">
+                                                        </span>
+                                                        <span x-show="p.requires_reboot" class="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-300 rounded-full">
+                                                            <i class="fas fa-power-off mr-1"></i>Reboot
+                                                        </span>
+                                                    </div>
+                                                    <p class="text-sm text-indigo-300 mt-1 line-clamp-2" x-text="(p.justification && p.justification.length ? p.justification[0] : 'Recommendation available')"></p>
+                                                    <div class="mt-2 flex items-center gap-2 text-xs text-indigo-400">
+                                                        <span x-show="p.maintenance_window"><i class="fas fa-calendar-alt mr-1"></i><span x-text="p.maintenance_window"></span></span>
+                                                        <span><i class="fas fa-stopwatch mr-1"></i><span x-text="(p.estimated_downtime_minutes ?? '—') + 'm downtime'"></span></span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="text-right">
+                                                <div class="text-2xl font-bold text-emerald-300"
+                                                    x-text="Math.round((p.expected_risk_reduction || 0) * 100) + '%'">
+                                                </div>
+                                                <div class="text-xs text-indigo-400">Risk reduction</div>
+                                            </div>
+                                        </div>
+                                        <div class="mt-3">
+                                            <div class="h-2 rounded-full bg-indigo-900/50 overflow-hidden">
+                                                <div class="h-2 rounded-full bg-emerald-500/80" :style="`width: ${Math.min(100, Math.max(0, Math.round((p.expected_risk_reduction || 0) * 100)))}%`"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                                <div x-show="patchPriorities.length === 0" class="text-center py-8 text-indigo-400">
+                                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                                    <p>No patch decisions available yet.</p>
                                 </div>
                             </div>
                         </div>
@@ -251,7 +344,7 @@
                     </div>
                     
                     <!-- Search Results -->
-                    <div x-show="searchResults.length > 0" class="mt-4 space-y-2">
+                    <div x-show="searchResults.length > 0" class="mt-4 space-y-2 max-h-[420px] overflow-y-auto pr-1">
                         <template x-for="result in searchResults" :key="result.cve_id">
                             <div class="bg-indigo-900/20 rounded-lg p-3 hover:bg-indigo-900/40 transition cursor-pointer" @click="showCveDetail(result.cve_id)">
                                 <div class="flex items-center justify-between">
@@ -355,27 +448,96 @@
                 </div>
             </div>
         </div>
+
+        <!-- Patch Detail Modal -->
+        <div x-show="showPatchModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="showPatchModal = false">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-black/70" @click="showPatchModal = false"></div>
+                <div class="relative bg-indigo-950 rounded-xl max-w-2xl w-full border border-indigo-800/50 shadow-2xl">
+                    <div class="p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-xl font-bold text-white" x-text="selectedPatch?.patch?.patch_id"></h3>
+                            <button @click="showPatchModal = false" class="text-indigo-400 hover:text-white">
+                                <i class="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        <div x-show="selectedPatch" class="space-y-4">
+                            <div class="bg-indigo-900/30 rounded-lg p-4">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <span class="text-xs text-indigo-400">Vendor</span>
+                                        <p class="text-sm text-white" x-text="selectedPatch?.patch?.vendor || '—'"></p>
+                                    </div>
+                                    <div>
+                                        <span class="text-xs text-indigo-400">Software</span>
+                                        <p class="text-sm text-white" x-text="selectedPatch?.patch?.affected_software || '—'"></p>
+                                    </div>
+                                    <div>
+                                        <span class="text-xs text-indigo-400">Downtime</span>
+                                        <p class="text-sm text-white" x-text="(selectedPatch?.patch?.estimated_downtime_minutes ?? '—') + ' minutes'"></p>
+                                    </div>
+                                    <div>
+                                        <span class="text-xs text-indigo-400">Requires reboot</span>
+                                        <p class="text-sm text-white" x-text="selectedPatch?.patch?.requires_reboot ? 'Yes' : 'No'"></p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 class="text-sm font-medium text-indigo-400 mb-2">Linked CVEs</h4>
+                                <div class="space-y-2">
+                                    <template x-for="c in (selectedPatch?.linked_cves || [])" :key="c.cve_id">
+                                        <div class="bg-indigo-900/20 rounded-lg p-3 flex items-center justify-between">
+                                            <span class="font-mono text-white" x-text="c.cve_id"></span>
+                                            <span class="text-xs text-indigo-400" x-text="'CVSS: ' + (c.cvss_v3_score ?? 'N/A')"></span>
+                                        </div>
+                                    </template>
+                                    <div x-show="(selectedPatch?.linked_cves || []).length === 0" class="text-sm text-indigo-300">No linked CVEs</div>
+                                </div>
+                            </div>
+
+                            <div x-show="selectedPatch?.patch?.advisory_url">
+                                <h4 class="text-sm font-medium text-indigo-400 mb-2">Advisory</h4>
+                                <p class="text-sm text-indigo-200 break-all" x-text="selectedPatch?.patch?.advisory_url"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8000';
+        // Use same-origin so Nginx can proxy /api -> backend container
+        const API_BASE = '';
 
         function dashboard() {
             return {
                 stats: {},
                 riskSummary: {},
                 topPriorities: [],
+                patchPriorities: [],
+                patchDelayDays: 0,
                 searchResults: [],
                 searchQuery: '',
                 searchRiskLevel: '',
+                searchHasExploit: false,
+                activeRiskLevel: '',
+                activeHasExploit: false,
                 syncing: false,
                 showModal: false,
                 selectedCve: null,
+                showPatchModal: false,
+                selectedPatch: null,
                 riskChart: null,
 
                 async init() {
-                    await this.loadDashboard();
+                    // Initialize charts first so data loads can populate them.
                     this.initCharts();
+                    await this.loadDashboard();
+                    await this.loadTopPriorities();
+                    await this.loadPatchPriorities();
                 },
 
                 async loadDashboard() {
@@ -385,6 +547,7 @@
                         
                         this.stats = data.cve_statistics || {};
                         this.riskSummary = data.risk_summary || {};
+                        // Keep dashboard load lightweight; the visible CVE list is loaded via loadTopPriorities()
                         this.topPriorities = data.top_priorities || [];
                         
                         this.updateCharts();
@@ -393,12 +556,38 @@
                     }
                 },
 
+                async loadTopPriorities() {
+                    try {
+                        let url = `${API_BASE}/api/risk/priorities?limit=50`;
+                        if (this.activeRiskLevel) url += `&risk_level=${encodeURIComponent(this.activeRiskLevel)}`;
+                        if (this.activeHasExploit) url += `&has_exploit=true`;
+
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        this.topPriorities = data.priorities || [];
+                    } catch (error) {
+                        console.error('Failed to load top priorities:', error);
+                        this.topPriorities = [];
+                    }
+                },
+
+                async loadPatchPriorities() {
+                    try {
+                        const response = await fetch(`${API_BASE}/api/patches/priorities?limit=10&delay_days=${this.patchDelayDays}`);
+                        const data = await response.json();
+                        this.patchPriorities = data.priorities || [];
+                    } catch (error) {
+                        console.error('Failed to load patch priorities:', error);
+                    }
+                },
+
                 async syncFeeds() {
                     this.syncing = true;
                     try {
                         await fetch(`${API_BASE}/api/feeds/sync/cves?days=7`, { method: 'POST' });
-                        await fetch(`${API_BASE}/api/risk/calculate`, { method: 'POST' });
+                        await fetch(`${API_BASE}/api/risk/calculate?limit=500`, { method: 'POST' });
                         await this.loadDashboard();
+                        await this.loadPatchPriorities();
                     } catch (error) {
                         console.error('Sync failed:', error);
                     }
@@ -410,6 +599,7 @@
                         let url = `${API_BASE}/api/cves/?page_size=10`;
                         if (this.searchQuery) url += `&keyword=${encodeURIComponent(this.searchQuery)}`;
                         if (this.searchRiskLevel) url += `&risk_level=${this.searchRiskLevel}`;
+                        if (this.searchHasExploit) url += `&has_exploit=true`;
                         
                         const response = await fetch(url);
                         const data = await response.json();
@@ -419,6 +609,33 @@
                     }
                 },
 
+                applyQuickFilter({ riskLevel = null, hasExploit = null, clear = false }) {
+                    if (clear) {
+                        this.activeRiskLevel = '';
+                        this.activeHasExploit = false;
+                        this.searchRiskLevel = '';
+                        this.searchHasExploit = false;
+                        this.searchQuery = '';
+                        this.searchResults = [];
+                        this.loadTopPriorities();
+                        return;
+                    }
+
+                    if (riskLevel !== null) {
+                        this.activeRiskLevel = riskLevel || '';
+                        this.searchRiskLevel = riskLevel || '';
+                    }
+                    if (hasExploit !== null) {
+                        this.activeHasExploit = !!hasExploit;
+                        this.searchHasExploit = !!hasExploit;
+                    }
+
+                    // Update the always-visible priorities list immediately.
+                    this.loadTopPriorities();
+                    // Also refresh search results (so the lower Search section matches filters).
+                    this.searchCves();
+                },
+
                 async showCveDetail(cveId) {
                     try {
                         const response = await fetch(`${API_BASE}/api/cves/${cveId}`);
@@ -426,6 +643,16 @@
                         this.showModal = true;
                     } catch (error) {
                         console.error('Failed to load CVE details:', error);
+                    }
+                },
+
+                async showPatchDetail(patchId) {
+                    try {
+                        const response = await fetch(`${API_BASE}/api/patches/${patchId}`);
+                        this.selectedPatch = await response.json();
+                        this.showPatchModal = true;
+                    } catch (error) {
+                        console.error('Failed to load patch details:', error);
                     }
                 },
 

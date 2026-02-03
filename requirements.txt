@@ -10,6 +10,8 @@ python-multipart>=0.0.9
 # Database
 sqlalchemy>=2.0.30
 aiosqlite>=0.20.0
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
 
 # Data Validation
 pydantic>=2.8.0
@@ -37,10 +39,19 @@ shap>=0.45.0
 joblib>=1.4.0
 
 # ===========================================
+# Security & Authentication
+# ===========================================
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# ===========================================
 # Monitoring & Utilities
 # ===========================================
 prometheus-client>=0.20.0
 structlog>=24.1.0
+apscheduler>=3.10.4
+alembic>=1.13.2
+ortools>=9.10.4067
 
 # ===========================================
 # Development & Testing

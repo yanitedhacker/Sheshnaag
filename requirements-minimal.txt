@@ -1,0 +1,14 @@
+# Minimal requirements for local development (Python 3.14 compatible)
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+sqlalchemy>=2.0.30
+pydantic>=2.8.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+requests>=2.32.0
+aiohttp>=3.10.0
+beautifulsoup4>=4.12.0
+numpy>=2.0.0
+pandas>=2.2.0
+scikit-learn>=1.5.0
+prometheus-client>=0.20.0

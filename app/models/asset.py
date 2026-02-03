@@ -46,6 +46,7 @@ class Asset(Base):
     
     # Relationships
     vulnerabilities = relationship("AssetVulnerability", back_populates="asset", cascade="all, delete-orphan")
+    patches = relationship("AssetPatch", back_populates="asset", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Asset {self.name}>"

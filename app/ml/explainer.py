@@ -86,9 +86,8 @@ class RiskExplainer:
             logger.warning("No model loaded, cannot initialize SHAP explainer")
             return
         
-        if background_data is not None:
-            # Use TreeExplainer for XGBoost
-            self.explainer = shap.TreeExplainer(self.predictor.exploit_model)
+        # Use TreeExplainer for XGBoost (background data optional)
+        self.explainer = shap.TreeExplainer(self.predictor.exploit_model)
         
         logger.info("SHAP explainer initialized")
     

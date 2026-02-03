@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_sync_session
+from app.core.security import require_scope
 from app.services.risk_aggregator import RiskAggregator
 
 router = APIRouter(prefix="/api/risk", tags=["Risk Scoring"])
@@ -44,6 +45,7 @@ class RiskSummaryResponse(BaseModel):
 def get_top_priorities(
     limit: int = Query(10, ge=1, le=100, description="Number of results"),
     risk_level: Optional[str] = Query(None, description="Filter by risk level (CRITICAL, HIGH, MEDIUM, LOW)"),
+    has_exploit: Optional[bool] = Query(None, description="Filter by exploit availability"),
     asset_id: Optional[int] = Query(None, description="Filter by asset ID"),
     session: Session = Depends(get_sync_session)
 ):
@@ -57,6 +59,7 @@ def get_top_priorities(
     priorities = aggregator.get_top_priorities(
         limit=limit,
         risk_level=risk_level,
+        has_exploit=has_exploit,
         asset_id=asset_id
     )
     
@@ -92,9 +95,9 @@ def get_risk_heatmap(
     return aggregator.get_risk_heatmap_data()
 
 
-@router.post("/calculate")
+@router.post("/calculate", dependencies=[Depends(require_scope("admin"))])
 def calculate_risks(
-    limit: Optional[int] = Query(None, description="Max CVEs to process"),
+    limit: int = Query(500, ge=1, le=5000, description="Max CVEs to process (batch size)"),
     background_tasks: BackgroundTasks = None,
     session: Session = Depends(get_sync_session)
 ):

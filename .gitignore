@@ -39,6 +39,7 @@ wheels/
 .env
 .env.local
 .env.*.local
+.env.lab
 
 # IDE
 .idea/

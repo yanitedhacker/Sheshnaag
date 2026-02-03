@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.ingestion.nvd_client import NVDClient
 from app.ingestion.exploitdb_client import ExploitDBClient
+from app.ingestion.sync_state import get_or_create_state, mark_failed, mark_running, mark_success
 from app.models.cve import CVE
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class FeedAggregator:
         self.nvd_client = NVDClient()
         self.exploitdb_client = ExploitDBClient()
     
-    async def sync_recent_cves(self, days: int = 7) -> Dict[str, Any]:
+    async def sync_recent_cves(self, days: int = 7, since: Optional[datetime] = None) -> Dict[str, Any]:
         """
         Synchronize recent CVEs from NVD.
         
@@ -42,8 +43,8 @@ class FeedAggregator:
         }
         
         try:
-            # Fetch CVEs from NVD
-            raw_cves = await self.nvd_client.fetch_recent_cves(days=days)
+            # Fetch CVEs from NVD (incremental if 'since' provided)
+            raw_cves = await self.nvd_client.fetch_recent_cves(days=days, since=since)
             results["total_fetched"] = len(raw_cves)
             
             for raw_cve in raw_cves:
@@ -56,7 +57,7 @@ class FeedAggregator:
                         CVE.cve_id == parsed_cve["cve_id"]
                     ).first()
                     
-                    # Save to database
+                    # Save to database (idempotent)
                     self.nvd_client.save_cve_to_db(self.session, parsed_cve)
                     
                     if existing:
@@ -79,7 +80,7 @@ class FeedAggregator:
         
         return results
     
-    async def sync_exploits_for_cves(self, cve_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def sync_exploits_for_cves(self, cve_ids: Optional[List[str]] = None, since: Optional[datetime] = None) -> Dict[str, Any]:
         """
         Synchronize exploit information for CVEs.
         
@@ -143,6 +144,89 @@ class FeedAggregator:
             results["errors"].append({"error": str(e)})
             self.session.rollback()
         
+        return results
+
+    async def sync_recent_exploits_from_mirror(self, since: Optional[datetime] = None, limit: int = 2000) -> Dict[str, Any]:
+        """
+        Incremental sync of Exploit-DB via official GitHub mirror.
+        """
+        logger.info("Starting Exploit-DB mirror sync")
+
+        results = {
+            "records_fetched": 0,
+            "exploits_linked": 0,
+            "new_exploits": 0,
+            "errors": [],
+        }
+
+        try:
+            exploits = await self.exploitdb_client.fetch_exploits_from_mirror(since=since, limit=limit)
+            results["records_fetched"] = len(exploits)
+
+            for exploit_data in exploits:
+                try:
+                    exploit = self.exploitdb_client.save_exploit_to_db(self.session, exploit_data)
+                    if exploit:
+                        results["exploits_linked"] += 1
+                        results["new_exploits"] += 1
+                except Exception as e:
+                    logger.error(f"Error saving exploit {exploit_data.get('exploit_db_id')}: {e}")
+                    results["errors"].append({"exploit_db_id": exploit_data.get("exploit_db_id"), "error": str(e)})
+
+            self.session.commit()
+            logger.info(f"Exploit-DB mirror sync complete: {results['new_exploits']} new exploits")
+        except Exception as e:
+            logger.error(f"Exploit-DB mirror sync failed: {e}")
+            results["errors"].append({"error": str(e)})
+            self.session.rollback()
+
+        return results
+
+    async def sync_with_state(self, days: int = 7, exploit_limit: int = 2000) -> Dict[str, Any]:
+        """
+        Full sync using persisted cursor state for incremental updates.
+        """
+        results = {
+            "cve_sync": {},
+            "exploit_sync": {},
+            "started_at": datetime.utcnow().isoformat(),
+            "completed_at": None,
+        }
+
+        # CVE sync with cursor
+        cve_state = get_or_create_state(self.session, "NVD")
+        mark_running(self.session, cve_state)
+        self.session.commit()
+        try:
+            since = None
+            if cve_state.cursor:
+                try:
+                    since = datetime.fromisoformat(cve_state.cursor)
+                except ValueError:
+                    since = None
+            results["cve_sync"] = await self.sync_recent_cves(days=days, since=since)
+            mark_success(self.session, cve_state, cursor=datetime.utcnow().isoformat())
+            self.session.commit()
+        except Exception as e:
+            mark_failed(self.session, cve_state, str(e))
+            self.session.commit()
+            raise
+
+        # Exploit sync with cursor
+        exploit_state = get_or_create_state(self.session, "EXPLOIT_DB")
+        mark_running(self.session, exploit_state)
+        self.session.commit()
+        try:
+            since = exploit_state.last_success_at
+            results["exploit_sync"] = await self.sync_recent_exploits_from_mirror(since=since, limit=exploit_limit)
+            mark_success(self.session, exploit_state, cursor=datetime.utcnow().isoformat())
+            self.session.commit()
+        except Exception as e:
+            mark_failed(self.session, exploit_state, str(e))
+            self.session.commit()
+            raise
+
+        results["completed_at"] = datetime.utcnow().isoformat()
         return results
     
     async def full_sync(self, days: int = 30) -> Dict[str, Any]:

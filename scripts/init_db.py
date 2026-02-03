@@ -30,6 +30,7 @@ from app.models.cve import CVE, CVEReference, AffectedProduct
 from app.models.exploit import Exploit
 from app.models.risk_score import RiskScore
 from app.models.asset import Asset, AssetVulnerability
+from app.models.patch import Patch, AssetPatch
 
 
 def get_utc_now():
@@ -49,14 +50,18 @@ def create_sample_data():
     session = SessionLocal()
     
     try:
-        # Check if data already exists
-        existing = session.query(CVE).first()
-        if existing:
-            print("✓ Sample data already exists. Skipping...")
-            return
-        
-        print("Creating sample CVE data...")
+        # Check if data already exists (seed incrementally)
+        has_cves = session.query(CVE).first() is not None
+        has_assets = session.query(Asset).first() is not None
+        has_patches = session.query(Patch).first() is not None
+        has_risk_scores = session.query(RiskScore).first() is not None
+
         now = get_utc_now()
+
+        if has_cves:
+            print("✓ CVE data already exists. Skipping CVE seeding...")
+        else:
+            print("Creating sample CVE data...")
         
         # Sample CVEs - Real-world critical vulnerabilities
         sample_cves = [
@@ -188,35 +193,39 @@ def create_sample_data():
                 "exploit_count": random.randint(1, 3) if has_exploit else 0,
             })
         
-        # Create CVEs
-        for cve_data in sample_cves:
-            cve = CVE(
-                cve_id=cve_data["cve_id"],
-                description=cve_data["description"],
-                cvss_v3_score=cve_data["cvss_v3_score"],
-                cvss_v3_vector=cve_data.get("cvss_v3_vector"),
-                attack_vector=cve_data.get("attack_vector"),
-                attack_complexity=cve_data.get("attack_complexity"),
-                privileges_required=cve_data.get("privileges_required"),
-                user_interaction=cve_data.get("user_interaction"),
-                scope=cve_data.get("scope"),
-                confidentiality_impact=cve_data.get("confidentiality_impact"),
-                integrity_impact=cve_data.get("integrity_impact"),
-                availability_impact=cve_data.get("availability_impact"),
-                cwe_id=cve_data.get("cwe_id"),
-                published_date=cve_data.get("published_date"),
-                last_modified_date=now,
-                exploit_available=cve_data.get("exploit_available", False),
-                exploit_count=cve_data.get("exploit_count", 0),
-                source="SAMPLE"
-            )
-            session.add(cve)
-        
-        session.commit()
-        print(f"✓ Created {len(sample_cves)} sample CVEs")
+        if not has_cves:
+            # Create CVEs
+            for cve_data in sample_cves:
+                cve = CVE(
+                    cve_id=cve_data["cve_id"],
+                    description=cve_data["description"],
+                    cvss_v3_score=cve_data["cvss_v3_score"],
+                    cvss_v3_vector=cve_data.get("cvss_v3_vector"),
+                    attack_vector=cve_data.get("attack_vector"),
+                    attack_complexity=cve_data.get("attack_complexity"),
+                    privileges_required=cve_data.get("privileges_required"),
+                    user_interaction=cve_data.get("user_interaction"),
+                    scope=cve_data.get("scope"),
+                    confidentiality_impact=cve_data.get("confidentiality_impact"),
+                    integrity_impact=cve_data.get("integrity_impact"),
+                    availability_impact=cve_data.get("availability_impact"),
+                    cwe_id=cve_data.get("cwe_id"),
+                    published_date=cve_data.get("published_date"),
+                    last_modified_date=now,
+                    exploit_available=cve_data.get("exploit_available", False),
+                    exploit_count=cve_data.get("exploit_count", 0),
+                    source="SAMPLE",
+                )
+                session.add(cve)
+
+            session.commit()
+            print(f"✓ Created {len(sample_cves)} sample CVEs")
         
         # Create sample assets
-        print("Creating sample assets...")
+        if has_assets:
+            print("✓ Asset data already exists. Skipping asset seeding...")
+        else:
+            print("Creating sample assets...")
         sample_assets = [
             {
                 "name": "Production Web Server",
@@ -261,28 +270,201 @@ def create_sample_data():
             },
         ]
         
-        for asset_data in sample_assets:
-            asset = Asset(
-                name=asset_data["name"],
-                asset_type=asset_data["asset_type"],
-                hostname=asset_data["hostname"],
-                ip_address=asset_data["ip_address"],
-                environment=asset_data["environment"],
-                criticality=asset_data["criticality"],
-                installed_software=asset_data["installed_software"],
-                operating_system=asset_data["operating_system"],
-                owner=asset_data["owner"],
-            )
-            session.add(asset)
-        
-        session.commit()
-        print(f"✓ Created {len(sample_assets)} sample assets")
+        if not has_assets:
+            for asset_data in sample_assets:
+                asset = Asset(
+                    name=asset_data["name"],
+                    asset_type=asset_data["asset_type"],
+                    hostname=asset_data["hostname"],
+                    ip_address=asset_data["ip_address"],
+                    environment=asset_data["environment"],
+                    criticality=asset_data["criticality"],
+                    installed_software=asset_data["installed_software"],
+                    operating_system=asset_data["operating_system"],
+                    owner=asset_data["owner"],
+                )
+                session.add(asset)
+
+            session.commit()
+            print(f"✓ Created {len(sample_assets)} sample assets")
+
+        # Create sample patches & mappings
+        if has_patches:
+            print("✓ Patch data already exists. Skipping patch seeding...")
+        else:
+            print("Creating sample patch data...")
+
+            # Fetch canonical CVEs to link
+            cve_by_id = {
+                c.cve_id: c
+                for c in session.query(CVE).filter(
+                    CVE.cve_id.in_(
+                        [
+                            "CVE-2024-21762",
+                            "CVE-2024-23897",
+                            "CVE-2024-20931",
+                            "CVE-2024-27198",
+                            "CVE-2024-3400",
+                        ]
+                    )
+                ).all()
+            }
+
+            asset_by_hostname = {
+                a.hostname: a
+                for a in session.query(Asset).filter(
+                    Asset.hostname.in_(["web-prod-01", "jenkins-01", "db-dev-01"])
+                ).all()
+            }
+
+            patches = [
+                Patch(
+                    patch_id="PATCH-FORTINET-FORTIOS-7.4.3",
+                    vendor="fortinet",
+                    affected_software="fortios",
+                    requires_reboot=True,
+                    estimated_downtime_minutes=20,
+                    rollback_complexity=0.6,
+                    historical_failure_rate=0.06,
+                    released_at=now - timedelta(days=3),
+                    source="manual",
+                    advisory_url="https://www.fortinet.com/support/advisory",
+                ),
+                Patch(
+                    patch_id="PATCH-JENKINS-2.441",
+                    vendor="jenkins",
+                    affected_software="jenkins",
+                    requires_reboot=False,
+                    estimated_downtime_minutes=10,
+                    rollback_complexity=0.4,
+                    historical_failure_rate=0.03,
+                    released_at=now - timedelta(days=9),
+                    source="manual",
+                    advisory_url="https://www.jenkins.io/security/advisory/",
+                ),
+                Patch(
+                    patch_id="PATCH-ORACLE-WEBLOGIC-14.1.2",
+                    vendor="oracle",
+                    affected_software="weblogic_server",
+                    requires_reboot=True,
+                    estimated_downtime_minutes=30,
+                    rollback_complexity=0.7,
+                    historical_failure_rate=0.08,
+                    released_at=now - timedelta(days=18),
+                    source="manual",
+                    advisory_url="https://www.oracle.com/security-alerts/",
+                ),
+                Patch(
+                    patch_id="PATCH-JETBRAINS-TEAMCITY-2024.02.1",
+                    vendor="jetbrains",
+                    affected_software="teamcity",
+                    requires_reboot=False,
+                    estimated_downtime_minutes=15,
+                    rollback_complexity=0.5,
+                    historical_failure_rate=0.05,
+                    released_at=now - timedelta(days=2),
+                    source="manual",
+                    advisory_url="https://www.jetbrains.com/help/teamcity/teamcity-security.html",
+                ),
+                Patch(
+                    patch_id="PATCH-PALOALTO-PANOS-11.0.5",
+                    vendor="paloalto",
+                    affected_software="pan-os",
+                    requires_reboot=True,
+                    estimated_downtime_minutes=25,
+                    rollback_complexity=0.65,
+                    historical_failure_rate=0.07,
+                    released_at=now - timedelta(days=6),
+                    source="manual",
+                    advisory_url="https://security.paloaltonetworks.com/",
+                ),
+            ]
+
+            for p in patches:
+                # Link CVEs (best-effort: only link if present)
+                if p.patch_id.startswith("PATCH-FORTINET"):
+                    cve = cve_by_id.get("CVE-2024-21762")
+                    if cve:
+                        p.cves.append(cve)
+                if p.patch_id.startswith("PATCH-JENKINS"):
+                    cve = cve_by_id.get("CVE-2024-23897")
+                    if cve:
+                        p.cves.append(cve)
+                if p.patch_id.startswith("PATCH-ORACLE"):
+                    cve = cve_by_id.get("CVE-2024-20931")
+                    if cve:
+                        p.cves.append(cve)
+                if p.patch_id.startswith("PATCH-JETBRAINS"):
+                    cve = cve_by_id.get("CVE-2024-27198")
+                    if cve:
+                        p.cves.append(cve)
+                if p.patch_id.startswith("PATCH-PALOALTO"):
+                    cve = cve_by_id.get("CVE-2024-3400")
+                    if cve:
+                        p.cves.append(cve)
+
+                session.add(p)
+
+            session.flush()
+
+            # Map patches to assets with maintenance windows
+            web = asset_by_hostname.get("web-prod-01")
+            cicd = asset_by_hostname.get("jenkins-01")
+            devdb = asset_by_hostname.get("db-dev-01")
+
+            if web:
+                session.add(
+                    AssetPatch(
+                        asset_id=web.id,
+                        patch_id="PATCH-ORACLE-WEBLOGIC-14.1.2",
+                        maintenance_window="02:00–04:00",
+                        environment=web.environment,
+                        status="recommended",
+                    )
+                )
+            if cicd:
+                session.add(
+                    AssetPatch(
+                        asset_id=cicd.id,
+                        patch_id="PATCH-JENKINS-2.441",
+                        maintenance_window="01:00–03:00",
+                        environment=cicd.environment,
+                        status="recommended",
+                    )
+                )
+                session.add(
+                    AssetPatch(
+                        asset_id=cicd.id,
+                        patch_id="PATCH-JETBRAINS-TEAMCITY-2024.02.1",
+                        maintenance_window="01:00–03:00",
+                        environment=cicd.environment,
+                        status="recommended",
+                    )
+                )
+            if devdb:
+                # Example: show that low-criticality env still gets patch recommendations
+                session.add(
+                    AssetPatch(
+                        asset_id=devdb.id,
+                        patch_id="PATCH-PALOALTO-PANOS-11.0.5",
+                        maintenance_window="03:00–04:00",
+                        environment=devdb.environment,
+                        status="recommended",
+                    )
+                )
+
+            session.commit()
+            print(f"✓ Created {len(patches)} sample patches")
         
         # Calculate risk scores for sample CVEs
-        print("Calculating risk scores...")
-        from app.services.risk_aggregator import RiskAggregator
-        aggregator = RiskAggregator(session)
-        aggregator.calculate_all_risks()
+        if has_risk_scores:
+            print("✓ Risk scores already exist. Skipping risk scoring...")
+        else:
+            print("Calculating risk scores...")
+            from app.services.risk_aggregator import RiskAggregator
+
+            aggregator = RiskAggregator(session)
+            aggregator.calculate_all_risks()
         
         print("✓ Sample data creation complete!")
         
