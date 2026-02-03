@@ -95,7 +95,7 @@ CVE Threat Radar addresses these challenges by applying ML to predict which vuln
 
 5. **Run the application**
    ```bash
-   python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   python -m uvicorn app.main:app --reload --host 127.0.0.0 --port 8000
    ```
 
 6. **Access the application**
@@ -284,7 +284,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Building tools at the intersection of artificial intelligence and security. I believe that the future of cybersecurity lies in intelligent automation that augments human decision-making, not replaces it.
 
-- GitHub: [@archffsarch](https://github.com/yanitedhacker)
+- GitHub: (https://github.com/yanitedhacker)
 
 ---
 
