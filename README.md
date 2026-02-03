@@ -284,7 +284,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Building tools at the intersection of artificial intelligence and security. I believe that the future of cybersecurity lies in intelligent automation that augments human decision-making, not replaces it.
 
-- GitHub: [@archffsarch](https://github.com/archffsarch)
+- GitHub: [@archffsarch](https://github.com/yanitedhacker)
 
 ---
 
