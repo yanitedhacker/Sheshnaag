@@ -39,12 +39,14 @@ def test_patch_cost_score_behaves_reasonably():
         estimated_downtime_minutes=5,
         rollback_complexity=0.1,
         historical_failure_rate=0.01,
+        change_risk_score=0.1,
     )
     high = patch_cost_score(
         requires_reboot=True,
         estimated_downtime_minutes=120,
         rollback_complexity=0.9,
         historical_failure_rate=0.2,
+        change_risk_score=0.8,
     )
     assert 0.0 <= low <= 1.0
     assert 0.0 <= high <= 1.0

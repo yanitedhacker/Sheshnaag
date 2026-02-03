@@ -10,7 +10,7 @@ For production with multiple instances, consider using Redis-based rate limiting
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import Request, HTTPException, status
@@ -48,7 +48,7 @@ class RateLimiter:
         self._lock = asyncio.Lock()
 
         # Cleanup interval
-        self._last_cleanup = datetime.utcnow()
+        self._last_cleanup = datetime.now(timezone.utc)
         self._cleanup_interval = timedelta(minutes=5)
 
     async def check(self, request: Request) -> None:
@@ -62,7 +62,7 @@ class RateLimiter:
             HTTPException: If rate limit exceeded
         """
         client_ip = self._get_client_ip(request)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         async with self._lock:
             # Periodic cleanup
@@ -140,7 +140,7 @@ class RateLimiter:
 
     async def _cleanup_old_requests(self) -> None:
         """Remove old request records to prevent memory growth."""
-        cutoff = datetime.utcnow() - timedelta(hours=1)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
         empty_ips = []
 
         for ip, times in self.requests.items():
@@ -166,7 +166,7 @@ class RateLimiter:
             Dict with remaining requests per window
         """
         client_ip = self._get_client_ip(request)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         request_times = self.requests.get(client_ip, [])
 
         one_minute_ago = now - timedelta(minutes=1)

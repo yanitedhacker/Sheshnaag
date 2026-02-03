@@ -19,7 +19,7 @@ returns dates in a format that Python's datetime doesn't like by default.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 import aiohttp
@@ -104,7 +104,7 @@ class NVDClient:
     
     async def fetch_recent_cves(self, days: int = 7, since: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """Fetch CVEs modified in the last N days or since a given timestamp."""
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
         start_date = since or (end_date - timedelta(days=days))
         
         all_cves = []

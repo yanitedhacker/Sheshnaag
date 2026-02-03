@@ -401,12 +401,17 @@ class RiskPredictor:
 
             model_data = joblib.load(model_file)
 
-        # Fall back to legacy pickle format for backwards compatibility
+        # Legacy pickle format is no longer supported for security reasons
         elif os.path.exists(legacy_model_file):
-            logger.warning(f"Loading legacy pickle model from {legacy_model_file}. Consider re-saving in joblib format.")
-            import pickle
-            with open(legacy_model_file, "rb") as f:
-                model_data = pickle.load(f)
+            logger.error(
+                f"Legacy pickle model found at {legacy_model_file}. "
+                "Pickle files are not supported due to security risks (arbitrary code execution). "
+                "Please re-train and save the model in joblib format."
+            )
+            raise ValueError(
+                "Legacy pickle models are no longer supported for security reasons. "
+                "Please re-train the model and save it using the save_model() method."
+            )
         else:
             logger.warning(f"No model found at {load_path}")
             return False

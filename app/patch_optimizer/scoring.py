@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.patch_optimizer.time_models import time_pressure_multiplier
@@ -106,7 +106,7 @@ def time_pressure_score(
 
     We prefer CVE published date if available; otherwise patch released date.
     """
-    now = as_of or datetime.utcnow()
+    now = as_of or datetime.now(timezone.utc)
     base = cve_published_at or patch_released_at
     if not base:
         return 0.0

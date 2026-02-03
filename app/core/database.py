@@ -1,14 +1,68 @@
 """Database connection and session management."""
 
-from sqlalchemy import create_engine
+import logging
+import time
+from typing import Generator
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 # Check if using SQLite
 is_sqlite = "sqlite" in settings.database_url
+
+
+def create_engine_with_retry(
+    url: str,
+    max_retries: int = 5,
+    retry_delay: float = 2.0,
+    **engine_kwargs
+):
+    """
+    Create database engine with retry logic for production reliability.
+
+    Args:
+        url: Database connection URL
+        max_retries: Maximum number of connection attempts
+        retry_delay: Initial delay between retries (exponential backoff)
+        **engine_kwargs: Additional arguments passed to create_engine
+
+    Returns:
+        SQLAlchemy engine instance
+    """
+    engine = create_engine(url, **engine_kwargs)
+
+    # For SQLite, no need to test connection
+    if "sqlite" in url:
+        return engine
+
+    # Test connection with retries for PostgreSQL
+    for attempt in range(max_retries):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            logger.info("Database connection established successfully")
+            return engine
+        except OperationalError as e:
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(
+                    f"Database connection attempt {attempt + 1}/{max_retries} failed. "
+                    f"Retrying in {wait_time:.1f}s... Error: {e}"
+                )
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to connect to database after {max_retries} attempts")
+                raise
+
+    return engine
+
 
 # Sync engine for migrations and scripts
 if is_sqlite:
@@ -18,7 +72,7 @@ if is_sqlite:
         poolclass=StaticPool
     )
 else:
-    engine = create_engine(
+    engine = create_engine_with_retry(
         settings.database_url,
         pool_pre_ping=True,
         pool_size=10,
@@ -62,7 +116,7 @@ async def get_async_session() -> AsyncSession:
             await session.close()
 
 
-def get_sync_session():
+def get_sync_session() -> Generator[Session, None, None]:
     """Get synchronous database session."""
     session = SessionLocal()
     try:

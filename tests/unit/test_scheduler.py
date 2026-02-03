@@ -39,8 +39,8 @@ def test_scheduler_respects_budget_and_capacity(monkeypatch):
         scheduler.optimizer,
         "list_patches",
         lambda: [
-            SimpleNamespace(patch_id="P1", estimated_downtime_minutes=30),
-            SimpleNamespace(patch_id="P2", estimated_downtime_minutes=10),
+            SimpleNamespace(patch_id="P1", estimated_downtime_minutes=30, reboot_group=None),
+            SimpleNamespace(patch_id="P2", estimated_downtime_minutes=10, reboot_group=None),
         ],
     )
 

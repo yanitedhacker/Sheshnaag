@@ -1,5 +1,6 @@
 """CVE API endpoints."""
 
+import re
 from datetime import datetime
 from typing import Optional, List
 
@@ -11,6 +12,9 @@ from app.core.database import get_sync_session
 from app.services.cve_service import CVEService
 
 router = APIRouter(prefix="/api/cves", tags=["CVEs"])
+
+# CVE ID format: CVE-YYYY-NNNNN (year followed by at least 4 digits)
+CVE_ID_PATTERN = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
 
 
 class CVEResponse(BaseModel):
@@ -44,15 +48,22 @@ def get_cve(
 ):
     """
     Get detailed CVE information by CVE ID.
-    
+
     - **cve_id**: CVE identifier (e.g., CVE-2024-1234)
     """
+    # Validate CVE ID format
+    if not CVE_ID_PATTERN.match(cve_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid CVE ID format: {cve_id}. Expected format: CVE-YYYY-NNNNN"
+        )
+
     service = CVEService(session)
     cve = service.get_cve_by_id(cve_id.upper())
-    
+
     if not cve:
         raise HTTPException(status_code=404, detail=f"CVE {cve_id} not found")
-    
+
     return cve
 
 

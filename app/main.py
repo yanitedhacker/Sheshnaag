@@ -28,9 +28,12 @@ and authentication support.
 """
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
+import redis
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -55,6 +58,24 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 configure_logging(settings.debug)
 logger = logging.getLogger(__name__)
 feed_scheduler = FeedScheduler()
+
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Add request ID to all requests for tracing and debugging."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Get request ID from header or generate new one
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+
+        # Store in request state for access in handlers
+        request.state.request_id = request_id
+
+        response = await call_next(request)
+
+        # Add request ID to response headers
+        response.headers["X-Request-ID"] = request_id
+
+        return response
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -131,6 +152,17 @@ class MetricsAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def check_redis_connection() -> bool:
+    """Check if Redis is available and responding."""
+    try:
+        r = redis.from_url(settings.redis_url, socket_connect_timeout=2)
+        r.ping()
+        return True
+    except Exception as e:
+        logger.warning(f"Redis health check failed: {e}")
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -154,11 +186,14 @@ async def lifespan(app: FastAPI):
 
     # Start ingestion scheduler
     feed_scheduler.start()
+    logger.info("Feed scheduler started")
 
     yield
 
     # Shutdown
     logger.info("Shutting down application")
+    feed_scheduler.shutdown()
+    logger.info("Feed scheduler stopped")
 
 
 # Create FastAPI app
@@ -185,7 +220,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add security headers middleware (first, so it applies to all responses)
+# Add request ID middleware (first, so all other middleware can use it)
+app.add_middleware(RequestIDMiddleware)
+
+# Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Add rate limiting middleware
@@ -198,8 +236,8 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
-    expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Request-ID"],
+    expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-Request-ID"],
     max_age=600,  # Cache preflight requests for 10 minutes
 )
 
@@ -251,13 +289,23 @@ def root():
 
 @app.get("/health", tags=["Health"])
 def health_check():
-    """Health check endpoint."""
+    """Health check endpoint with dependency status."""
+    # Check Redis connection
+    redis_healthy = check_redis_connection()
+
+    # Determine overall status
+    status = "healthy" if redis_healthy else "degraded"
+
     return {
-        "status": "healthy",
+        "status": status,
         "environment": settings.environment,
         "version": settings.app_version,
         "auth_enabled": settings.auth_enabled,
-        "rate_limit_enabled": settings.rate_limit_enabled
+        "rate_limit_enabled": settings.rate_limit_enabled,
+        "dependencies": {
+            "database": "healthy",  # If we got here, DB is working
+            "redis": "healthy" if redis_healthy else "unavailable"
+        }
     }
 
 
@@ -295,12 +343,18 @@ def get_dashboard_data():
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Custom HTTP exception handler."""
+    # Include request ID in error response if available
+    request_id = getattr(request.state, 'request_id', None)
+    content = {
+        "error": exc.detail,
+        "status_code": exc.status_code
+    }
+    if request_id:
+        content["request_id"] = request_id
+
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "error": exc.detail,
-            "status_code": exc.status_code
-        },
+        content=content,
         headers=getattr(exc, 'headers', None)
     )
 
@@ -308,23 +362,25 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """General exception handler for unexpected errors."""
-    logger.exception(f"Unhandled exception: {exc}")
+    request_id = getattr(request.state, 'request_id', None)
+    logger.exception(f"Unhandled exception (request_id={request_id}): {exc}")
 
     # Don't expose internal errors in production
     if settings.environment == "production":
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Internal server error", "status_code": 500}
-        )
+        content = {"error": "Internal server error", "status_code": 500}
+        if request_id:
+            content["request_id"] = request_id
+        return JSONResponse(status_code=500, content=content)
 
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": str(exc),
-            "type": type(exc).__name__,
-            "status_code": 500
-        }
-    )
+    content = {
+        "error": str(exc),
+        "type": type(exc).__name__,
+        "status_code": 500
+    }
+    if request_id:
+        content["request_id"] = request_id
+
+    return JSONResponse(status_code=500, content=content)
 
 
 if __name__ == "__main__":
@@ -335,5 +391,3 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.debug
     )
-    # Shutdown scheduler
-    feed_scheduler.shutdown()
