@@ -23,8 +23,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-cve_threat_radar}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Port not exposed to host - access via internal network only
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cve_radar}"]
       interval: 10s
@@ -38,12 +37,12 @@ services:
   redis:
     image: redis:7-alpine
     container_name: cve-radar-redis
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    # Port not exposed to host - access via internal network only
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -62,8 +61,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-cve_radar}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cve_threat_radar}
       ASYNC_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-cve_radar}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cve_threat_radar}
 
-      # Redis configuration
-      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      # Redis configuration (password required)
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
 
       # Application settings
       ENVIRONMENT: ${ENVIRONMENT:-production}
@@ -81,7 +80,7 @@ services:
       # External API keys
       NVD_API_KEY: ${NVD_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -106,7 +105,7 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: cve-radar-frontend
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
     depends_on:
       - api
     networks:
@@ -115,10 +114,10 @@ services:
 
   # Prometheus for monitoring
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.54.1
     container_name: cve-radar-prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
