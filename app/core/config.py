@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
+    # AI / Retrieval
+    ai_gateway_mode: str = "grounded_template"
+    default_embedding_model: str = "hash-bow-v1"
+    knowledge_chunk_size: int = 420
+    knowledge_chunk_overlap: int = 80
+
     # External APIs
     nvd_api_key: Optional[str] = None
     nvd_base_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"

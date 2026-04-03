@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from app.core.database import get_sync_session
+from app.core.security import TokenData, verify_token_optional
+from app.core.tenancy import resolve_tenant
+from app.services.auth_service import AuthService
 from app.services.asset_service import AssetService
 
 router = APIRouter(prefix="/api/assets", tags=["Assets"])
@@ -21,12 +24,15 @@ class SoftwareItem(BaseModel):
 
 class AssetCreate(BaseModel):
     """Asset creation model."""
+    tenant_id: Optional[int] = None
     name: str = Field(..., min_length=1, max_length=200)
     asset_type: Optional[str] = Field(None, description="server, application, network_device, etc.")
     hostname: Optional[str] = None
     ip_address: Optional[str] = None
     environment: Optional[str] = Field(None, description="production, staging, development")
     criticality: str = Field("medium", description="critical, high, medium, low")
+    business_criticality: Optional[str] = Field(None, description="business criticality override")
+    is_crown_jewel: bool = False
     installed_software: List[SoftwareItem] = []
     operating_system: Optional[str] = None
     os_version: Optional[str] = None
@@ -59,7 +65,8 @@ class VulnerabilityStatusUpdate(BaseModel):
 @router.post("/")
 def create_asset(
     asset_data: AssetCreate,
-    session: Session = Depends(get_sync_session)
+    session: Session = Depends(get_sync_session),
+    token_data: Optional[TokenData] = Depends(verify_token_optional),
 ):
     """
     Create a new asset.
@@ -67,6 +74,18 @@ def create_asset(
     Assets represent servers, applications, or other infrastructure
     that can be scanned for vulnerabilities.
     """
+    auth_service = AuthService(session)
+    tenant_id = asset_data.tenant_id
+    if tenant_id is None and token_data and token_data.memberships:
+        tenant = auth_service.resolve_private_tenant(token_data=token_data)
+        tenant_id = tenant.id
+    elif tenant_id is not None:
+        tenant = auth_service.resolve_private_tenant(token_data=token_data, tenant_id=tenant_id)
+    else:
+        tenant = None
+
+    if tenant is not None:
+        auth_service.assert_tenant_access(tenant, token_data, access="write")
     service = AssetService(session)
     
     # Convert software items to dict format
@@ -77,6 +96,7 @@ def create_asset(
     
     asset = service.create_asset({
         **asset_data.model_dump(exclude={"installed_software"}),
+        "tenant_id": tenant_id,
         "installed_software": software_list
     })
     session.commit()
@@ -101,6 +121,7 @@ def get_asset(
 
 @router.get("/")
 def list_assets(
+    tenant_slug: Optional[str] = Query(None, description="Tenant slug. Defaults to demo-public."),
     environment: Optional[str] = Query(None, description="Filter by environment"),
     criticality: Optional[str] = Query(None, description="Filter by criticality"),
     page: int = Query(1, ge=1),
@@ -108,8 +129,10 @@ def list_assets(
     session: Session = Depends(get_sync_session)
 ):
     """List all assets with optional filters."""
+    tenant = resolve_tenant(session, tenant_slug=tenant_slug, default_to_demo=True)
     service = AssetService(session)
     return service.list_assets(
+        tenant_id=tenant.id,
         environment=environment,
         criticality=criticality,
         page=page,
@@ -187,6 +210,7 @@ def update_vulnerability_status(
 
 @router.get("/organization/summary")
 def get_organization_summary(
+    tenant_slug: Optional[str] = Query(None, description="Tenant slug. Defaults to demo-public."),
     session: Session = Depends(get_sync_session)
 ):
     """
@@ -194,5 +218,6 @@ def get_organization_summary(
     
     Includes asset counts, vulnerability distribution, and most vulnerable assets.
     """
+    tenant = resolve_tenant(session, tenant_slug=tenant_slug, default_to_demo=True)
     service = AssetService(session)
-    return service.get_organization_risk_summary()
+    return service.get_organization_risk_summary(tenant_id=tenant.id)

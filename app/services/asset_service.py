@@ -23,12 +23,15 @@ class AssetService:
     def create_asset(self, asset_data: Dict[str, Any]) -> Asset:
         """Create a new asset."""
         asset = Asset(
+            tenant_id=asset_data.get("tenant_id"),
             name=asset_data["name"],
             asset_type=asset_data.get("asset_type"),
             hostname=asset_data.get("hostname"),
             ip_address=asset_data.get("ip_address"),
             environment=asset_data.get("environment"),
             criticality=asset_data.get("criticality", "medium"),
+            business_criticality=asset_data.get("business_criticality", asset_data.get("criticality", "medium")),
+            is_crown_jewel=asset_data.get("is_crown_jewel", False),
             installed_software=asset_data.get("installed_software", []),
             operating_system=asset_data.get("operating_system"),
             os_version=asset_data.get("os_version"),
@@ -63,11 +66,14 @@ class AssetService:
         return {
             "id": asset.id,
             "name": asset.name,
+            "tenant_id": asset.tenant_id,
             "asset_type": asset.asset_type,
             "hostname": asset.hostname,
             "ip_address": asset.ip_address,
             "environment": asset.environment,
             "criticality": asset.criticality,
+            "business_criticality": asset.business_criticality,
+            "is_crown_jewel": asset.is_crown_jewel,
             "installed_software": asset.installed_software,
             "operating_system": asset.operating_system,
             "os_version": asset.os_version,
@@ -82,6 +88,7 @@ class AssetService:
     
     def list_assets(
         self,
+        tenant_id: Optional[int] = None,
         environment: Optional[str] = None,
         criticality: Optional[str] = None,
         page: int = 1,
@@ -89,6 +96,9 @@ class AssetService:
     ) -> Dict[str, Any]:
         """List assets with filters."""
         query = self.session.query(Asset).filter(Asset.is_active == True)
+
+        if tenant_id is not None:
+            query = query.filter(Asset.tenant_id == tenant_id)
         
         if environment:
             query = query.filter(Asset.environment == environment)
@@ -110,9 +120,12 @@ class AssetService:
             results.append({
                 "id": asset.id,
                 "name": asset.name,
+                "tenant_id": asset.tenant_id,
                 "asset_type": asset.asset_type,
                 "environment": asset.environment,
                 "criticality": asset.criticality,
+                "business_criticality": asset.business_criticality,
+                "is_crown_jewel": asset.is_crown_jewel,
                 "open_vulnerabilities": open_vulns
             })
         
@@ -263,18 +276,22 @@ class AssetService:
         
         return {"status": "updated", "new_status": status}
     
-    def get_organization_risk_summary(self) -> Dict[str, Any]:
+    def get_organization_risk_summary(self, tenant_id: Optional[int] = None) -> Dict[str, Any]:
         """Get organization-wide vulnerability risk summary."""
+        asset_filter = [Asset.is_active == True]
+        if tenant_id is not None:
+            asset_filter.append(Asset.tenant_id == tenant_id)
+
         # Total assets
         total_assets = self.session.query(func.count(Asset.id)).filter(
-            Asset.is_active == True
+            *asset_filter
         ).scalar()
         
         # Assets by criticality
         criticality_dist = self.session.query(
             Asset.criticality,
             func.count(Asset.id)
-        ).filter(Asset.is_active == True).group_by(Asset.criticality).all()
+        ).filter(*asset_filter).group_by(Asset.criticality).all()
         
         # Open vulnerabilities by risk level
         vuln_by_risk = self.session.query(
@@ -284,8 +301,11 @@ class AssetService:
             CVE, CVE.id == RiskScore.cve_id
         ).join(
             AssetVulnerability, AssetVulnerability.cve_id == CVE.id
+        ).join(
+            Asset, Asset.id == AssetVulnerability.asset_id
         ).filter(
-            AssetVulnerability.status == "open"
+            AssetVulnerability.status == "open",
+            *asset_filter
         ).group_by(RiskScore.risk_level).all()
         
         # Most vulnerable assets
@@ -295,7 +315,8 @@ class AssetService:
             Asset.criticality,
             func.count(AssetVulnerability.id).label("vuln_count")
         ).join(AssetVulnerability).filter(
-            AssetVulnerability.status == "open"
+            AssetVulnerability.status == "open",
+            *asset_filter
         ).group_by(Asset.id).order_by(desc("vuln_count")).limit(5).all()
         
         return {

@@ -42,17 +42,34 @@ from prometheus_client import make_asgi_app
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings, validate_settings_for_startup
-from app.core.database import engine, Base
+from app.core.database import engine, Base, SessionLocal
 from app.core.logging import configure_logging
 from app.core.rate_limit import rate_limiter
 from app.core.security import decode_token
-from app.api.routes import cve_router, risk_router, asset_router, feed_router, patch_router
+from app.api.routes import (
+    asset_router,
+    auth_router,
+    copilot_router,
+    cve_router,
+    feed_router,
+    governance_router,
+    graph_router,
+    import_router,
+    model_router,
+    patch_router,
+    risk_router,
+    simulation_router,
+    tenant_router,
+    workbench_router,
+)
 from app.ingestion.scheduler import FeedScheduler
 from app.ml.model_registry import preload_models
+from app.services.demo_seed_service import DemoSeedService
 
 # Get project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 
 # Configure logging
 configure_logging(settings.debug)
@@ -181,6 +198,15 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
 
+    # Seed demo-public tenant and baseline v2 data
+    session = SessionLocal()
+    try:
+        DemoSeedService(session).seed()
+        session.commit()
+    finally:
+        session.close()
+    logger.info("Demo seed verified")
+
     # Preload ML models
     preload_models()
 
@@ -252,19 +278,31 @@ app.include_router(risk_router)
 app.include_router(asset_router)
 app.include_router(feed_router)
 app.include_router(patch_router)
+app.include_router(workbench_router)
+app.include_router(graph_router)
+app.include_router(simulation_router)
+app.include_router(copilot_router)
+app.include_router(model_router)
+app.include_router(import_router)
+app.include_router(governance_router)
+app.include_router(auth_router)
+app.include_router(tenant_router)
 
 # Mount static files for frontend
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+if FRONTEND_DIST_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIST_DIR)), name="static")
 
 
 @app.get("/dashboard", tags=["Frontend"])
 async def serve_dashboard():
     """Serve the frontend dashboard."""
-    index_path = FRONTEND_DIR / "index.html"
+    index_path = FRONTEND_DIST_DIR / "index.html"
     if index_path.exists():
         return FileResponse(str(index_path))
-    return {"error": "Dashboard not found"}
+    return {
+        "error": "Frontend build not found",
+        "detail": "Build the Vite frontend or use the dedicated frontend container/dev server.",
+    }
 
 
 @app.get("/", tags=["Health"])
@@ -317,23 +355,40 @@ def get_dashboard_data():
     Combines multiple data sources for the main dashboard view.
     """
     from app.core.database import SessionLocal
-    from app.services.risk_aggregator import RiskAggregator
+    from app.core.tenancy import get_or_create_demo_tenant
+    from app.services.graph_service import ExposureGraphService
+    from app.services.governance_service import GovernanceService
+    from app.services.model_trust_service import ModelTrustService
     from app.services.cve_service import CVEService
     from app.services.asset_service import AssetService
+    from app.services.risk_aggregator import RiskAggregator
+    from app.services.workbench_service import WorkbenchService
 
     session = SessionLocal()
     try:
-        risk_aggregator = RiskAggregator(session)
+        tenant = get_or_create_demo_tenant(session)
         cve_service = CVEService(session)
         asset_service = AssetService(session)
+        risk_aggregator = RiskAggregator(session)
+        workbench_service = WorkbenchService(session)
+        graph_service = ExposureGraphService(session)
+        model_trust_service = ModelTrustService(session)
+        governance_service = GovernanceService(session)
 
         return {
+            "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
             "risk_summary": risk_aggregator.get_risk_summary(),
-            "top_priorities": risk_aggregator.get_top_priorities(limit=10),
+            "workbench": workbench_service.get_summary(tenant, limit=6),
+            "top_priorities": workbench_service.get_summary(tenant, limit=10)["actions"],
             "cve_statistics": cve_service.get_cve_statistics(),
             "trending_cves": cve_service.get_trending_cves(limit=5),
-            "heatmap_data": risk_aggregator.get_risk_heatmap_data(),
-            "organization_summary": asset_service.get_organization_risk_summary()
+            "attack_paths": graph_service.get_attack_paths(tenant, limit=3)["paths"],
+            "organization_summary": asset_service.get_organization_risk_summary(tenant_id=tenant.id),
+            "model_trust": model_trust_service.get_trust_snapshot(),
+            "governance": {
+                "approvals": governance_service.list_approvals(tenant, limit=5)["items"],
+                "feedback": governance_service.list_feedback(tenant, limit=5)["items"],
+            },
         }
     finally:
         session.close()

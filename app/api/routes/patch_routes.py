@@ -11,11 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.security import require_scope
+from app.models.asset import Asset
 from app.models.patch import Patch, AssetPatch
 from app.models.ops import PatchPlan, PatchPlanItem
 from app.patch_optimizer.engine import PatchOptimizer
 from app.patch_scheduler.constraints import SchedulingConstraints
 from app.patch_scheduler.scheduler import PatchScheduler
+from app.services.governance_service import GovernanceService
 
 router = APIRouter(prefix="/api/patches", tags=["Patches"])
 
@@ -172,6 +174,15 @@ def get_patch_detail(
 
     # Asset mappings
     mappings = session.query(AssetPatch).filter(AssetPatch.patch_id == patch_id).all()
+    tenant = None
+    if mappings:
+        asset = session.query(Asset).filter(Asset.id == mappings[0].asset_id).first()
+        if asset and asset.tenant_id:
+            from app.models.v2 import Tenant
+
+            tenant = session.query(Tenant).filter(Tenant.id == asset.tenant_id).first()
+    approvals = GovernanceService(session).list_approvals(tenant)["items"] if tenant else []
+    approvals = [approval for approval in approvals if approval["patch_id"] == patch_id]
 
     return {
         "patch": {
@@ -207,4 +218,5 @@ def get_patch_detail(
             }
             for m in mappings
         ],
+        "approvals": approvals,
     }

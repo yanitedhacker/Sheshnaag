@@ -13,6 +13,8 @@ class Asset(Base):
     __tablename__ = "assets"
     
     id = Column(Integer, primary_key=True, index=True)
+
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="SET NULL"), index=True)
     
     # Asset Identification
     name = Column(String(200), nullable=False)
@@ -23,6 +25,8 @@ class Asset(Base):
     ip_address = Column(String(50))
     environment = Column(String(50))  # production, staging, development
     criticality = Column(String(20))  # critical, high, medium, low
+    business_criticality = Column(String(20), default="medium")
+    is_crown_jewel = Column(Boolean, default=False)
     
     # Software Stack (for matching against CVEs)
     installed_software = Column(JSON)  # [{"vendor": "apache", "product": "httpd", "version": "2.4.51"}, ...]
@@ -47,6 +51,11 @@ class Asset(Base):
     # Relationships
     vulnerabilities = relationship("AssetVulnerability", back_populates="asset", cascade="all, delete-orphan")
     patches = relationship("AssetPatch", back_populates="asset", cascade="all, delete-orphan")
+    tenant = relationship("Tenant", back_populates="assets")
+    services = relationship("Service", back_populates="asset", cascade="all, delete-orphan")
+    network_exposures = relationship("NetworkExposure", back_populates="asset", cascade="all, delete-orphan")
+    identity_principals = relationship("IdentityPrincipal", back_populates="asset", cascade="all, delete-orphan")
+    software_components = relationship("AssetSoftware", back_populates="asset", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Asset {self.name}>"

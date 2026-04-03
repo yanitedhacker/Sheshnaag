@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 import sys
 
-import structlog
+try:
+    import structlog
+except ImportError:  # pragma: no cover - depends on environment
+    structlog = None
 
 
 def configure_logging(debug: bool = False) -> None:
@@ -16,6 +19,10 @@ def configure_logging(debug: bool = False) -> None:
         stream=sys.stdout,
         level=level,
     )
+
+    if structlog is None:
+        logging.getLogger(__name__).warning("structlog is not installed; using stdlib logging only")
+        return
 
     structlog.configure(
         processors=[

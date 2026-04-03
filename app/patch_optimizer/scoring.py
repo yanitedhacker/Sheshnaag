@@ -110,6 +110,10 @@ def time_pressure_score(
     base = cve_published_at or patch_released_at
     if not base:
         return 0.0
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     days = (now - base).total_seconds() / 86400.0 + max(0.0, float(delay_days))
     return time_pressure_multiplier(days)
 

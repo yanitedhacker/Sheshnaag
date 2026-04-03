@@ -9,6 +9,7 @@ from sqlalchemy import desc, or_, and_
 
 from app.models.cve import CVE, AffectedProduct
 from app.models.risk_score import RiskScore
+from app.services.intel_service import ThreatIntelService
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class CVEService:
     
     def __init__(self, session: Session):
         self.session = session
+        self.intel_service = ThreatIntelService(session)
     
     def get_cve_by_id(self, cve_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -282,5 +284,43 @@ class CVEService:
                 "explanation": risk_score.explanation,
                 "top_features": risk_score.top_features
             }
+
+        kev = self.intel_service.get_kev_map([cve.cve_id]).get(cve.cve_id)
+        epss = self.intel_service.get_latest_epss_map([cve.cve_id]).get(cve.cve_id)
+        techniques = self.intel_service.get_attack_techniques_for_cves([cve.id]).get(cve.id, [])
+        documents = self.intel_service.get_knowledge_documents(cve_id=cve.id, limit=5)
+
+        data["intel"] = {
+            "kev": {
+                "present": True,
+                "short_description": kev.short_description,
+                "known_ransomware_use": kev.known_ransomware_use,
+                "source_url": kev.source_url,
+            } if kev else {"present": False},
+            "epss": {
+                "score": epss.score,
+                "percentile": epss.percentile,
+                "scored_at": epss.scored_at.isoformat() if epss.scored_at else None,
+                "source_url": epss.source_url,
+            } if epss else None,
+            "attack_techniques": [
+                {
+                    "external_id": technique.external_id,
+                    "name": technique.name,
+                    "tactic": technique.tactic,
+                    "source_url": technique.source_url,
+                }
+                for technique in techniques
+            ],
+            "knowledge_documents": [
+                {
+                    "title": doc.title,
+                    "document_type": doc.document_type,
+                    "source_label": doc.source_label,
+                    "source_url": doc.source_url,
+                }
+                for doc in documents
+            ],
+        }
         
         return data

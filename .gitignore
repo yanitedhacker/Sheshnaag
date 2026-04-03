@@ -14,6 +14,8 @@ __pycache__/
 *$py.class
 *.so
 .Python
+node_modules/
+frontend/dist/
 build/
 develop-eggs/
 dist/
@@ -36,10 +38,15 @@ wheels/
 *.sqlite3
 
 # Environment
+*.env
+*.env.*
 .env
 .env.local
 .env.*.local
 .env.lab
+!.env.example
+!.env.lab.example
+!lab/locust/profiles/*.env
 
 # IDE
 .idea/
@@ -58,6 +65,10 @@ wheels/
 # Logs
 logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # ML Models (large files)
 models/*.pkl
@@ -90,6 +101,15 @@ tmp/
 temp/
 *.tmp
 *.bak
+*.tsbuildinfo
+
+# Frontend tooling
+frontend/.vite/
+
+# Python tooling
+.python-version
+.mypy_cache/
+.ruff_cache/
 
 # Secrets (never commit these)
 *.pem
