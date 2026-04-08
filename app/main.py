@@ -42,6 +42,7 @@ from app.api.routes import (
     run_router,
     simulation_router,
     supply_chain_router,
+    template_router,
     tenant_router,
     workbench_router,
 )
@@ -289,6 +290,7 @@ app.include_router(governance_router)
 app.include_router(auth_router)
 app.include_router(tenant_router)
 app.include_router(supply_chain_router)
+app.include_router(template_router)
 
 # Mount static files for frontend
 if FRONTEND_DIST_DIR.exists():
@@ -331,6 +333,7 @@ def root():
             "assets": "/api/assets",
             "feeds": "/api/feeds",
             "patches": "/api/patches",
+            "templates": "/api/templates",
             "metrics": "/metrics" if settings.metrics_enabled else None
         }
     }

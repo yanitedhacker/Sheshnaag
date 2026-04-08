@@ -1,4 +1,4 @@
-import { Outlet } from "react-router-dom";
+import { Link, Outlet } from "react-router-dom";
 
 const navItems = [
   { href: "#platform", label: "Platform" },
@@ -25,6 +25,7 @@ export function Layout() {
               {item.label}
             </a>
           ))}
+          <Link to="/recipes">Recipes</Link>
         </nav>
 
         <div className="marketing-actions">

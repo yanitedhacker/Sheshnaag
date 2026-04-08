@@ -24,6 +24,7 @@ from app.api.routes.governance_routes import router as governance_router
 from app.api.routes.auth_routes import router as auth_router
 from app.api.routes.tenant_routes import router as tenant_router
 from app.api.routes.supply_chain_routes import router as supply_chain_router
+from app.api.routes.template_routes import router as template_router
 
 __all__ = [
     "cve_router",
@@ -50,4 +51,5 @@ __all__ = [
     "auth_router",
     "tenant_router",
     "supply_chain_router",
+    "template_router",
 ]

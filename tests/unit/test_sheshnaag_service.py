@@ -38,6 +38,15 @@ def test_sheshnaag_intel_overview_and_candidates_bootstrap_from_demo_seed():
     assert overview["mission"]["headline"].startswith("Live CVE intelligence")
     assert overview["summary"]["candidate_count"] >= 1
     assert any(item["feed_key"] == "nvd" for item in overview["sources"])
+
+    for src in overview["sources"]:
+        assert "is_stale" in src, f"missing is_stale on {src['feed_key']}"
+        assert isinstance(src["is_stale"], bool)
+        assert "stale_since" in src
+        assert "last_error" in src
+        assert "recent_item_count_delta" in src
+        assert isinstance(src["recent_item_count_delta"], int)
+
     assert candidates["count"] >= 1
     assert candidates["items"][0]["candidate_score"] >= 0
     assert "factors" in candidates["items"][0]["explainability"]

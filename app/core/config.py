@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     nvd_api_key: Optional[str] = None
     nvd_base_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     exploit_db_url: str = "https://www.exploit-db.com"
+    github_token: Optional[str] = None
 
     # ML Settings
     model_path: str = "./models"

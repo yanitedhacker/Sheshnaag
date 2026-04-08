@@ -24,6 +24,11 @@ class RunLaunchRequest(BaseModel):
     workstation: Dict[str, Any] = Field(default_factory=dict)
 
 
+class RunActionRequest(BaseModel):
+    tenant_id: Optional[int] = None
+    tenant_slug: Optional[str] = None
+
+
 @router.get("")
 def list_runs(
     tenant_slug: Optional[str] = Query(None),
@@ -66,3 +71,48 @@ def get_run(
         return SheshnaagService(session).get_run(tenant, run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{run_id}/health")
+def run_health(
+    run_id: int,
+    tenant_slug: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
+    session: Session = Depends(get_sync_session),
+):
+    """Check the health of a running validation run."""
+    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    try:
+        return SheshnaagService(session).run_health(tenant, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/stop")
+def stop_run(run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)):
+    """Stop a running validation run."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    try:
+        return SheshnaagService(session).stop_run(tenant, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/teardown")
+def teardown_run(run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)):
+    """Teardown a stopped or completed run."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    try:
+        return SheshnaagService(session).teardown_run(tenant, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/destroy")
+def destroy_run(run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)):
+    """Destroy all resources for a run."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    try:
+        return SheshnaagService(session).destroy_run(tenant, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

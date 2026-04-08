@@ -12,7 +12,15 @@ import type {
   ImportResponse,
   ModelTrustResponse,
   PatchDetail,
+  Recipe,
+  RecipeDiffResult,
+  RecipeLintResult,
+  RecipeListResponse,
+  RunHealthResponse,
+  RunListResponse,
+  RunSummary,
   SimulationResponse,
+  TemplateListResponse,
   TenantListResponse,
   TenantOnboardResponse,
   SupplyChainOverviewResponse,
@@ -72,4 +80,39 @@ export const api = {
     fetchJson<ImportResponse>("/api/imports/sbom", { method: "POST", body: JSON.stringify(payload) }),
   importVex: (payload: Record<string, unknown>) =>
     fetchJson<ImportResponse>("/api/imports/vex", { method: "POST", body: JSON.stringify(payload) }),
+
+  // Recipe APIs
+  listRecipes: () => fetchJson<RecipeListResponse>("/api/recipes?tenant_slug=demo-public"),
+  getRecipe: (recipeId: number) => fetchJson<Recipe>(`/api/recipes/${recipeId}?tenant_slug=demo-public`),
+  createRecipe: (payload: Record<string, unknown>) =>
+    fetchJson<Recipe>("/api/recipes", { method: "POST", body: JSON.stringify(payload) }),
+  addRecipeRevision: (recipeId: number, payload: Record<string, unknown>) =>
+    fetchJson<Recipe>(`/api/recipes/${recipeId}/revisions`, { method: "POST", body: JSON.stringify(payload) }),
+  approveRecipeRevision: (recipeId: number, revisionNumber: number, payload: Record<string, unknown>) =>
+    fetchJson<Recipe>(
+      `/api/recipes/${recipeId}/revisions/${revisionNumber}/approve`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  lintRecipe: (payload: Record<string, unknown>) =>
+    fetchJson<RecipeLintResult>("/api/recipes/lint", { method: "POST", body: JSON.stringify(payload) }),
+  diffRecipeRevisions: (recipeId: number, oldRev: number, newRev: number) =>
+    fetchJson<RecipeDiffResult>(
+      `/api/recipes/${recipeId}/diff?old_revision=${oldRev}&new_revision=${newRev}&tenant_slug=demo-public`,
+    ),
+
+  // Run APIs
+  listRuns: () => fetchJson<RunListResponse>("/api/runs?tenant_slug=demo-public"),
+  getRun: (runId: number) => fetchJson<RunSummary>(`/api/runs/${runId}?tenant_slug=demo-public`),
+  getRunHealth: (runId: number) => fetchJson<RunHealthResponse>(`/api/runs/${runId}/health?tenant_slug=demo-public`),
+  stopRun: (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunSummary>(`/api/runs/${runId}/stop`, { method: "POST", body: JSON.stringify(payload) }),
+  teardownRun: (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunSummary>(`/api/runs/${runId}/teardown`, { method: "POST", body: JSON.stringify(payload) }),
+  destroyRun: (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunSummary>(`/api/runs/${runId}/destroy`, { method: "POST", body: JSON.stringify(payload) }),
+  launchRun: (payload: Record<string, unknown>) =>
+    fetchJson<RunSummary>("/api/runs", { method: "POST", body: JSON.stringify(payload) }),
+
+  // Template APIs
+  listTemplates: () => fetchJson<TemplateListResponse>("/api/templates?tenant_slug=demo-public"),
 };

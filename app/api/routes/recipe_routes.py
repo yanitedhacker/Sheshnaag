@@ -36,6 +36,11 @@ class RecipeApproveRequest(BaseModel):
     reviewer: str
 
 
+class RecipeLintRequest(BaseModel):
+    content: Dict[str, Any] = Field(default_factory=dict)
+    expected_distro: Optional[str] = None
+
+
 @router.get("")
 def list_recipes(
     tenant_slug: Optional[str] = Query(None),
@@ -45,6 +50,14 @@ def list_recipes(
     """List recipes."""
     tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
     return SheshnaagService(session).list_recipes(tenant)
+
+
+@router.post("/lint")
+def lint_recipe(request: RecipeLintRequest, session: Session = Depends(get_sync_session)):
+    """Lint recipe content for risky configurations."""
+    return SheshnaagService(session).lint_recipe_content(
+        request.content, expected_distro=request.expected_distro
+    )
 
 
 @router.post("")
@@ -77,6 +90,25 @@ def get_recipe(
         return SheshnaagService(session).get_recipe(tenant, recipe_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{recipe_id}/diff")
+def diff_recipe_revisions(
+    recipe_id: int,
+    old_revision: int = Query(...),
+    new_revision: int = Query(...),
+    tenant_slug: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
+    session: Session = Depends(get_sync_session),
+):
+    """Diff two recipe revisions."""
+    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    try:
+        return SheshnaagService(session).diff_recipe_revisions(
+            tenant, recipe_id=recipe_id, old_revision=old_revision, new_revision=new_revision
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{recipe_id}/revisions")

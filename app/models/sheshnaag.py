@@ -177,8 +177,14 @@ class ResearchCandidate(Base):
     summary = Column(Text)
     candidate_score = Column(Float, default=0.0)
     status = Column(String(50), default="queued", index=True)
+    status_reason = Column(Text)
+    status_changed_at = Column(DateTime)
+    status_changed_by = Column(String(200))
+    merged_into_id = Column(Integer, ForeignKey("research_candidates.id", ondelete="SET NULL"), index=True)
     assignment_state = Column(String(50), default="unassigned")
     assigned_to = Column(String(200))
+    assigned_by = Column(String(200))
+    assigned_at = Column(DateTime)
     package_name = Column(String(200))
     product_name = Column(String(200))
     distro_hint = Column(String(120), default="kali")
@@ -191,6 +197,7 @@ class ResearchCandidate(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     cve = relationship("CVE")
+    merged_into = relationship("ResearchCandidate", remote_side="ResearchCandidate.id")
 
 
 class LabTemplate(Base):

@@ -465,3 +465,106 @@ export type SupplyChainOverviewResponse = {
   }>;
   platform_capabilities: string[];
 };
+
+export type RecipeRevision = {
+  id: number;
+  revision_number: number;
+  approval_state: string;
+  risk_level: string;
+  requires_acknowledgement: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
+  content: Record<string, unknown>;
+};
+
+export type Recipe = {
+  id: number;
+  candidate_id: number | null;
+  name: string;
+  objective: string;
+  provider: string;
+  status: string;
+  created_by: string;
+  current_revision_number: number;
+  created_at: string | null;
+  updated_at: string | null;
+  revisions?: RecipeRevision[];
+};
+
+export type RecipeListResponse = {
+  items: Recipe[];
+  count: number;
+};
+
+export type RecipeLintResult = {
+  errors: string[];
+  warnings: string[];
+  has_blocking_errors: boolean;
+};
+
+export type RecipeDiffChange = {
+  field: string;
+  old_value: unknown;
+  new_value: unknown;
+  is_policy_relevant: boolean;
+};
+
+export type RecipeDiffResult = {
+  changes: RecipeDiffChange[];
+  policy_changes: RecipeDiffChange[];
+  risk_level_changed: boolean;
+  collector_changes: boolean;
+  network_changes: boolean;
+  human_readable: string;
+};
+
+export type RunSummary = {
+  id: number;
+  recipe_revision_id: number;
+  candidate_id: number | null;
+  provider: string;
+  provider_run_ref: string | null;
+  state: string;
+  launch_mode: string;
+  guest_image: string | null;
+  image_digest: string | null;
+  network_mode: string | null;
+  workspace_path: string | null;
+  requires_acknowledgement: boolean;
+  acknowledged_by: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  manifest: Record<string, unknown>;
+  run_transcript: string | null;
+};
+
+export type RunListResponse = {
+  count: number;
+  items: RunSummary[];
+};
+
+export type RunHealthResponse = RunSummary & {
+  health: string;
+  timeline: Array<{
+    event_type: string;
+    level: string;
+    message: string;
+    payload: Record<string, unknown>;
+    created_at: string | null;
+  }>;
+};
+
+export type TemplateItem = {
+  id: number;
+  provider: string;
+  name: string;
+  distro: string;
+  base_image: string;
+  is_hardened: boolean;
+  network_mode: string;
+};
+
+export type TemplateListResponse = {
+  items: TemplateItem[];
+  count: number;
+};

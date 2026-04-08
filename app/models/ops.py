@@ -92,3 +92,21 @@ class PatchPlanItem(Base):
     created_at = Column(DateTime, default=utc_now)
 
     plan = relationship("PatchPlan", back_populates="items")
+
+
+class FeedSyncRun(Base):
+    """Historical record of each feed sync execution."""
+
+    __tablename__ = "feed_sync_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(100), nullable=False, index=True)
+    status = Column(String(30), nullable=False)  # running, success, failed
+    started_at = Column(DateTime)
+    ended_at = Column(DateTime)
+    items_fetched = Column(Integer, default=0)
+    items_new = Column(Integer, default=0)
+    items_updated = Column(Integer, default=0)
+    error_summary = Column(Text, nullable=True)
+    raw_payload_hash = Column(String(128), nullable=True)
+    created_at = Column(DateTime, default=utc_now)

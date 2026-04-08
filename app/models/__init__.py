@@ -5,7 +5,7 @@ from app.models.exploit import Exploit
 from app.models.risk_score import RiskScore, RiskHistory
 from app.models.asset import Asset, AssetVulnerability
 from app.models.patch import Patch, AssetPatch, patch_cves
-from app.models.ops import FeedSyncState, PatchDependency, PatchPlan, PatchPlanItem
+from app.models.ops import FeedSyncRun, FeedSyncState, PatchDependency, PatchPlan, PatchPlanItem
 from app.models.v2 import (
     AnalystFeedback,
     AssetSoftware,
@@ -66,6 +66,7 @@ __all__ = [
     "Patch",
     "AssetPatch",
     "patch_cves",
+    "FeedSyncRun",
     "FeedSyncState",
     "PatchDependency",
     "PatchPlan",

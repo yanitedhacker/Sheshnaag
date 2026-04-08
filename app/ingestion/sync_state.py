@@ -8,7 +8,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.ops import FeedSyncState
+from app.ingestion.connector import ConnectorResult
+from app.models.ops import FeedSyncRun, FeedSyncState
 
 
 def get_or_create_state(session: Session, source: str) -> FeedSyncState:
@@ -42,3 +43,47 @@ def mark_failed(session: Session, state: FeedSyncState, error: str):
     state.status = "failed"
     state.last_error = error
     session.add(state)
+
+
+def record_sync_run(
+    session: Session,
+    result: ConnectorResult,
+    *,
+    status: str = "success",
+    error_summary: Optional[str] = None,
+    raw_payload_hash: Optional[str] = None,
+) -> FeedSyncRun:
+    """Persist a FeedSyncRun row from a ConnectorResult."""
+    started = None
+    if result.started_at:
+        try:
+            started = datetime.fromisoformat(result.started_at)
+        except (ValueError, TypeError):
+            started = None
+
+    ended = None
+    if result.completed_at:
+        try:
+            ended = datetime.fromisoformat(result.completed_at)
+        except (ValueError, TypeError):
+            ended = None
+
+    if not started:
+        started = utc_now()
+    if not ended:
+        ended = utc_now()
+
+    run = FeedSyncRun(
+        source=result.source,
+        status=status,
+        started_at=started,
+        ended_at=ended,
+        items_fetched=result.items_fetched,
+        items_new=result.items_new,
+        items_updated=result.items_updated,
+        error_summary=error_summary,
+        raw_payload_hash=raw_payload_hash,
+    )
+    session.add(run)
+    session.flush()
+    return run
