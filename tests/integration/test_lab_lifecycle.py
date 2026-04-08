@@ -11,10 +11,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.lab.docker_kali_provider import DEFAULT_KALI_IMAGE, DockerKaliProvider
-from app.lab.interfaces import HealthStatus, ProviderResult, RunState, validate_transition
+from app.lab.interfaces import HealthStatus, ProviderResult, RunState
 from app.lab.lima_provider import LimaProvider
 from app.models import Asset
-from app.models.sheshnaag import LabRun, RunEvent
 from app.services.auth_service import AuthService
 from app.services.demo_seed_service import DemoSeedService
 from app.services.sheshnaag_service import SheshnaagService
@@ -29,33 +28,6 @@ def make_session():
     testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     return testing_session_local()
-
-
-def _assert_transition(self: SheshnaagService, run: LabRun, target: RunState) -> None:
-    current = RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
-    if not validate_transition(current, target):
-        raise ValueError(
-            f"Invalid run state transition from '{current.value}' to '{target.value}'."
-        )
-
-
-def _add_run_event(
-    self: SheshnaagService,
-    run: LabRun,
-    event_type: str,
-    result: ProviderResult,
-    level: str = "info",
-    message: Optional[str] = None,
-) -> None:
-    self.session.add(
-        RunEvent(
-            run_id=run.id,
-            event_type=event_type,
-            level=level,
-            message=message or result.transcript,
-            payload=result.to_dict(),
-        )
-    )
 
 
 _original_docker_teardown = DockerKaliProvider.teardown
@@ -73,10 +45,6 @@ def _teardown_idempotent(self: DockerKaliProvider, *, provider_run_ref: str, ret
     return _original_docker_teardown(self, provider_run_ref=provider_run_ref, retain_workspace=retain_workspace)
 
 
-# Production service references these helpers but they are not bound on the class in all environments;
-# bind here so integration tests exercise the real lifecycle methods.
-SheshnaagService._assert_transition = _assert_transition  # type: ignore[method-assign]
-SheshnaagService._add_run_event = _add_run_event  # type: ignore[method-assign]
 DockerKaliProvider.teardown = _teardown_idempotent  # type: ignore[method-assign]
 
 
@@ -164,6 +132,47 @@ def _launch_prepared_run(
     )
 
 
+def _staged_simulated_run(
+    service: SheshnaagService,
+    tenant,
+    *,
+    recipe_content: Dict[str, Any],
+):
+    """WS4-T3: plan -> allocate -> boot without single-shot launch."""
+    service.sync_candidates(tenant)
+    candidates = service.list_candidates(tenant, limit=10)
+    assert candidates["count"] >= 1
+    candidate = candidates["items"][0]
+    service.assign_candidate(tenant, candidate_id=candidate["id"], analyst_name="Lab Owner")
+    recipe = service.create_recipe(
+        tenant,
+        candidate_id=candidate["id"],
+        name="Staged lifecycle recipe",
+        objective="Exercise staged plan, allocate, boot.",
+        created_by="Lab Owner",
+        content=recipe_content,
+    )
+    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    planned = service.plan_run(
+        tenant,
+        recipe_id=recipe["id"],
+        revision_number=1,
+        analyst_name="Lab Owner",
+        workstation=_workstation(),
+        launch_mode="simulated",
+        acknowledge_sensitive=False,
+    )
+    run_id = planned["id"]
+    assert planned["state"] == "planned"
+    assert planned.get("provider_run_ref") in (None, "")
+    allocated = service.allocate_run_resources(tenant, run_id=run_id)
+    assert allocated["state"] == "planned"
+    assert allocated.get("provider_run_ref")
+    booted = service.boot_run(tenant, run_id=run_id)
+    assert booted["state"] == "completed"
+    return booted
+
+
 @pytest.mark.integration
 def test_dry_run_lifecycle():
     session, tenant = _bootstrap_private_lab_session()
@@ -172,6 +181,20 @@ def test_dry_run_lifecycle():
         run = _launch_prepared_run(service, tenant, launch_mode="dry_run", recipe_content=_recipe_content())
         assert run["state"] == "planned"
         assert run.get("timeline"), "expected timeline events on dry run"
+    finally:
+        session.close()
+
+
+@pytest.mark.integration
+def test_staged_plan_allocate_boot_simulated():
+    session, tenant = _bootstrap_private_lab_session()
+    try:
+        service = SheshnaagService(session)
+        run = _staged_simulated_run(service, tenant, recipe_content=_recipe_content())
+        types = {ev["event_type"] for ev in run.get("timeline", [])}
+        assert "run_planned" in types
+        assert "run_allocated" in types
+        assert "run_booted" in types
     finally:
         session.close()
 

@@ -211,6 +211,7 @@ class DockerKaliProvider(LabProvider):
             "workspace": workspace,
             "plan": plan,
             "state": RunState.PLANNED,
+            "launch_mode": run_context.get("launch_mode", "simulated"),
         }
         return ProviderResult(
             state=RunState.PLANNED,
@@ -229,6 +230,24 @@ class DockerKaliProvider(LabProvider):
                 error="unknown_ref",
             )
         plan = info["plan"]
+        launch_mode = info.get("launch_mode", "simulated")
+        if launch_mode == "dry_run":
+            return ProviderResult(
+                state=RunState.PLANNED,
+                provider_run_ref=provider_run_ref,
+                plan=plan,
+                transcript="Dry run: guest boot skipped.",
+                health=HealthStatus.UNKNOWN,
+            )
+        if launch_mode == "simulated":
+            info["state"] = RunState.COMPLETED
+            return ProviderResult(
+                state=RunState.COMPLETED,
+                provider_run_ref=provider_run_ref,
+                plan=plan,
+                transcript="Simulated constrained Kali run completed with synthetic evidence export.",
+                health=HealthStatus.STOPPED,
+            )
         container_name = info["container_name"]
         docker_args = list(plan.get("docker_args", []))
         docker_args.insert(2, "--name")

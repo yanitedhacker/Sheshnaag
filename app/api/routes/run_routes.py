@@ -24,6 +24,12 @@ class RunLaunchRequest(BaseModel):
     workstation: Dict[str, Any] = Field(default_factory=dict)
 
 
+class RunPlanRequest(RunLaunchRequest):
+    """Staged lifecycle: plan defaults to dry_run; set launch_mode for allocate/boot behavior."""
+
+    launch_mode: str = "dry_run"
+
+
 class RunActionRequest(BaseModel):
     tenant_id: Optional[int] = None
     tenant_slug: Optional[str] = None
@@ -38,6 +44,24 @@ def list_runs(
     """List validation runs."""
     tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
     return SheshnaagService(session).list_runs(tenant)
+
+
+@router.post("/plan")
+def plan_run(request: RunPlanRequest, session: Session = Depends(get_sync_session)):
+    """Create a planned run record with provider build_plan output (no allocation yet)."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    try:
+        return SheshnaagService(session).plan_run(
+            tenant,
+            recipe_id=request.recipe_id,
+            revision_number=request.revision_number,
+            analyst_name=request.analyst_name,
+            workstation=request.workstation,
+            launch_mode=request.launch_mode,
+            acknowledge_sensitive=request.acknowledge_sensitive,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("")
@@ -71,6 +95,34 @@ def get_run(
         return SheshnaagService(session).get_run(tenant, run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/allocate")
+def allocate_run_resources(
+    run_id: int,
+    request: RunActionRequest,
+    session: Session = Depends(get_sync_session),
+):
+    """Allocate provider workspace/resources after POST /plan."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    try:
+        return SheshnaagService(session).allocate_run_resources(tenant, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/boot")
+def boot_run(
+    run_id: int,
+    request: RunActionRequest,
+    session: Session = Depends(get_sync_session),
+):
+    """Boot guest after allocate."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    try:
+        return SheshnaagService(session).boot_run(tenant, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{run_id}/health")

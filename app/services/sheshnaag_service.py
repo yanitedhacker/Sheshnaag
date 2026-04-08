@@ -114,6 +114,59 @@ class SheshnaagService:
         self.artifact_generator = DefensiveArtifactGenerator()
         self.attestation_signer = HashAttestationSigner()
 
+    def _assert_transition(self, run: LabRun, target: RunState) -> None:
+        current = RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
+        if not validate_transition(current, target):
+            raise ValueError(
+                f"Invalid run state transition from '{current.value}' to '{target.value}'."
+            )
+
+    def _add_run_event(
+        self,
+        run: LabRun,
+        event_type: str,
+        result: ProviderResult,
+        level: str = "info",
+        message: Optional[str] = None,
+    ) -> None:
+        self.session.add(
+            RunEvent(
+                run_id=run.id,
+                event_type=event_type,
+                level=level,
+                message=message or result.transcript,
+                payload=result.to_dict(),
+            )
+        )
+
+    def _analyst_display_name(self, run: LabRun) -> str:
+        if run.analyst_id:
+            row = (
+                self.session.query(AnalystIdentity)
+                .filter(AnalystIdentity.id == run.analyst_id)
+                .first()
+            )
+            if row:
+                return row.name
+        return "analyst"
+
+    def _run_context_for_provider(
+        self,
+        tenant: Tenant,
+        run: LabRun,
+        *,
+        analyst_name: str,
+        candidate: Optional[ResearchCandidate],
+    ) -> Dict[str, Any]:
+        return {
+            "run_id": run.id,
+            "tenant_slug": tenant.slug,
+            "analyst_name": analyst_name,
+            "launch_mode": run.launch_mode,
+            "candidate": self._candidate_payload(candidate) if candidate else {},
+            "cve_id": candidate.cve.cve_id if candidate and candidate.cve else None,
+        }
+
     def get_intel_overview(self, tenant: Tenant) -> Dict[str, Any]:
         """Return source and candidate freshness data."""
         self._ensure_source_feeds()
@@ -273,6 +326,9 @@ class SheshnaagService:
         epss_min: Optional[float] = None,
         epss_max: Optional[float] = None,
         patch_available: Optional[bool] = None,
+        exploit_available: Optional[bool] = None,
+        min_observability: Optional[float] = None,
+        max_observability: Optional[float] = None,
         assigned_to: Optional[str] = None,
         assignment_state: Optional[str] = None,
         min_score: Optional[float] = None,
@@ -283,6 +339,15 @@ class SheshnaagService:
         """List scored candidates with filtering, sorting, and pagination."""
         self.sync_candidates(tenant)
         query = self.session.query(ResearchCandidate).filter(ResearchCandidate.tenant_id == tenant.id)
+
+        if exploit_available is not None:
+            query = query.join(CVE, ResearchCandidate.cve_id == CVE.id).filter(
+                CVE.exploit_available == exploit_available
+            )
+        if min_observability is not None:
+            query = query.filter(ResearchCandidate.observability_score >= min_observability)
+        if max_observability is not None:
+            query = query.filter(ResearchCandidate.observability_score <= max_observability)
 
         if status:
             query = query.filter(ResearchCandidate.status == status)
@@ -617,14 +682,9 @@ class SheshnaagService:
         self.session.add(run)
         self.session.flush()
 
-        run_context = {
-            "run_id": run.id,
-            "tenant_slug": tenant.slug,
-            "analyst_name": analyst_name,
-            "launch_mode": launch_mode,
-            "candidate": self._candidate_payload(candidate) if candidate else {},
-            "cve_id": candidate.cve.cve_id if candidate and candidate.cve else None,
-        }
+        run_context = self._run_context_for_provider(
+            tenant, run, analyst_name=analyst_name, candidate=candidate
+        )
         provider_result = self.provider.launch(revision_content=revision.content, run_context=run_context)
         self._apply_provider_result(run, provider_result)
         run.started_at = utc_now()
@@ -632,18 +692,118 @@ class SheshnaagService:
         if run.state in terminal_states:
             run.ended_at = utc_now()
 
-        self.session.add(
-            RunEvent(
-                run_id=run.id,
-                event_type="provider_launch",
-                message=provider_result.transcript,
-                payload=provider_result.to_dict(),
-            )
-        )
+        self._add_run_event(run, "provider_launch", provider_result)
 
         artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
         self._persist_run_artifacts(run=run, artifacts=artifacts)
         self._ledger(tenant.id, analyst.id, "run_launched", "run", str(run.id), 5.0, {"state": run.state})
+        self.session.flush()
+        return self.get_run(tenant, run.id)
+
+    def plan_run(
+        self,
+        tenant: Tenant,
+        *,
+        recipe_id: int,
+        revision_number: Optional[int],
+        analyst_name: str,
+        workstation: Dict[str, Any],
+        launch_mode: str = "dry_run",
+        acknowledge_sensitive: bool = False,
+    ) -> Dict[str, Any]:
+        """Persist a planned run using provider.build_plan (staged lifecycle, WS4-T3)."""
+        recipe = self._get_recipe(tenant, recipe_id)
+        revision = self._get_recipe_revision(recipe.id, revision_number or recipe.current_revision_number)
+        if revision.approval_state != "approved":
+            raise ValueError("Recipe revision must be approved before plan.")
+        if revision.requires_acknowledgement and not acknowledge_sensitive:
+            raise ValueError("Sensitive recipe revisions require analyst acknowledgement before plan.")
+
+        analyst = self._ensure_analyst_identity(tenant, analyst_name)
+        workstation_record = self._ensure_workstation(tenant, workstation)
+        candidate = self._get_candidate(tenant, recipe.candidate_id) if recipe.candidate_id else None
+
+        run = LabRun(
+            tenant_id=tenant.id,
+            recipe_revision_id=revision.id,
+            candidate_id=recipe.candidate_id,
+            analyst_id=analyst.id,
+            workstation_fingerprint_id=workstation_record.id,
+            provider="docker_kali",
+            launch_mode=launch_mode,
+            state=RunState.PLANNED.value,
+            requires_acknowledgement=revision.requires_acknowledgement,
+            acknowledged_by=analyst_name if acknowledge_sensitive else None,
+            acknowledged_at=utc_now() if acknowledge_sensitive else None,
+            workspace_path=f"/tmp/sheshnaag/run-{recipe.id}-{revision.revision_number}",
+        )
+        self.session.add(run)
+        self.session.flush()
+
+        run_context = self._run_context_for_provider(
+            tenant, run, analyst_name=analyst_name, candidate=candidate
+        )
+        built_plan = self.provider.build_plan(revision_content=revision.content, run_context=run_context)
+        placeholder = ProviderResult(
+            state=RunState.PLANNED,
+            provider_run_ref="",
+            plan=built_plan,
+            transcript="Run planned; allocate resources before boot.",
+        )
+        self._apply_provider_result(run, placeholder)
+        run.provider_run_ref = None
+
+        self._add_run_event(run, "run_planned", placeholder)
+        self._ledger(tenant.id, analyst.id, "run_planned", "run", str(run.id), 1.0, {"state": run.state})
+        self.session.flush()
+        return self.get_run(tenant, run.id)
+
+    def allocate_run_resources(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+        """Allocate provider workspace/resources for a planned run."""
+        run = self._get_run(tenant, run_id)
+        if run.state != RunState.PLANNED.value:
+            raise ValueError(f"Run must be in planned state to allocate resources; current={run.state}.")
+        if run.provider_run_ref:
+            raise ValueError("Run resources already allocated.")
+        if not run.manifest:
+            raise ValueError("Run is missing a provider plan manifest.")
+
+        candidate = self._get_candidate(tenant, run.candidate_id) if run.candidate_id else None
+        run_context = self._run_context_for_provider(
+            tenant, run, analyst_name=self._analyst_display_name(run), candidate=candidate
+        )
+        result = self.provider.create(plan=run.manifest, run_context=run_context)
+        self._apply_provider_result(run, result)
+        self._add_run_event(run, "run_allocated", result)
+        self._ledger(tenant.id, run.analyst_id, "run_allocated", "run", str(run.id), 2.0, {"state": run.state})
+        self.session.flush()
+        return self.get_run(tenant, run.id)
+
+    def boot_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+        """Boot the guest for a run after allocate_run_resources."""
+        run = self._get_run(tenant, run_id)
+        if not run.provider_run_ref:
+            raise ValueError("Run has no provider reference; allocate resources first.")
+        current = RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
+        if current != RunState.PLANNED:
+            raise ValueError(f"Boot requires planned state after allocation; current={run.state}.")
+
+        result = self.provider.boot(provider_run_ref=run.provider_run_ref)
+        self._apply_provider_result(run, result)
+        self._add_run_event(run, "run_booted", result)
+        run.started_at = run.started_at or utc_now()
+        terminal_states = {RunState.COMPLETED.value, RunState.BLOCKED.value, RunState.PLANNED.value, RunState.ERRORED.value}
+        if run.state in terminal_states:
+            run.ended_at = run.ended_at or utc_now()
+
+        candidate = self._get_candidate(tenant, run.candidate_id) if run.candidate_id else None
+        analyst_name = self._analyst_display_name(run)
+        if not self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run.id).count():
+            artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
+            self._persist_run_artifacts(run=run, artifacts=artifacts)
+
+        if run.analyst_id:
+            self._ledger(tenant.id, run.analyst_id, "run_booted", "run", str(run.id), 4.0, {"state": run.state})
         self.session.flush()
         return self.get_run(tenant, run.id)
 

@@ -8,6 +8,8 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.core.tenancy import get_or_create_demo_tenant
 from app.models.asset import Asset
+from app.models.cve import CVE
+from app.models.sheshnaag import ResearchCandidate
 from app.services.auth_service import AuthService
 from app.services.demo_seed_service import DemoSeedService
 from app.services.sheshnaag_service import (
@@ -363,6 +365,39 @@ class TestCandidateFilters:
         for item in result["items"]:
             assert item["status"] == "queued"
             assert item["candidate_score"] >= 10.0
+
+    def test_filter_by_exploit_available(self):
+        session = make_session()
+        tenant = seed_private_tenant(session)
+        svc = SheshnaagService(session)
+        first = svc.list_candidates(tenant, limit=1)
+        if first["count"] < 1:
+            pytest.skip("No candidates")
+        cid = first["items"][0]["id"]
+        rc = session.query(ResearchCandidate).filter(ResearchCandidate.id == cid).first()
+        cve_row = session.query(CVE).filter(CVE.id == rc.cve_id).first()
+        cve_row.exploit_available = True
+        session.commit()
+        r_true = svc.list_candidates(tenant, limit=50, exploit_available=True)
+        assert any(i["id"] == cid for i in r_true["items"])
+        r_false = svc.list_candidates(tenant, limit=50, exploit_available=False)
+        assert all(i["id"] != cid for i in r_false["items"])
+
+    def test_filter_by_observability_bounds(self):
+        session = make_session()
+        tenant = seed_private_tenant(session)
+        svc = SheshnaagService(session)
+        first = svc.list_candidates(tenant, limit=1)
+        if first["count"] < 1:
+            pytest.skip("No candidates")
+        cid = first["items"][0]["id"]
+        rc = session.query(ResearchCandidate).filter(ResearchCandidate.id == cid).first()
+        rc.observability_score = 0.85
+        session.commit()
+        hi = svc.list_candidates(tenant, limit=50, min_observability=0.8)
+        assert any(i["id"] == cid for i in hi["items"])
+        lo = svc.list_candidates(tenant, limit=50, max_observability=0.1)
+        assert all(i["id"] != cid for i in lo["items"])
 
 
 # ---------------------------------------------------------------------------
