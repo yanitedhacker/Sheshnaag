@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+from app.core.time import utc_now
 from pathlib import Path
 from typing import Dict, List
 
@@ -95,7 +96,7 @@ class ModelTrustService:
 
         return {
             "model_version": predictor.model_version,
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": utc_now().isoformat(),
             "training_date": training_date,
             "calibration_curve": calibration_curve,
             "feature_importance": feature_importance,

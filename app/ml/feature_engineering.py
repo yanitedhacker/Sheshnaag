@@ -20,6 +20,7 @@ of what makes a vulnerability dangerous in practice, not just in theory.
 
 import logging
 from datetime import datetime, timedelta
+from app.core.time import utc_now
 from typing import Dict, Any, List, Optional
 
 import numpy as np
@@ -130,7 +131,7 @@ class FeatureEngineer:
     
     def _extract_temporal_features(self, cve: CVE) -> Dict[str, Any]:
         """Extract time-based features."""
-        now = datetime.utcnow()
+        now = utc_now()
         
         # Days since published
         days_since_published = 0

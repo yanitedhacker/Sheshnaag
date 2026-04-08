@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Dict, List
 
 from sqlalchemy.orm import Session
@@ -70,7 +71,7 @@ class SimulationService:
         if persist:
             run = SimulationRun(
                 tenant_id=tenant.id,
-                name=parameters.get("name") or f"Simulation {datetime.utcnow().isoformat()}",
+                name=parameters.get("name") or f"Simulation {utc_now().isoformat()}",
                 parameters=parameters,
                 before_snapshot=before,
                 after_snapshot={"actions": after_actions},
@@ -86,5 +87,5 @@ class SimulationService:
             "after": {"actions": after_actions},
             "schedule": schedule,
             "summary": summary,
-            "created_at": run.created_at.isoformat() if run is not None and run.created_at else datetime.utcnow().isoformat(),
+            "created_at": run.created_at.isoformat() if run is not None and run.created_at else utc_now().isoformat(),
         }

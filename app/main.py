@@ -1,31 +1,4 @@
-r"""
-Main FastAPI application.
-
-Author: Archishman Paul
-
-===============================================================================
-    _____ _   _ ______   _____ _   _ ____  _____    _  _____   ____      _    ____    _    ____
-   / ____| | | |  ____| |_   _| | | |  _ \| ____|  / \|_   _| |  _ \    / \  |  _ \  / \  |  _ \
-  | |    | | | | |__      | | | |_| | |_) |  _|   / _ \ | |   | |_) |  / _ \ | | | |/ _ \ | |_) |
-  | |    | | | |  __|     | | |  _  |  _ <| |___ / ___ \| |   |  _ <  / ___ \| |_| / ___ \|  _ <
-  | |____| |_| | |____    | | | | | | |_) |_____/_/   \_\_|   | |_) |/_/   \_\____/_/   \_\_| \_|
-   \_____|\___/|______|   |_| |_| |_|____/                    |____/
-
-                   T H R E A T   R A D A R   -   A I   P O W E R E D
-===============================================================================
-
-Welcome to CVE Threat Radar!
-
-This is where everything comes together - the API endpoints, the ML models,
-the database, and the dashboard. FastAPI was chosen for its async support,
-automatic OpenAPI docs, and blazing fast performance.
-
-Built with passion by Archishman Paul.
-
-Security Enhancement: Added CORS restrictions, rate limiting, security headers,
-and authentication support.
-===============================================================================
-"""
+"""Main FastAPI application for Project Sheshnaag."""
 
 import logging
 import uuid
@@ -48,23 +21,42 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import decode_token
 from app.api.routes import (
     asset_router,
+    artifact_router,
     auth_router,
+    candidate_router,
     copilot_router,
     cve_router,
+    disclosure_router,
+    evidence_router,
     feed_router,
     governance_router,
     graph_router,
     import_router,
+    intel_router,
+    ledger_router,
     model_router,
     patch_router,
+    provenance_router,
     risk_router,
+    recipe_router,
+    run_router,
     simulation_router,
+    supply_chain_router,
     tenant_router,
     workbench_router,
 )
 from app.ingestion.scheduler import FeedScheduler
 from app.ml.model_registry import preload_models
 from app.services.demo_seed_service import DemoSeedService
+from app.models.v2 import (
+    AttackTechnique,
+    EPSSSnapshot,
+    ExposureGraphEdge,
+    ExposureGraphNode,
+    KEVEntry,
+    KnowledgeChunk,
+    KnowledgeDocument,
+)
 
 # Get project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -226,14 +218,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="""
-    AI-Driven CVE Threat Radar & Patch Prioritization Engine
+    Project Sheshnaag defensive validation platform
 
     This API provides:
     - CVE vulnerability intelligence from multiple threat feeds
-    - ML-based exploit probability prediction
-    - Risk scoring and patch prioritization
-    - Asset vulnerability management
-    - Explainable AI-driven recommendations
+    - explainable research candidate scoring
+    - constrained Kali-backed validation planning
+    - evidence, artifact, and provenance workflows
+    - disclosure bundle and analyst ledger surfaces
 
     ## Authentication
 
@@ -276,6 +268,15 @@ if settings.metrics_enabled:
 app.include_router(cve_router)
 app.include_router(risk_router)
 app.include_router(asset_router)
+app.include_router(intel_router)
+app.include_router(candidate_router)
+app.include_router(recipe_router)
+app.include_router(run_router)
+app.include_router(evidence_router)
+app.include_router(artifact_router)
+app.include_router(provenance_router)
+app.include_router(ledger_router)
+app.include_router(disclosure_router)
 app.include_router(feed_router)
 app.include_router(patch_router)
 app.include_router(workbench_router)
@@ -287,6 +288,7 @@ app.include_router(import_router)
 app.include_router(governance_router)
 app.include_router(auth_router)
 app.include_router(tenant_router)
+app.include_router(supply_chain_router)
 
 # Mount static files for frontend
 if FRONTEND_DIST_DIR.exists():
@@ -315,6 +317,15 @@ def root():
         "environment": settings.environment,
         "docs": "/docs",
         "endpoints": {
+            "intel": "/api/intel/overview",
+            "candidates": "/api/candidates",
+            "recipes": "/api/recipes",
+            "runs": "/api/runs",
+            "evidence": "/api/evidence",
+            "artifacts": "/api/artifacts",
+            "provenance": "/api/provenance",
+            "ledger": "/api/ledger",
+            "disclosures": "/api/disclosures",
             "cves": "/api/cves",
             "risk": "/api/risk",
             "assets": "/api/assets",
@@ -383,6 +394,20 @@ def get_dashboard_data():
             "cve_statistics": cve_service.get_cve_statistics(),
             "trending_cves": cve_service.get_trending_cves(limit=5),
             "attack_paths": graph_service.get_attack_paths(tenant, limit=3)["paths"],
+            "intel_summary": {
+                "kev_entries": session.query(KEVEntry).count(),
+                "epss_snapshots": session.query(EPSSSnapshot).count(),
+                "attack_techniques": session.query(AttackTechnique).count(),
+                "knowledge_documents": session.query(KnowledgeDocument).count(),
+                "knowledge_chunks": session.query(KnowledgeChunk).count(),
+                "graph_nodes": session.query(ExposureGraphNode).filter(ExposureGraphNode.tenant_id == tenant.id).count(),
+                "graph_edges": session.query(ExposureGraphEdge).filter(ExposureGraphEdge.tenant_id == tenant.id).count(),
+            },
+            "showcase_highlights": [
+                "Fuses vulnerability records with KEV, EPSS, ATT&CK, advisory knowledge, and tenant-specific exposure context.",
+                "Ranks remediation actions using exploit likelihood, public exposure, crown-jewel impact, path reachability, and operational patch cost.",
+                "Keeps recommendations explainable with evidence, citations, approval state, and analyst feedback instead of opaque AI-only scoring.",
+            ],
             "organization_summary": asset_service.get_organization_risk_summary(tenant_id=tenant.id),
             "model_trust": model_trust_service.get_trust_snapshot(),
             "governance": {

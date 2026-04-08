@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from app.core.time import utc_now
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session
@@ -188,7 +189,7 @@ class AssetService:
                         cve_id=cve.id,
                         status="open",
                         detection_source="feed_match",
-                        detected_date=datetime.utcnow()
+                        detected_date=utc_now()
                     )
                     self.session.add(vuln)
                     results["new_vulnerabilities"] += 1
@@ -208,7 +209,7 @@ class AssetService:
                 })
         
         # Update scan date
-        asset.last_scan_date = datetime.utcnow()
+        asset.last_scan_date = utc_now()
         self.session.commit()
         
         return results
@@ -270,7 +271,7 @@ class AssetService:
             vuln.resolution_notes = notes
         
         if status in ["patched", "accepted_risk", "false_positive"]:
-            vuln.resolved_date = datetime.utcnow()
+            vuln.resolved_date = utc_now()
         
         self.session.commit()
         
@@ -328,5 +329,5 @@ class AssetService:
                 {"id": a[0], "name": a[1], "criticality": a[2], "vulnerability_count": a[3]}
                 for a in most_vulnerable
             ],
-            "last_updated": datetime.utcnow().isoformat()
+            "last_updated": utc_now().isoformat()
         }

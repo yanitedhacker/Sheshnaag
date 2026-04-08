@@ -9,6 +9,7 @@ eliminating code duplication across services.
 
 import logging
 from datetime import datetime, timedelta
+from app.core.time import utc_now
 from typing import Dict, List, Optional
 
 from sqlalchemy import desc, func
@@ -127,7 +128,7 @@ class RiskScoreRepository:
         from app.models.cve import CVE
         from sqlalchemy import or_
 
-        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        cutoff = utc_now() - timedelta(hours=max_age_hours)
 
         # Find CVEs with no score or outdated score
         subquery = self.session.query(RiskScore.cve_id).filter(
@@ -252,7 +253,7 @@ class RiskScoreRepository:
         Returns:
             Number of deleted records
         """
-        cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+        cutoff = utc_now() - timedelta(days=older_than_days)
 
         # Keep only the latest score per CVE
         # This is a soft cleanup - we don't delete the most recent score

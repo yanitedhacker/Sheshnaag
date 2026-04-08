@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # Application
-    app_name: str = "CVE Threat Radar"
-    app_version: str = "1.0.0"
+    app_name: str = "Project Sheshnaag"
+    app_version: str = "0.1.0"
     environment: str = "development"
     debug: bool = False  # Changed default to False for security
 

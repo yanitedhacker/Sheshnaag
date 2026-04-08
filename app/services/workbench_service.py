@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy import desc
@@ -68,7 +69,7 @@ class WorkbenchService:
 
         return {
             "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": utc_now().isoformat(),
             "count": len(actions),
             "summary": {
                 "exposed_assets": self._count_exposed_assets(tenant),

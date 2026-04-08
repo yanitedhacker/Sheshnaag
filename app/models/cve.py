@@ -5,6 +5,8 @@ from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKe
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.time import utc_now
+from app.core.time import utc_now
 
 
 class CVE(Base):
@@ -48,8 +50,8 @@ class CVE(Base):
     source = Column(String(50))  # NVD, MITRE, etc.
     raw_data = Column(JSON)  # Store original JSON for reference
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Relationships
     references = relationship("CVEReference", back_populates="cve", cascade="all, delete-orphan")
@@ -74,7 +76,7 @@ class CVEReference(Base):
     source = Column(String(100))
     tags = Column(JSON)  # e.g., ["Exploit", "Patch", "Vendor Advisory"]
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     
     # Relationships
     cve = relationship("CVE", back_populates="references")
@@ -96,7 +98,7 @@ class AffectedProduct(Base):
     version_end = Column(String(50))
     cpe_uri = Column(Text)  # Full CPE URI
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     
     # Relationships
     cve = relationship("CVE", back_populates="affected_products")

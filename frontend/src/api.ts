@@ -15,6 +15,7 @@ import type {
   SimulationResponse,
   TenantListResponse,
   TenantOnboardResponse,
+  SupplyChainOverviewResponse,
   WorkbenchSummary,
 } from "./types";
 
@@ -59,6 +60,8 @@ export const api = {
       body: JSON.stringify({ query, tenant_slug: "demo-public" }),
     }),
   getModelTrust: () => fetchJson<ModelTrustResponse>("/api/model/trust"),
+  getSupplyChainOverview: () =>
+    fetchJson<SupplyChainOverviewResponse>("/api/supply-chain/overview?tenant_slug=demo-public"),
   getApprovals: () => fetchJson<ApprovalResponse>("/api/governance/approvals?tenant_slug=demo-public"),
   getAudit: () => fetchJson<AuditResponse>("/api/governance/audit?tenant_slug=demo-public"),
   getFeedback: () => fetchJson<FeedbackResponse>("/api/model/feedback?tenant_slug=demo-public"),

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from app.core.time import utc_now
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session
@@ -189,7 +190,7 @@ class FeedAggregator:
         results = {
             "cve_sync": {},
             "exploit_sync": {},
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": utc_now().isoformat(),
             "completed_at": None,
         }
 
@@ -205,7 +206,7 @@ class FeedAggregator:
                 except ValueError:
                     since = None
             results["cve_sync"] = await self.sync_recent_cves(days=days, since=since)
-            mark_success(self.session, cve_state, cursor=datetime.utcnow().isoformat())
+            mark_success(self.session, cve_state, cursor=utc_now().isoformat())
             self.session.commit()
         except Exception as e:
             mark_failed(self.session, cve_state, str(e))
@@ -219,14 +220,14 @@ class FeedAggregator:
         try:
             since = exploit_state.last_success_at
             results["exploit_sync"] = await self.sync_recent_exploits_from_mirror(since=since, limit=exploit_limit)
-            mark_success(self.session, exploit_state, cursor=datetime.utcnow().isoformat())
+            mark_success(self.session, exploit_state, cursor=utc_now().isoformat())
             self.session.commit()
         except Exception as e:
             mark_failed(self.session, exploit_state, str(e))
             self.session.commit()
             raise
 
-        results["completed_at"] = datetime.utcnow().isoformat()
+        results["completed_at"] = utc_now().isoformat()
         return results
     
     async def full_sync(self, days: int = 30) -> Dict[str, Any]:
@@ -244,7 +245,7 @@ class FeedAggregator:
         results = {
             "cve_sync": {},
             "exploit_sync": {},
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": utc_now().isoformat(),
             "completed_at": None
         }
         
@@ -254,7 +255,7 @@ class FeedAggregator:
         # Then sync exploits for new/updated CVEs
         results["exploit_sync"] = await self.sync_exploits_for_cves()
         
-        results["completed_at"] = datetime.utcnow().isoformat()
+        results["completed_at"] = utc_now().isoformat()
         
         logger.info("Full sync completed")
         return results

@@ -16,6 +16,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.time import utc_now
+from app.core.time import utc_now
 
 
 class FeedSyncState(Base):
@@ -33,8 +35,8 @@ class FeedSyncState(Base):
     status = Column(String(30), default="idle")  # idle, running, success, failed
     last_error = Column(Text)
 
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+    created_at = Column(DateTime, default=utc_now)
 
 
 class PatchDependency(Base):
@@ -49,7 +51,7 @@ class PatchDependency(Base):
     kind = Column(String(20), default="requires")  # requires | conflicts
     reason = Column(Text)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 class PatchPlan(Base):
@@ -65,8 +67,8 @@ class PatchPlan(Base):
     objective = Column(String(50), default="max_risk_reduction")
     notes = Column(Text)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     items = relationship("PatchPlanItem", back_populates="plan", cascade="all, delete-orphan")
 
@@ -87,6 +89,6 @@ class PatchPlanItem(Base):
     estimated_downtime_minutes = Column(Integer, default=0)
     sort_order = Column(Integer, default=0)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     plan = relationship("PatchPlan", back_populates="items")

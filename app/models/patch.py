@@ -17,6 +17,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.time import utc_now
+from app.core.time import utc_now
 
 
 # Many-to-many association between patches and CVEs.
@@ -57,8 +59,8 @@ class Patch(Base):
     advisory_url = Column(Text)
     vendor_advisory_id = Column(String(100))
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     # Relationships
     cves = relationship("CVE", secondary=patch_cves, back_populates="patches")
@@ -88,8 +90,8 @@ class AssetPatch(Base):
     # Lightweight workflow status (optional, keeps API forward-compatible)
     status = Column(String(30), default="recommended")  # recommended, scheduled, applied, deferred
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     # Relationships
     asset = relationship("Asset", back_populates="patches")

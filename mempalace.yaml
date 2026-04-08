@@ -1,0 +1,16 @@
+wing: cve_radar
+rooms:
+- name: app
+  description: Files from app/
+- name: frontend
+  description: Files from frontend/
+- name: lab
+  description: Files from lab/
+- name: testing
+  description: Files from tests/
+- name: scripts
+  description: Files from scripts/
+- name: backend
+  description: Files from models/
+- name: general
+  description: Files that don't fit other rooms

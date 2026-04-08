@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections import Counter
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy import desc
@@ -116,7 +117,7 @@ class GovernanceService:
             note=note,
             decided_by=decided_by or (actor.email if actor else None),
             meta=metadata or {},
-            decided_at=datetime.utcnow(),
+            decided_at=utc_now(),
         )
         self.session.add(record)
         self.session.flush()

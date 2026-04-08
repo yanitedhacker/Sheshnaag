@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_sync_session
+from app.core.time import utc_now
 from app.core.security import require_scope
 from app.ingestion.feed_aggregator import FeedAggregator
 from app.models.ops import FeedSyncState
@@ -161,7 +162,7 @@ def get_feed_status(
             for s in sync_states
         ],
         "status": "healthy" if total_cves > 0 else "empty",
-        "checked_at": datetime.utcnow().isoformat()
+        "checked_at": utc_now().isoformat()
     }
 
 

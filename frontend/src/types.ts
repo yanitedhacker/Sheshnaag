@@ -121,7 +121,34 @@ export type DashboardResponse = {
     recent_7_days: number;
     last_updated: string;
   };
+  trending_cves: Array<{
+    id: number;
+    cve_id: string;
+    description: string | null;
+    published_date: string | null;
+    last_modified_date?: string | null;
+    cvss_v3_score: number | null;
+    attack_vector: string | null;
+    exploit_available: boolean;
+    risk?: {
+      overall_score: number;
+      risk_level: string;
+      exploit_probability: number;
+      priority_rank: number | null;
+      explanation: string | null;
+    };
+  }>;
   attack_paths: AttackPath[];
+  intel_summary: {
+    kev_entries: number;
+    epss_snapshots: number;
+    attack_techniques: number;
+    knowledge_documents: number;
+    knowledge_chunks: number;
+    graph_nodes: number;
+    graph_edges: number;
+  };
+  showcase_highlights: string[];
   organization_summary: {
     total_assets: number;
     criticality_distribution: Record<string, number>;
@@ -398,4 +425,43 @@ export type ImportResponse = {
   vulnerabilities_processed?: number;
   statements_created?: number;
   statements_updated?: number;
+};
+
+export type WorkbenchSort = "risk" | "confidence" | "reduction";
+
+export type SupplyChainSource = {
+  id: string;
+  name: string;
+  category: string;
+  status: string;
+  coverage: string;
+  detail: string;
+  official_url: string;
+  signal_count: number | null;
+};
+
+export type SupplyChainOverviewResponse = {
+  tenant: { id: number; slug: string; name: string };
+  generated_at: string;
+  mission: {
+    headline: string;
+    summary: string;
+  };
+  source_catalog: SupplyChainSource[];
+  attack_story: Array<{
+    title: string;
+    detail: string;
+    signal: string;
+  }>;
+  ai_threats: Array<{
+    title: string;
+    summary: string;
+    detection: string;
+    defense: string;
+  }>;
+  defense_layers: Array<{
+    title: string;
+    detail: string;
+  }>;
+  platform_capabilities: string[];
 };

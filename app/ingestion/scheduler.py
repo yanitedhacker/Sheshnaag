@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -40,7 +41,7 @@ class FeedScheduler:
             max_instances=settings.feed_scheduler_max_instances,
             coalesce=True,
             misfire_grace_time=300,
-            next_run_time=datetime.utcnow(),
+            next_run_time=utc_now(),
         )
         self.scheduler.start()
         logger.info("Feed scheduler started")

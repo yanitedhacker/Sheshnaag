@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.time import utc_now
 
 
 class Tenant(Base):
@@ -31,8 +32,8 @@ class Tenant(Base):
     is_demo = Column(Boolean, default=False, nullable=False)
     is_read_only = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     assets = relationship("Asset", back_populates="tenant")
     services = relationship("Service", back_populates="tenant", cascade="all, delete-orphan")
@@ -69,8 +70,8 @@ class Service(Base):
     description = Column(Text)
     meta = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="services")
     asset = relationship("Asset", back_populates="services")
@@ -96,8 +97,8 @@ class SoftwareComponent(Base):
     component_type = Column(String(50), default="application")
     meta = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="software_components")
     asset_links = relationship("AssetSoftware", back_populates="software_component", cascade="all, delete-orphan")
@@ -119,8 +120,8 @@ class AssetSoftware(Base):
 
     discovered_by = Column(String(50), default="manual")
     meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     asset = relationship("Asset", back_populates="software_components")
     software_component = relationship("SoftwareComponent", back_populates="asset_links")
@@ -144,8 +145,8 @@ class NetworkExposure(Base):
     is_public = Column(Boolean, default=True, nullable=False)
     meta = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="network_exposures")
     asset = relationship("Asset", back_populates="network_exposures")
@@ -168,8 +169,8 @@ class IdentityPrincipal(Base):
     can_lateral_move = Column(Boolean, default=False, nullable=False)
     meta = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="identity_principals")
     asset = relationship("Asset", back_populates="identity_principals")
@@ -196,8 +197,8 @@ class EvidenceItem(Base):
     citation_key = Column(String(120), index=True)
     meta = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="evidence_items")
 
@@ -218,8 +219,8 @@ class KEVEntry(Base):
     known_ransomware_use = Column(String(20))
     source_url = Column(Text)
     raw_data = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class EPSSSnapshot(Base):
@@ -235,7 +236,7 @@ class EPSSSnapshot(Base):
     scored_at = Column(DateTime, nullable=False, index=True)
     source_url = Column(Text)
     raw_data = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 class AttackTechnique(Base):
@@ -251,8 +252,8 @@ class AttackTechnique(Base):
     description = Column(Text)
     source_url = Column(Text)
     meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class CVEAttackTechnique(Base):
@@ -268,7 +269,7 @@ class CVEAttackTechnique(Base):
     technique_id = Column(Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), nullable=False, index=True)
     rationale = Column(Text)
     confidence = Column(Float, default=0.6)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     cve = relationship("CVE")
     technique = relationship("AttackTechnique")
@@ -290,8 +291,8 @@ class KnowledgeDocument(Base):
     source_label = Column(String(120))
     source_url = Column(Text)
     meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     chunks = relationship("KnowledgeChunk", back_populates="document", cascade="all, delete-orphan")
 
@@ -308,8 +309,8 @@ class ExposureGraphNode(Base):
     node_key = Column(String(255), nullable=False, index=True)
     label = Column(String(255), nullable=False)
     meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="graph_nodes")
 
@@ -329,8 +330,8 @@ class ExposureGraphEdge(Base):
     edge_type = Column(String(50), nullable=False, index=True)
     weight = Column(Float, default=1.0)
     meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="graph_edges")
     from_node = relationship("ExposureGraphNode", foreign_keys=[from_node_id])
@@ -350,8 +351,8 @@ class SimulationRun(Base):
     before_snapshot = Column(JSON, default=dict, nullable=False)
     after_snapshot = Column(JSON, default=dict, nullable=False)
     summary = Column(JSON, default=dict, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="simulation_runs")
 
@@ -367,7 +368,7 @@ class AnalystFeedback(Base):
     feedback_type = Column(String(50), nullable=False)
     note = Column(Text)
     meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 class VexStatement(Base):
@@ -386,8 +387,8 @@ class VexStatement(Base):
     justification = Column(Text)
     source_url = Column(Text)
     raw_data = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     software_component = relationship("SoftwareComponent", back_populates="vex_statements")
 
@@ -403,8 +404,8 @@ class TenantUser(Base):
     password_hash = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     is_system = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     memberships = relationship("TenantMembership", back_populates="user", cascade="all, delete-orphan")
     audit_events = relationship("DecisionAuditEvent", back_populates="actor")
@@ -421,8 +422,8 @@ class TenantMembership(Base):
     user_id = Column(Integer, ForeignKey("tenant_users.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(50), default="viewer", nullable=False)
     scopes = Column(JSON, default=list, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="memberships")
     user = relationship("TenantUser", back_populates="memberships")
@@ -449,8 +450,8 @@ class KnowledgeChunk(Base):
     embedding_model = Column(String(120))
     embedding_vector = Column(JSON, default=list)
     meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     document = relationship("KnowledgeDocument", back_populates="chunks")
 
@@ -470,8 +471,8 @@ class PatchApproval(Base):
     decided_by = Column(String(255))
     note = Column(Text)
     meta = Column("metadata", JSON, default=dict)
-    decided_at = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime, default=utc_now)
+    created_at = Column(DateTime, default=utc_now)
 
     tenant = relationship("Tenant", back_populates="patch_approvals")
     patch = relationship("Patch")
@@ -492,7 +493,7 @@ class DecisionAuditEvent(Base):
     details = Column(JSON, default=dict, nullable=False)
     previous_hash = Column(String(64))
     event_hash = Column(String(64), nullable=False, unique=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     tenant = relationship("Tenant", back_populates="audit_events")
     actor = relationship("TenantUser", back_populates="audit_events")

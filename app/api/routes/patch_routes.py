@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from app.core.time import utc_now
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -77,7 +78,7 @@ def get_patch_priorities(
             for d in decisions
         ],
         "delay_days": delay_days,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now().isoformat(),
     }
 
 
@@ -109,7 +110,7 @@ def get_patch_decisions(
             for d in decisions
         ],
         "delay_days": delay_days,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now().isoformat(),
     }
 
 
@@ -133,7 +134,7 @@ def create_patch_schedule(
 
     # Persist plan
     plan = PatchPlan(
-        name=f"Plan {datetime.utcnow().isoformat()}",
+        name=f"Plan {utc_now().isoformat()}",
         constraints=schedule.get("constraints", [])[0] if schedule.get("constraints") else {},
         status="proposed",
     )

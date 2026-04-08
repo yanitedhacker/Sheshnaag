@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from app.core.time import utc_now
 from typing import Dict, Iterable, List, Optional
 
 from sqlalchemy import desc
@@ -94,7 +95,7 @@ class ThreatIntelService:
         if not cves:
             return
 
-        now = datetime.utcnow()
+        now = utc_now()
 
         self._upsert_kev(
             cve_id="CVE-2024-10001",

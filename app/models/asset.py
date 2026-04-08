@@ -5,6 +5,8 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Bool
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.time import utc_now
+from app.core.time import utc_now
 
 
 class Asset(Base):
@@ -45,8 +47,8 @@ class Asset(Base):
     tags = Column(JSON)  # Arbitrary tags for filtering
     notes = Column(Text)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Relationships
     vulnerabilities = relationship("AssetVulnerability", back_populates="asset", cascade="all, delete-orphan")
@@ -74,7 +76,7 @@ class AssetVulnerability(Base):
     status = Column(String(30), default="open")  # open, in_progress, patched, accepted_risk, false_positive
     
     # Detection
-    detected_date = Column(DateTime, default=datetime.utcnow)
+    detected_date = Column(DateTime, default=utc_now)
     detection_source = Column(String(50))  # scanner, manual, feed_match
     
     # Resolution
@@ -85,8 +87,8 @@ class AssetVulnerability(Base):
     risk_override = Column(String(20))  # If org wants to override calculated risk
     override_reason = Column(Text)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Relationships
     asset = relationship("Asset", back_populates="vulnerabilities")

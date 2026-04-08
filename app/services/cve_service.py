@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from app.core.time import utc_now
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session
@@ -138,7 +139,7 @@ class CVEService:
         """Get CVEs published in the last N days."""
         from datetime import timedelta
         
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = utc_now() - timedelta(days=days)
         
         cves = self.session.query(CVE).filter(
             CVE.published_date >= cutoff
@@ -168,7 +169,7 @@ class CVEService:
         from datetime import timedelta
         
         # Recent + high risk
-        cutoff = datetime.utcnow() - timedelta(days=14)
+        cutoff = utc_now() - timedelta(days=14)
         
         cves = self.session.query(CVE).join(RiskScore).filter(
             or_(
@@ -231,7 +232,7 @@ class CVEService:
         # Recent (7 days)
         from datetime import timedelta
         recent = self.session.query(func.count(CVE.id)).filter(
-            CVE.published_date >= datetime.utcnow() - timedelta(days=7)
+            CVE.published_date >= utc_now() - timedelta(days=7)
         ).scalar()
         
         return {
@@ -239,7 +240,7 @@ class CVEService:
             "severity_distribution": severity_dist,
             "with_exploits": with_exploits,
             "recent_7_days": recent,
-            "last_updated": datetime.utcnow().isoformat()
+            "last_updated": utc_now().isoformat()
         }
     
     def _cve_to_dict(self, cve: CVE, risk_score: Optional[RiskScore] = None) -> Dict[str, Any]:

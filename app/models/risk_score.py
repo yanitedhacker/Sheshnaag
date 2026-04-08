@@ -5,6 +5,8 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSO
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.time import utc_now
+from app.core.time import utc_now
 
 
 class RiskScore(Base):
@@ -40,7 +42,7 @@ class RiskScore(Base):
     # Model Info
     model_version = Column(String(50))
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     
     # Relationships
     cve = relationship("CVE", back_populates="risk_scores")
@@ -64,4 +66,4 @@ class RiskHistory(Base):
     # What changed
     change_reason = Column(String(200))  # e.g., "New exploit discovered", "CVSS updated"
     
-    recorded_at = Column(DateTime, default=datetime.utcnow, index=True)
+    recorded_at = Column(DateTime, default=utc_now, index=True)

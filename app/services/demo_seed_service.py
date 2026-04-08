@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from app.core.time import utc_now
 
 from sqlalchemy.orm import Session
 
@@ -59,7 +60,7 @@ class DemoSeedService:
         self.knowledge.reindex_documents()
 
     def _seed_global_cves(self) -> None:
-        now = datetime.utcnow()
+        now = utc_now()
         cves = [
             {
                 "cve_id": "CVE-2024-10001",
@@ -418,7 +419,7 @@ class DemoSeedService:
                 "rollback_complexity": 0.2,
                 "historical_failure_rate": 0.04,
                 "change_risk_score": 0.2,
-                "released_at": datetime.utcnow() - timedelta(days=7),
+                "released_at": utc_now() - timedelta(days=7),
                 "source": "demo_seed",
                 "advisory_url": "https://example.com/advisories/public-api-gateway",
                 "cves": ["CVE-2024-10001"],
@@ -434,7 +435,7 @@ class DemoSeedService:
                 "rollback_complexity": 0.35,
                 "historical_failure_rate": 0.08,
                 "change_risk_score": 0.4,
-                "released_at": datetime.utcnow() - timedelta(days=4),
+                "released_at": utc_now() - timedelta(days=4),
                 "source": "demo_seed",
                 "advisory_url": "https://example.com/advisories/admin-portal-auth-bypass",
                 "cves": ["CVE-2024-10003"],
@@ -450,7 +451,7 @@ class DemoSeedService:
                 "rollback_complexity": 0.25,
                 "historical_failure_rate": 0.03,
                 "change_risk_score": 0.3,
-                "released_at": datetime.utcnow() - timedelta(days=10),
+                "released_at": utc_now() - timedelta(days=10),
                 "source": "demo_seed",
                 "advisory_url": "https://example.com/advisories/payments-api-ssrf",
                 "cves": ["CVE-2024-10002"],
@@ -493,7 +494,7 @@ class DemoSeedService:
                             cve_id=cves[spec["cves"][0]].id,
                             status="open",
                             detection_source="demo_seed",
-                            detected_date=datetime.utcnow() - timedelta(days=3),
+                            detected_date=utc_now() - timedelta(days=3),
                         )
                     )
 

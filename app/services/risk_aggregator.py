@@ -24,6 +24,7 @@ actually matters first.
 
 import logging
 from datetime import datetime, timedelta
+from app.core.time import utc_now
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session
@@ -112,7 +113,7 @@ class RiskAggregator:
         from sqlalchemy import or_
         from datetime import timedelta
         
-        cutoff = datetime.utcnow() - timedelta(hours=24)
+        cutoff = utc_now() - timedelta(hours=24)
         
         query = self.session.query(CVE).outerjoin(RiskScore).filter(
             or_(
@@ -265,7 +266,7 @@ class RiskAggregator:
         # Recent high-risk CVEs
         recent_critical = self.session.query(func.count(RiskScore.id)).join(CVE).filter(
             RiskScore.risk_level == "CRITICAL",
-            CVE.published_date >= datetime.utcnow() - timedelta(days=7)
+            CVE.published_date >= utc_now() - timedelta(days=7)
         ).scalar()
         
         # Exploited CVEs
@@ -280,7 +281,7 @@ class RiskAggregator:
             "average_exploit_probability": round(avg_scores[1] or 0, 4),
             "recent_critical_cves": recent_critical or 0,
             "cves_with_exploits": exploited_count or 0,
-            "last_updated": datetime.utcnow().isoformat()
+            "last_updated": utc_now().isoformat()
         }
     
     def get_risk_heatmap_data(self) -> Dict[str, Any]:

@@ -1,8 +1,17 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 
 export function AttackGraphPage() {
   const graph = useQuery({ queryKey: ["graph"], queryFn: () => api.getGraph() });
+  const [selectedPathIndex, setSelectedPathIndex] = useState(0);
+
+  const selectedPath = graph.data?.paths[selectedPathIndex] ?? graph.data?.paths[0];
+  const selectedNodeSet = useMemo(() => new Set(selectedPath?.node_ids ?? []), [selectedPath]);
+  const selectedNodes = useMemo(
+    () => graph.data?.nodes.filter((node) => selectedNodeSet.has(node.id)) ?? [],
+    [graph.data?.nodes, selectedNodeSet],
+  );
 
   if (graph.isLoading) {
     return <section className="panel">Loading attack graph...</section>;
@@ -23,17 +32,21 @@ export function AttackGraphPage() {
           <span className="pill neutral">{graph.data.cached ? "cached" : "fresh"}</span>
         </div>
         <div className="path-list">
-          {graph.data.paths.map((path) => (
-            <article key={path.summary} className="path-card">
+          {graph.data.paths.map((path, index) => (
+            <article
+              key={path.summary}
+              className={`path-card interactive-card ${selectedPathIndex === index ? "active" : ""}`}
+              onClick={() => setSelectedPathIndex(index)}
+            >
               <div className="list-row">
                 <strong>{path.summary}</strong>
                 <span className="pill high">score {path.score}</span>
               </div>
               <div className="path-diagram">
-                {path.labels.map((label, index) => (
-                  <div key={`${label}-${index}`} className="path-diagram">
+                {path.labels.map((label, labelIndex) => (
+                  <div key={`${label}-${labelIndex}`} className="path-diagram">
                     <span className="path-node">{label}</span>
-                    {index < path.labels.length - 1 && <span className="arrow">→</span>}
+                    {labelIndex < path.labels.length - 1 && <span className="arrow">→</span>}
                   </div>
                 ))}
               </div>
@@ -63,8 +76,17 @@ export function AttackGraphPage() {
             <div className="metric-label">Top paths</div>
           </article>
         </div>
+
+        {selectedPath && (
+          <div className="panel inset">
+            <p className="eyebrow">Selected Path</p>
+            <strong>{selectedPath.summary}</strong>
+            <p className="muted">Edge types: {selectedPath.edge_types.join(" → ")}</p>
+          </div>
+        )}
+
         <div className="action-list">
-          {graph.data.nodes.slice(0, 12).map((node) => (
+          {selectedNodes.map((node) => (
             <article key={node.id} className="asset-card">
               <div className="list-row">
                 <strong>{node.label}</strong>
