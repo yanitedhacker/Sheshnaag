@@ -1,6 +1,7 @@
 export type Citation = {
   label: string;
-  url: string;
+  url?: string | null;
+  detail?: string | null;
 };
 
 export type EvidenceItem = {
@@ -532,10 +533,51 @@ export type RunSummary = {
   workspace_path: string | null;
   requires_acknowledgement: boolean;
   acknowledged_by: string | null;
+  acknowledged_at: string | null;
   started_at: string | null;
   ended_at: string | null;
   manifest: Record<string, unknown>;
   run_transcript: string | null;
+};
+
+export type RunTimelineEvent = {
+  event_type: string;
+  level: string;
+  message: string;
+  payload: Record<string, unknown>;
+  created_at: string | null;
+};
+
+export type EvidenceTimelineItem = {
+  evidence_id: number;
+  artifact_kind: string;
+  stage: string;
+  timestamp: string | null;
+  collector_name?: string | null;
+  collector_version?: string | null;
+  truncated?: boolean;
+  title: string;
+};
+
+export type RuntimeFinding = {
+  title?: string;
+  severity?: string;
+  summary?: string;
+  evidence_artifact_id: number;
+  artifact_kind: string;
+  [key: string]: unknown;
+};
+
+export type RunDetailResponse = RunSummary & {
+  timeline: RunTimelineEvent[];
+  evidence_timeline: {
+    items: EvidenceTimelineItem[];
+    ordered_by: string;
+  };
+  runtime_findings_summary: {
+    count: number;
+    items: RuntimeFinding[];
+  };
 };
 
 export type RunListResponse = {
@@ -545,13 +587,7 @@ export type RunListResponse = {
 
 export type RunHealthResponse = RunSummary & {
   health: string;
-  timeline: Array<{
-    event_type: string;
-    level: string;
-    message: string;
-    payload: Record<string, unknown>;
-    created_at: string | null;
-  }>;
+  timeline: RunTimelineEvent[];
 };
 
 export type TemplateItem = {
@@ -567,4 +603,240 @@ export type TemplateItem = {
 export type TemplateListResponse = {
   items: TemplateItem[];
   count: number;
+};
+
+export type FeedSourceCard = {
+  feed_key: string;
+  display_name: string;
+  status: string;
+  freshness_seconds: number;
+  last_synced_at: string | null;
+  is_stale: boolean;
+  stale_since?: string | null;
+  last_error?: string | null;
+  recent_item_count_delta?: number;
+};
+
+export type IntelOverviewResponse = {
+  mission: {
+    headline: string;
+    summary?: string;
+  };
+  summary: {
+    candidate_count: number;
+    active_run_count?: number;
+    disclosure_bundle_count?: number;
+    [key: string]: number | string | null | undefined;
+  };
+  sources: FeedSourceCard[];
+};
+
+export type CandidateFactorDetail = {
+  key: string;
+  raw: number;
+  weight: number;
+  weighted: number;
+  reason: string;
+};
+
+export type CandidateExplainability = {
+  score: number;
+  factors: Record<string, number | boolean>;
+  weights: Record<string, number>;
+  factor_details: CandidateFactorDetail[];
+  asset_match_count: number;
+  patch_available: boolean;
+  observability_score: number;
+  linux_reproducibility_confidence: number;
+  environment_applicability: Record<string, unknown>;
+  citations: Citation[];
+};
+
+export type CandidateItem = {
+  id: number;
+  cve_id?: string | null;
+  title: string;
+  summary?: string | null;
+  candidate_score: number;
+  status: string;
+  status_reason?: string | null;
+  status_changed_at?: string | null;
+  status_changed_by?: string | null;
+  merged_into_id?: number | null;
+  assignment_state: string;
+  assigned_to?: string | null;
+  assigned_by?: string | null;
+  assigned_at?: string | null;
+  package_name?: string | null;
+  product_name?: string | null;
+  distro_hint?: string | null;
+  environment_fit?: string | null;
+  patch_available: boolean;
+  linux_reproducibility_confidence: number;
+  observability_score: number;
+  explainability: CandidateExplainability;
+};
+
+export type CandidateListResponse = {
+  tenant: { id: number; slug: string; name: string };
+  total: number;
+  count: number;
+  offset: number;
+  limit: number;
+  items: CandidateItem[];
+};
+
+export type CandidateWorkloadResponse = {
+  tenant: { id: number; slug: string; name: string };
+  total_active: number;
+  unassigned: number;
+  by_analyst: Array<{ analyst: string; count: number }>;
+  by_status: Record<string, number>;
+};
+
+export type EvidenceRecord = {
+  id: number;
+  run_id: number;
+  artifact_kind: string;
+  title: string;
+  summary?: string | null;
+  reviewed_state: string;
+  sha256?: string | null;
+  storage_path?: string | null;
+  content_type?: string | null;
+  byte_size?: number | null;
+  capture_started_at?: string | null;
+  capture_ended_at?: string | null;
+  collector_name?: string | null;
+  collector_version?: string | null;
+  truncated?: boolean;
+  payload: Record<string, unknown>;
+};
+
+export type EvidenceListResponse = {
+  count: number;
+  items: EvidenceRecord[];
+};
+
+export type ArtifactReviewEntry = {
+  decision: string;
+  reviewer_name: string;
+  rationale?: string | null;
+  payload?: Record<string, unknown>;
+  created_at?: string | null;
+};
+
+export type ArtifactFeedbackEntry = {
+  reviewer_name: string;
+  feedback_type?: string | null;
+  note?: string | null;
+  created_at?: string | null;
+};
+
+export type DetectionArtifactRecord = {
+  id: number;
+  run_id: number;
+  artifact_type: string;
+  name: string;
+  status: string;
+  sha256: string;
+  evidence_artifact_id?: number | null;
+  rule_body: string;
+  review_history: ArtifactReviewEntry[];
+  feedback: ArtifactFeedbackEntry[];
+};
+
+export type MitigationArtifactRecord = {
+  id: number;
+  run_id: number;
+  artifact_type: string;
+  title: string;
+  status: string;
+  body: string;
+  review_history: ArtifactReviewEntry[];
+  feedback: ArtifactFeedbackEntry[];
+};
+
+export type ArtifactListResponse = {
+  detections: DetectionArtifactRecord[];
+  mitigations: MitigationArtifactRecord[];
+  summary: {
+    detection_count: number;
+    mitigation_count: number;
+    approved_count: number;
+    under_review_count: number;
+  };
+};
+
+export type ProvenanceAttestation = {
+  id: number;
+  run_id?: number | null;
+  disclosure_bundle_id?: number | null;
+  subject_type: string;
+  subject_id: string;
+  sha256: string;
+  signature: string;
+  signer: string;
+  payload: Record<string, unknown>;
+  created_at?: string | null;
+};
+
+export type DisclosureBundleRecord = {
+  id: number;
+  run_id: number;
+  bundle_type: string;
+  title: string;
+  status: string;
+  sha256: string;
+  signed_by: string;
+  manifest: Record<string, unknown>;
+  archive?: {
+    path?: string;
+    filename?: string;
+    sha256?: string;
+    size?: number;
+  };
+  download_url: string;
+  created_at?: string | null;
+};
+
+export type ProvenanceResponse = {
+  count: number;
+  items: ProvenanceAttestation[];
+  run?: RunDetailResponse;
+  manifest_summary?: Record<string, unknown>;
+  evidence_linkage?: Array<Record<string, unknown>>;
+  artifact_linkage?: {
+    detections: DetectionArtifactRecord[];
+    mitigations: MitigationArtifactRecord[];
+  };
+  review_history?: Array<Record<string, unknown>>;
+  export_history?: DisclosureBundleRecord[];
+};
+
+export type LedgerEntry = {
+  id: number;
+  analyst_id?: number | null;
+  analyst_name?: string | null;
+  entry_type: string;
+  object_type: string;
+  object_id: string;
+  score: number;
+  note?: string | null;
+  payload: Record<string, unknown>;
+  created_at?: string | null;
+};
+
+export type LedgerResponse = {
+  count: number;
+  items: LedgerEntry[];
+  summary: {
+    total_score: number;
+    by_analyst: Array<{ name: string; score: number }>;
+  };
+};
+
+export type DisclosureListResponse = {
+  count: number;
+  items: DisclosureBundleRecord[];
 };

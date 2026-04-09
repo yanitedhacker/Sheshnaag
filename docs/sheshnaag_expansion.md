@@ -20,7 +20,7 @@
 - The current Sheshnaag backend entrypoint is [`app/main.py`](/Users/archishmanpaul/Desktop/Sheshnaag/app/main.py).
 - The current Sheshnaag core service layer is [`app/services/sheshnaag_service.py`](/Users/archishmanpaul/Desktop/Sheshnaag/app/services/sheshnaag_service.py).
 - The current lab provider is [`app/lab/docker_kali_provider.py`](/Users/archishmanpaul/Desktop/Sheshnaag/app/lab/docker_kali_provider.py).
-- The current collectors are [`app/lab/collectors.py`](/Users/archishmanpaul/Desktop/Sheshnaag/app/lab/collectors.py).
+- The current evidence collectors package is [`app/lab/collectors/`](/Users/archishmanpaul/Desktop/Sheshnaag/app/lab/collectors/) (registry: [`app/lab/collectors/registry.py`](/Users/archishmanpaul/Desktop/Sheshnaag/app/lab/collectors/registry.py)).
 - The current artifact generator is [`app/lab/artifact_generator.py`](/Users/archishmanpaul/Desktop/Sheshnaag/app/lab/artifact_generator.py).
 - The current attestation helper is [`app/lab/attestation.py`](/Users/archishmanpaul/Desktop/Sheshnaag/app/lab/attestation.py).
 - The current frontend route entry is [`frontend/src/App.tsx`](/Users/archishmanpaul/Desktop/Sheshnaag/frontend/src/App.tsx).
@@ -32,7 +32,7 @@
 - Sheshnaag has backend APIs for the core entities.
 - Sheshnaag has a coherent service-level happy path for candidate -> recipe -> approval -> run -> evidence -> artifact -> provenance -> disclosure.
 - Sheshnaag does not have a real validation execution engine yet.
-- Sheshnaag does not have real evidence collectors yet.
+- Sheshnaag has a pluggable collector framework and real guest collectors for live runs; simulated runs use explicit synthetic or skipped health metadata.
 - Sheshnaag does not have runtime telemetry integrations yet.
 - Sheshnaag does not have real bundle packaging yet.
 - Sheshnaag does not have strong signing yet.
@@ -119,7 +119,7 @@
 - Pod C owns `app/lab/docker_kali_provider.py`.
 - Pod C owns future provider modules under `app/lab/*provider*.py`.
 - Pod C owns run lifecycle pieces in `app/services/sheshnaag_service.py`.
-- Pod D owns `app/lab/collectors.py`.
+- Pod D owns the `app/lab/collectors/` package (registry and per-collector modules).
 - Pod D owns collector plugin modules.
 - Pod D owns telemetry normalization logic.
 - Pod E owns `app/lab/artifact_generator.py`.
@@ -1353,7 +1353,7 @@
 - Reviewer: Pod D lead.
 - Estimate: 360 minutes.
 - Review estimate: 45 minutes.
-- Files: `app/lab/collectors.py`, new collector modules, tests.
+- Files: `app/lab/collectors/` (registry and modules), `app/lab/collector_contract.py`, tests.
 - Dependencies: WS4-T1.
 - Implementation steps:
   - Keep the collector interface.
@@ -1716,6 +1716,14 @@
   - Add event-to-finding translation tests.
 - Acceptance criteria:
   - Telemetry integrations are testable and predictable.
+
+### WS6/WS7 implementation notes (codebase alignment)
+
+- **Collectors** live under `app/lab/collectors/` with a registry; optional recipe keys `file_manifest_baseline`, `package_baseline`, and `log_sources` are copied into the provider plan for diffable file/package evidence and service log sources.
+- **Evidence storage and timeline**: `EvidenceArtifact` persists storage and capture metadata; `get_run` returns `evidence_timeline` and **`runtime_findings_summary`** (aggregated `findings` from telemetry payloads) for operator-facing views without reading raw events.
+- **Runtime telemetry**: normalized envelope in `app/lab/telemetry_envelope.py`; translation and policy packs in `telemetry_translation.py` / `telemetry_policy_packs.py`; **event routing** helpers in `app/lab/telemetry_routing.py`.
+- **Indexing**: composite index on `(run_id, artifact_kind)` supports listing evidence by run and kind.
+- **Residual roadmap items**: deep DNS/HTTP capture beyond `ss`/netstat summaries, and provider-captured baselines before exploit execution, remain future enhancements unless the lab stages extra snapshots into the plan.
 
 ## 29. WS8 Overview
 

@@ -50,8 +50,8 @@ export function CopilotPanel() {
               </article>
               {mutation.data.citations.length > 0 && (
                 <div className="citation-list">
-                  {mutation.data.citations.map((citation) => (
-                    <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">
+                  {mutation.data.citations.filter((citation) => citation.url).map((citation) => (
+                    <a key={citation.url ?? citation.label} href={citation.url ?? undefined} target="_blank" rel="noreferrer">
                       {citation.label}
                     </a>
                   ))}

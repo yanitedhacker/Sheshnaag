@@ -146,6 +146,13 @@ class Collector(ABC):
     """Collector abstraction for evidence pipelines."""
 
     collector_name: str = "unknown"
+    collector_version: str = "0.0.0"
+
+    def pre_run(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> None:
+        """Optional hook before main collection (e.g. baseline snapshots)."""
+
+    def post_run(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> None:
+        """Optional hook after main collection."""
 
     @abstractmethod
     def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:

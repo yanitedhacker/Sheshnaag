@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import time
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from app.core.time import utc_now
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -15,7 +21,12 @@ from app.ingestion.connector import get_registered_connectors
 from app.models.ops import FeedSyncRun, FeedSyncState
 from app.lab.artifact_generator import DefensiveArtifactGenerator
 from app.lab.attestation import HashAttestationSigner
-from app.lab.collectors import default_collectors
+from app.lab.collector_contract import (
+    build_provider_result_dict,
+    recipe_collector_names,
+)
+from app.lab.collectors import instantiate_collectors
+from app.lab.collectors.common import collector_error_evidence
 from app.lab.docker_kali_provider import DEFAULT_KALI_IMAGE, DockerKaliProvider
 from app.lab.interfaces import HealthStatus, ProviderResult, RunState, validate_transition
 from app.models.asset import Asset, AssetVulnerability
@@ -110,9 +121,9 @@ class SheshnaagService:
         self.session = session
         self.intel = ThreatIntelService(session)
         self.provider = DockerKaliProvider()
-        self.collectors = default_collectors()
         self.artifact_generator = DefensiveArtifactGenerator()
         self.attestation_signer = HashAttestationSigner()
+        self.export_root = Path(os.getenv("SHESHNAAG_EXPORT_ROOT", "/tmp/sheshnaag_exports"))
 
     def _assert_transition(self, run: LabRun, target: RunState) -> None:
         current = RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
@@ -535,6 +546,7 @@ class SheshnaagService:
         """Create recipe root plus first revision."""
         candidate = self._get_candidate(tenant, candidate_id)
         template = self._ensure_lab_template()
+        normalized_content = self._prepare_recipe_content(content, template.base_image)
         recipe = LabRecipe(
             tenant_id=tenant.id,
             candidate_id=candidate.id,
@@ -552,10 +564,10 @@ class SheshnaagService:
             recipe_id=recipe.id,
             revision_number=1,
             approval_state="draft",
-            risk_level=content.get("risk_level", "standard"),
-            requires_acknowledgement=bool(content.get("requires_acknowledgement", False)),
-            signed_digest=self.attestation_signer.sign(payload=content, signer=created_by)["sha256"],
-            content=self._normalize_recipe_content(content, template.base_image),
+            risk_level=normalized_content.get("risk_level", "standard"),
+            requires_acknowledgement=bool(normalized_content.get("requires_acknowledgement", False)),
+            signed_digest=self.attestation_signer.sign(payload=normalized_content, signer=created_by)["sha256"],
+            content=normalized_content,
         )
         self.session.add(revision)
         self._ledger(tenant.id, None, "recipe_created", "recipe", str(recipe.id), 4.0, {"candidate_id": candidate.id})
@@ -573,14 +585,17 @@ class SheshnaagService:
         """Create a new immutable revision."""
         recipe = self._get_recipe(tenant, recipe_id)
         next_revision = (recipe.current_revision_number or 0) + 1
+        normalized_content = self._prepare_recipe_content(
+            content, self._ensure_lab_template().base_image
+        )
         revision = RecipeRevision(
             recipe_id=recipe.id,
             revision_number=next_revision,
             approval_state="draft",
-            risk_level=content.get("risk_level", "standard"),
-            requires_acknowledgement=bool(content.get("requires_acknowledgement", False)),
-            signed_digest=self.attestation_signer.sign(payload=content, signer=updated_by)["sha256"],
-            content=self._normalize_recipe_content(content, self._ensure_lab_template().base_image),
+            risk_level=normalized_content.get("risk_level", "standard"),
+            requires_acknowledgement=bool(normalized_content.get("requires_acknowledgement", False)),
+            signed_digest=self.attestation_signer.sign(payload=normalized_content, signer=updated_by)["sha256"],
+            content=normalized_content,
         )
         recipe.current_revision_number = next_revision
         recipe.status = "draft"
@@ -687,6 +702,20 @@ class SheshnaagService:
         )
         provider_result = self.provider.launch(revision_content=revision.content, run_context=run_context)
         self._apply_provider_result(run, provider_result)
+        self._annotate_run_manifest(
+            run=run,
+            revision=revision,
+            analyst_name=analyst_name,
+            acknowledgement_recorded=acknowledge_sensitive,
+        )
+        self._persist_run_acknowledgement(
+            tenant=tenant,
+            run=run,
+            revision=revision,
+            analyst_name=analyst_name,
+            acknowledged=acknowledge_sensitive,
+        )
+        self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
         run.started_at = utc_now()
         terminal_states = {RunState.COMPLETED.value, RunState.BLOCKED.value, RunState.PLANNED.value, RunState.ERRORED.value}
         if run.state in terminal_states:
@@ -752,6 +781,19 @@ class SheshnaagService:
         )
         self._apply_provider_result(run, placeholder)
         run.provider_run_ref = None
+        self._annotate_run_manifest(
+            run=run,
+            revision=revision,
+            analyst_name=analyst_name,
+            acknowledgement_recorded=acknowledge_sensitive,
+        )
+        self._persist_run_acknowledgement(
+            tenant=tenant,
+            run=run,
+            revision=revision,
+            analyst_name=analyst_name,
+            acknowledged=acknowledge_sensitive,
+        )
 
         self._add_run_event(run, "run_planned", placeholder)
         self._ledger(tenant.id, analyst.id, "run_planned", "run", str(run.id), 1.0, {"state": run.state})
@@ -774,6 +816,19 @@ class SheshnaagService:
         )
         result = self.provider.create(plan=run.manifest, run_context=run_context)
         self._apply_provider_result(run, result)
+        revision = (
+            self.session.query(RecipeRevision)
+            .filter(RecipeRevision.id == run.recipe_revision_id)
+            .first()
+        )
+        if revision is not None:
+            self._annotate_run_manifest(
+                run=run,
+                revision=revision,
+                analyst_name=self._analyst_display_name(run),
+                acknowledgement_recorded=bool(run.acknowledged_by),
+            )
+            self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
         self._add_run_event(run, "run_allocated", result)
         self._ledger(tenant.id, run.analyst_id, "run_allocated", "run", str(run.id), 2.0, {"state": run.state})
         self.session.flush()
@@ -828,6 +883,8 @@ class SheshnaagService:
                 }
                 for event in events
             ],
+            "evidence_timeline": self._evidence_timeline_payload(run.id),
+            "runtime_findings_summary": self._runtime_findings_summary(run.id),
         }
 
     def stop_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
@@ -895,6 +952,57 @@ class SheshnaagService:
             ],
         }
 
+    def _runtime_findings_summary(self, run_id: int) -> Dict[str, Any]:
+        """Aggregate ``findings`` from telemetry collector payloads (WS7-T5 operator view)."""
+        rows = self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run_id).all()
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            pl = row.payload or {}
+            if not isinstance(pl, dict):
+                continue
+            findings = pl.get("findings")
+            if not isinstance(findings, list):
+                continue
+            for f in findings:
+                if isinstance(f, dict):
+                    items.append(
+                        {
+                            **f,
+                            "evidence_artifact_id": row.id,
+                            "artifact_kind": row.artifact_kind,
+                        }
+                    )
+        return {"count": len(items), "items": items[:500]}
+
+    def _evidence_timeline_payload(self, run_id: int) -> Dict[str, Any]:
+        rows = (
+            self.session.query(EvidenceArtifact)
+            .filter(EvidenceArtifact.run_id == run_id)
+            .order_by(EvidenceArtifact.created_at.asc())
+            .all()
+        )
+        def _ev_ts(row: EvidenceArtifact) -> float:
+            t = row.capture_started_at or row.created_at
+            return t.timestamp() if t else 0.0
+
+        rows.sort(key=lambda r: (_ev_ts(r), r.id))
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            ts = row.capture_started_at or row.created_at
+            items.append(
+                {
+                    "evidence_id": row.id,
+                    "artifact_kind": row.artifact_kind,
+                    "stage": "collection",
+                    "timestamp": ts.isoformat() if ts else None,
+                    "collector_name": row.collector_name,
+                    "collector_version": row.collector_version,
+                    "truncated": row.truncated,
+                    "title": row.title,
+                }
+            )
+        return {"items": items, "ordered_by": "capture_started_at_then_created_at"}
+
     def list_evidence(self, tenant: Tenant, *, run_id: Optional[int] = None) -> Dict[str, Any]:
         """List evidence artifacts."""
         query = self.session.query(EvidenceArtifact).join(LabRun, LabRun.id == EvidenceArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
@@ -912,6 +1020,14 @@ class SheshnaagService:
                     "summary": item.summary,
                     "reviewed_state": item.reviewed_state,
                     "sha256": item.sha256,
+                    "storage_path": item.storage_path,
+                    "content_type": item.content_type,
+                    "byte_size": item.byte_size,
+                    "capture_started_at": item.capture_started_at.isoformat() if item.capture_started_at else None,
+                    "capture_ended_at": item.capture_ended_at.isoformat() if item.capture_ended_at else None,
+                    "collector_name": item.collector_name,
+                    "collector_version": item.collector_version,
+                    "truncated": item.truncated,
                     "payload": item.payload,
                 }
                 for item in rows
@@ -925,29 +1041,96 @@ class SheshnaagService:
         if run_id is not None:
             detection_query = detection_query.filter(DetectionArtifact.run_id == run_id)
             mitigation_query = mitigation_query.filter(MitigationArtifact.run_id == run_id)
+        detections = detection_query.order_by(desc(DetectionArtifact.created_at)).all()
+        mitigations = mitigation_query.order_by(desc(MitigationArtifact.created_at)).all()
         return {
-            "detections": [
-                {
-                    "id": item.id,
-                    "run_id": item.run_id,
-                    "artifact_type": item.artifact_type,
-                    "name": item.name,
-                    "status": item.status,
-                    "sha256": item.sha256,
-                }
-                for item in detection_query.order_by(desc(DetectionArtifact.created_at)).all()
-            ],
-            "mitigations": [
-                {
-                    "id": item.id,
-                    "run_id": item.run_id,
-                    "artifact_type": item.artifact_type,
-                    "title": item.title,
-                    "status": item.status,
-                }
-                for item in mitigation_query.order_by(desc(MitigationArtifact.created_at)).all()
-            ],
+            "detections": [self._detection_artifact_payload(item) for item in detections],
+            "mitigations": [self._mitigation_artifact_payload(item) for item in mitigations],
+            "summary": {
+                "detection_count": len(detections),
+                "mitigation_count": len(mitigations),
+                "approved_count": sum(1 for item in [*detections, *mitigations] if item.status == "approved"),
+                "under_review_count": sum(1 for item in [*detections, *mitigations] if item.status == "under_review"),
+            },
         }
+
+    def review_artifact(
+        self,
+        tenant: Tenant,
+        *,
+        artifact_family: str,
+        artifact_id: int,
+        decision: str,
+        reviewer: str,
+        rationale: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Advance an artifact through the review state machine."""
+        artifact = self._get_artifact_entity(tenant, artifact_family, artifact_id)
+        valid_states = {"under_review", "approved", "rejected", "superseded"}
+        if decision not in valid_states:
+            raise ValueError(f"Invalid artifact review state '{decision}'.")
+        artifact.status = decision
+        self.session.add(
+            ReviewDecision(
+                tenant_id=tenant.id,
+                reviewer_name=reviewer,
+                target_type=f"{artifact_family}_artifact",
+                target_id=str(artifact.id),
+                decision=decision,
+                rationale=rationale,
+                payload={"run_id": artifact.run_id, "artifact_family": artifact_family},
+            )
+        )
+        analyst_id = self._run_analyst_id(artifact.run_id)
+        self._ledger(
+            tenant.id,
+            analyst_id,
+            f"{artifact_family}_artifact_{decision}",
+            f"{artifact_family}_artifact",
+            str(artifact.id),
+            1.5 if decision == "approved" else 0.5,
+            {"reviewer": reviewer, "run_id": artifact.run_id},
+        )
+        self.session.flush()
+        return (
+            self._detection_artifact_payload(artifact)
+            if artifact_family == "detection"
+            else self._mitigation_artifact_payload(artifact)
+        )
+
+    def add_artifact_feedback(
+        self,
+        tenant: Tenant,
+        *,
+        artifact_family: str,
+        artifact_id: int,
+        reviewer: str,
+        feedback_type: str,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Persist explicit artifact feedback for future review and tuning."""
+        artifact = self._get_artifact_entity(tenant, artifact_family, artifact_id)
+        self.session.add(
+            ReviewDecision(
+                tenant_id=tenant.id,
+                reviewer_name=reviewer,
+                target_type=f"{artifact_family}_artifact",
+                target_id=str(artifact.id),
+                decision="feedback",
+                rationale=note,
+                payload={
+                    "feedback_type": feedback_type,
+                    "run_id": artifact.run_id,
+                    "artifact_family": artifact_family,
+                },
+            )
+        )
+        self.session.flush()
+        return (
+            self._detection_artifact_payload(artifact)
+            if artifact_family == "detection"
+            else self._mitigation_artifact_payload(artifact)
+        )
 
     def get_provenance(self, tenant: Tenant, *, run_id: Optional[int] = None) -> Dict[str, Any]:
         """Return run- and bundle-linked attestation data."""
@@ -955,7 +1138,7 @@ class SheshnaagService:
         if run_id is not None:
             query = query.filter(AttestationRecord.run_id == run_id)
         rows = query.order_by(desc(AttestationRecord.created_at)).all()
-        return {
+        response = {
             "count": len(rows),
             "items": [
                 {
@@ -968,20 +1151,105 @@ class SheshnaagService:
                     "signature": row.signature,
                     "signer": row.signer,
                     "payload": row.payload,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
                 }
                 for row in rows
             ],
         }
+        if run_id is not None:
+            run = self._get_run(tenant, run_id)
+            evidence_rows = (
+                self.session.query(EvidenceArtifact)
+                .filter(EvidenceArtifact.run_id == run_id)
+                .order_by(EvidenceArtifact.created_at.asc())
+                .all()
+            )
+            detection_rows = self.session.query(DetectionArtifact).filter(DetectionArtifact.run_id == run_id).all()
+            mitigation_rows = self.session.query(MitigationArtifact).filter(MitigationArtifact.run_id == run_id).all()
+            bundle_rows = self.session.query(DisclosureBundle).filter(DisclosureBundle.run_id == run_id).all()
+            review_rows = (
+                self.session.query(ReviewDecision)
+                .filter(ReviewDecision.tenant_id == tenant.id)
+                .order_by(ReviewDecision.created_at.desc())
+                .all()
+            )
+            revision = self.session.query(RecipeRevision).filter(RecipeRevision.id == run.recipe_revision_id).first()
+            analyst = self.session.query(AnalystIdentity).filter(AnalystIdentity.id == run.analyst_id).first()
+            workstation = self.session.query(WorkstationFingerprint).filter(
+                WorkstationFingerprint.id == run.workstation_fingerprint_id
+            ).first()
+            response.update(
+                {
+                    "run": self.get_run(tenant, run_id),
+                    "manifest_summary": {
+                        "recipe_revision_id": run.recipe_revision_id,
+                        "recipe_revision_digest": revision.signed_digest if revision else None,
+                        "analyst": analyst.name if analyst else None,
+                        "workstation_fingerprint": workstation.fingerprint if workstation else None,
+                        "acknowledgement": (run.manifest or {}).get("acknowledgement"),
+                        "artifact_transfer": (run.manifest or {}).get("artifact_transfer"),
+                        "signing_backends": sorted(
+                            {
+                                (item.payload or {}).get("signing", {}).get("backend")
+                                for item in rows
+                                if isinstance(item.payload, dict)
+                            }
+                            - {None}
+                        ),
+                    },
+                    "evidence_linkage": [
+                        {
+                            "id": row.id,
+                            "artifact_kind": row.artifact_kind,
+                            "sha256": row.sha256,
+                            "collector_name": row.collector_name,
+                            "storage_path": row.storage_path,
+                            "capture_started_at": row.capture_started_at.isoformat() if row.capture_started_at else None,
+                        }
+                        for row in evidence_rows
+                    ],
+                    "artifact_linkage": {
+                        "detections": [self._detection_artifact_payload(row) for row in detection_rows],
+                        "mitigations": [self._mitigation_artifact_payload(row) for row in mitigation_rows],
+                    },
+                    "review_history": [
+                        {
+                            "id": row.id,
+                            "target_type": row.target_type,
+                            "target_id": row.target_id,
+                            "decision": row.decision,
+                            "reviewer_name": row.reviewer_name,
+                            "rationale": row.rationale,
+                            "payload": row.payload,
+                            "created_at": row.created_at.isoformat() if row.created_at else None,
+                        }
+                        for row in review_rows
+                        if (row.payload or {}).get("run_id") == run_id
+                    ],
+                    "export_history": [self._disclosure_bundle_payload(row) for row in bundle_rows],
+                }
+            )
+        return response
 
     def get_ledger(self, tenant: Tenant) -> Dict[str, Any]:
         """Return analyst contribution ledger."""
         rows = self.session.query(ContributionLedgerEntry).filter(ContributionLedgerEntry.tenant_id == tenant.id).order_by(desc(ContributionLedgerEntry.created_at)).all()
+        analyst_ids = {row.analyst_id for row in rows if row.analyst_id}
+        analysts = {
+            row.id: row.name
+            for row in self.session.query(AnalystIdentity).filter(AnalystIdentity.id.in_(analyst_ids)).all()
+        } if analyst_ids else {}
+        by_analyst: Dict[str, float] = {}
+        for row in rows:
+            name = analysts.get(row.analyst_id, "system")
+            by_analyst[name] = by_analyst.get(name, 0.0) + float(row.score or 0.0)
         return {
             "count": len(rows),
             "items": [
                 {
                     "id": row.id,
                     "analyst_id": row.analyst_id,
+                    "analyst_name": analysts.get(row.analyst_id),
                     "entry_type": row.entry_type,
                     "object_type": row.object_type,
                     "object_id": row.object_id,
@@ -992,29 +1260,73 @@ class SheshnaagService:
                 }
                 for row in rows
             ],
+            "summary": {
+                "total_score": round(sum(float(row.score or 0.0) for row in rows), 2),
+                "by_analyst": [{"name": name, "score": round(score, 2)} for name, score in sorted(by_analyst.items())],
+            },
         }
 
-    def create_disclosure_bundle(self, tenant: Tenant, *, run_id: int, bundle_type: str, title: str, signed_by: str) -> Dict[str, Any]:
+    def create_disclosure_bundle(
+        self,
+        tenant: Tenant,
+        *,
+        run_id: int,
+        bundle_type: str,
+        title: str,
+        signed_by: str,
+        evidence_ids: Optional[List[int]] = None,
+        redaction_notes: Optional[List[Dict[str, Any]]] = None,
+        confirm_external_export: bool = False,
+    ) -> Dict[str, Any]:
         """Create a disclosure/export bundle from a run."""
         run = self._get_run(tenant, run_id)
-        evidence = self.list_evidence(tenant, run_id=run.id)["items"]
-        artifacts = self.list_artifacts(tenant, run_id=run.id)
-        manifest = {
-            "run": self._run_summary(run),
-            "evidence_count": len(evidence),
-            "detection_count": len(artifacts["detections"]),
-            "mitigation_count": len(artifacts["mitigations"]),
-            "exported_at": utc_now().isoformat(),
-        }
+        evidence_rows = (
+            self.session.query(EvidenceArtifact)
+            .filter(EvidenceArtifact.run_id == run.id)
+            .order_by(EvidenceArtifact.created_at.asc())
+            .all()
+        )
+        if evidence_ids:
+            evidence_rows = [row for row in evidence_rows if row.id in set(evidence_ids)]
+        detection_rows = self.session.query(DetectionArtifact).filter(DetectionArtifact.run_id == run.id).all()
+        mitigation_rows = self.session.query(MitigationArtifact).filter(MitigationArtifact.run_id == run.id).all()
+        approved_artifacts = [row for row in [*detection_rows, *mitigation_rows] if row.status == "approved"]
+        selected_artifacts = approved_artifacts or [*detection_rows, *mitigation_rows]
+
+        warnings: List[str] = []
+        if any(row.artifact_kind == "pcap" for row in evidence_rows):
+            warnings.append("Bundle includes PCAP-derived evidence; review raw packet data before external sharing.")
+        if any(row.artifact_kind == "service_logs" for row in evidence_rows):
+            warnings.append("Bundle includes service log excerpts; verify secrets and tenant identifiers are redacted.")
+        if warnings and not confirm_external_export:
+            raise ValueError("Bundle requires explicit external export confirmation for sensitive evidence.")
+
+        manifest = self._build_bundle_manifest(
+            run=run,
+            bundle_type=bundle_type,
+            title=title,
+            signed_by=signed_by,
+            evidence_rows=evidence_rows,
+            artifacts=selected_artifacts,
+            redaction_notes=redaction_notes or [],
+            warnings=warnings,
+        )
+        archive = self._write_bundle_archive(
+            manifest=manifest,
+            evidence_rows=evidence_rows,
+            detection_rows=[row for row in selected_artifacts if isinstance(row, DetectionArtifact)],
+            mitigation_rows=[row for row in selected_artifacts if isinstance(row, MitigationArtifact)],
+        )
+        manifest["archive"] = archive
         signed = self.attestation_signer.sign(payload=manifest, signer=signed_by)
         bundle = DisclosureBundle(
             tenant_id=tenant.id,
             run_id=run.id,
             bundle_type=bundle_type,
             title=title,
-            status="signed",
+            status="exported",
             manifest=manifest,
-            sha256=signed["sha256"],
+            sha256=archive["sha256"],
             signed_by=signed_by,
         )
         self.session.add(bundle)
@@ -1029,32 +1341,43 @@ class SheshnaagService:
                 sha256=signed["sha256"],
                 signature=signed["signature"],
                 signer=signed["signer"],
-                payload=manifest,
+                payload={**manifest, "signing": {"backend": signed.get("backend"), "algorithm": signed.get("algorithm")}},
             )
         )
-        self._ledger(tenant.id, run.analyst_id, "bundle_signed", "disclosure_bundle", str(bundle.id), 3.0, {"bundle_type": bundle_type})
+        self._ledger(
+            tenant.id,
+            run.analyst_id,
+            "bundle_exported",
+            "disclosure_bundle",
+            str(bundle.id),
+            3.0,
+            {"bundle_type": bundle_type, "archive_sha256": archive["sha256"]},
+        )
         self.session.flush()
-        return self.list_disclosure_bundles(tenant)
+        return self._disclosure_bundle_payload(bundle)
 
     def list_disclosure_bundles(self, tenant: Tenant) -> Dict[str, Any]:
         """List disclosure bundles."""
         rows = self.session.query(DisclosureBundle).filter(DisclosureBundle.tenant_id == tenant.id).order_by(desc(DisclosureBundle.created_at)).all()
         return {
             "count": len(rows),
-            "items": [
-                {
-                    "id": row.id,
-                    "run_id": row.run_id,
-                    "bundle_type": row.bundle_type,
-                    "title": row.title,
-                    "status": row.status,
-                    "sha256": row.sha256,
-                    "signed_by": row.signed_by,
-                    "manifest": row.manifest,
-                }
-                for row in rows
-            ],
+            "items": [self._disclosure_bundle_payload(row) for row in rows],
         }
+
+    def get_disclosure_bundle_archive(self, tenant: Tenant, *, bundle_id: int) -> Dict[str, str]:
+        """Return archive location details for a previously exported bundle."""
+        bundle = (
+            self.session.query(DisclosureBundle)
+            .filter(DisclosureBundle.tenant_id == tenant.id, DisclosureBundle.id == bundle_id)
+            .first()
+        )
+        if bundle is None:
+            raise ValueError("Disclosure bundle not found.")
+        archive = (bundle.manifest or {}).get("archive") or {}
+        path = archive.get("path")
+        if not path or not os.path.exists(path):
+            raise ValueError("Disclosure bundle archive is missing.")
+        return {"path": path, "filename": archive.get("filename") or os.path.basename(path)}
 
     def _build_candidate_explainability(
         self,
@@ -1232,16 +1555,280 @@ class SheshnaagService:
 
         return citations
 
+    def _artifact_inputs(self, recipe_content: Dict[str, Any]) -> List[Dict[str, Any]]:
+        raw = recipe_content.get("artifact_inputs", recipe_content.get("input_artifacts")) or []
+        if not isinstance(raw, list):
+            return []
+        items: List[Dict[str, Any]] = []
+        for artifact in raw:
+            if not isinstance(artifact, dict):
+                continue
+            source_path = artifact.get("source_path")
+            if not isinstance(source_path, str) or not source_path:
+                continue
+            name = artifact.get("name")
+            if not isinstance(name, str) or not name.strip():
+                name = os.path.basename(source_path)
+            item = dict(artifact)
+            item["source_path"] = source_path
+            item["name"] = name
+            items.append(item)
+        return items
+
+    def _acknowledgement_details(
+        self,
+        *,
+        revision: RecipeRevision,
+        analyst_name: str,
+        include_actor: bool,
+    ) -> Optional[Dict[str, Any]]:
+        if not revision.requires_acknowledgement:
+            return None
+
+        from app.lab.recipe_schema import SignOffPolicy
+
+        content = dict(revision.content or {})
+        requirement = SignOffPolicy().evaluate(
+            risk_level=str(content.get("risk_level", revision.risk_level or "standard")),
+            capabilities=content.get("cap_add") if isinstance(content.get("cap_add"), list) else [],
+        )
+        acknowledgement_text = requirement.acknowledgement_text
+        text_sha256 = hashlib.sha256(acknowledgement_text.encode("utf-8")).hexdigest()
+        details: Dict[str, Any] = {
+            "risk_level": revision.risk_level,
+            "required": True,
+            "required_approvals": requirement.required_approvals,
+            "restricted_capabilities": requirement.restricted_caps_present,
+            "eligible_roles": requirement.eligible_roles,
+            "text": acknowledgement_text,
+            "text_sha256": text_sha256,
+        }
+        if include_actor:
+            details.update(
+                {
+                    "acknowledged_by": analyst_name,
+                    "acknowledged_at": utc_now().isoformat(),
+                }
+            )
+        return details
+
+    def _annotate_run_manifest(
+        self,
+        *,
+        run: LabRun,
+        revision: RecipeRevision,
+        analyst_name: str,
+        acknowledgement_recorded: bool,
+    ) -> None:
+        manifest = dict(run.manifest or {})
+        artifact_inputs = self._artifact_inputs(dict(revision.content or {}))
+        if artifact_inputs:
+            manifest["artifact_inputs"] = [
+                {
+                    "name": item.get("name"),
+                    "source_path": item.get("source_path"),
+                    "sha256": item.get("sha256") or item.get("expected_sha256"),
+                    "destination": item.get("destination"),
+                }
+                for item in artifact_inputs
+            ]
+            manifest.setdefault(
+                "artifact_transfer",
+                {
+                    "status": "pending",
+                    "requested_count": len(artifact_inputs),
+                    "transfers": [],
+                },
+            )
+        acknowledgement = self._acknowledgement_details(
+            revision=revision,
+            analyst_name=analyst_name,
+            include_actor=acknowledgement_recorded,
+        )
+        if acknowledgement:
+            manifest["acknowledgement"] = acknowledgement
+        run.manifest = manifest
+
+    def _persist_run_acknowledgement(
+        self,
+        *,
+        tenant: Tenant,
+        run: LabRun,
+        revision: RecipeRevision,
+        analyst_name: str,
+        acknowledged: bool,
+    ) -> None:
+        if not acknowledged:
+            return
+        details = self._acknowledgement_details(
+            revision=revision,
+            analyst_name=analyst_name,
+            include_actor=True,
+        )
+        if not details:
+            return
+        existing = (
+            self.session.query(ReviewDecision)
+            .filter(
+                ReviewDecision.tenant_id == tenant.id,
+                ReviewDecision.target_type == "run_acknowledgement",
+                ReviewDecision.target_id == str(run.id),
+            )
+            .first()
+        )
+        if existing is not None:
+            return
+        self.session.add(
+            ReviewDecision(
+                tenant_id=tenant.id,
+                reviewer_name=analyst_name,
+                target_type="run_acknowledgement",
+                target_id=str(run.id),
+                decision="acknowledged",
+                rationale=details["text"],
+                payload={
+                    "run_id": run.id,
+                    "recipe_revision_id": run.recipe_revision_id,
+                    "risk_level": details["risk_level"],
+                    "acknowledgement_text_sha256": details["text_sha256"],
+                    "acknowledged_at": details.get("acknowledged_at"),
+                },
+            )
+        )
+
+    def _transfer_artifact_inputs(
+        self,
+        *,
+        run: LabRun,
+        recipe_content: Dict[str, Any],
+    ) -> None:
+        artifact_inputs = self._artifact_inputs(recipe_content)
+        if not artifact_inputs:
+            return
+
+        manifest = dict(run.manifest or {})
+        transfer_state = manifest.get("artifact_transfer") if isinstance(manifest.get("artifact_transfer"), dict) else {}
+        if transfer_state.get("status") == "completed":
+            return
+
+        workspace_path = (manifest.get("host_workspace") or run.workspace_path or "").strip()
+        if not workspace_path:
+            transfer_state = {
+                **transfer_state,
+                "status": "pending_workspace",
+                "requested_count": len(artifact_inputs),
+                "transfers": [],
+            }
+            manifest["artifact_transfer"] = transfer_state
+            run.manifest = manifest
+            return
+
+        transfer_result = self.provider.transfer_artifacts(
+            provider_run_ref=run.provider_run_ref or f"run-{run.id}",
+            artifacts=artifact_inputs,
+            workspace_path=workspace_path,
+        )
+        transfers = transfer_result.get("transfers", [])
+        has_errors = any(item.get("status") != "transferred" for item in transfers if isinstance(item, dict))
+        transfer_state = {
+            "status": "completed" if not has_errors else "completed_with_errors",
+            "requested_count": len(artifact_inputs),
+            "workspace_path": workspace_path,
+            "transfers": transfers,
+        }
+        manifest["artifact_transfer"] = transfer_state
+        run.manifest = manifest
+        self._add_run_event(
+            run,
+            "artifact_transfer",
+            ProviderResult(
+                state=RunState(run.state) if run.state in {item.value for item in RunState} else RunState.ERRORED,
+                provider_run_ref=run.provider_run_ref or f"run-{run.id}",
+                plan=manifest,
+                transcript=(
+                    "Artifact inputs copied into the guest workspace."
+                    if not has_errors
+                    else "Artifact input transfer completed with warnings."
+                ),
+            ),
+            level="warning" if has_errors else "info",
+        )
+
     def _collect_and_generate(self, *, run: LabRun, candidate: Optional[ResearchCandidate], analyst_name: str) -> RunArtifacts:
-        run_context = {
+        revision = (
+            self.session.query(RecipeRevision).filter(RecipeRevision.id == run.recipe_revision_id).first()
+        )
+        recipe_content = dict(revision.content or {}) if revision else {}
+        names = recipe_collector_names(recipe_content)
+        collectors = instantiate_collectors(names)
+
+        run_context: Dict[str, Any] = {
             "run_id": run.id,
             "candidate": self._candidate_payload(candidate) if candidate else {},
             "cve_id": candidate.cve.cve_id if candidate and candidate.cve else None,
+            "launch_mode": run.launch_mode,
+            "recipe_content": recipe_content,
         }
-        provider_result = {"provider_run_ref": run.provider_run_ref, "plan": run.manifest}
-        evidence = []
-        for collector in self.collectors:
-            evidence.extend(collector.collect(run_context=run_context, provider_result=provider_result))
+        provider_result = build_provider_result_dict(
+            provider_run_ref=run.provider_run_ref,
+            plan=run.manifest or {},
+            state=run.state,
+            container_id=(run.manifest or {}).get("container_id"),
+        )
+        evidence: List[Dict[str, Any]] = []
+        for collector in collectors:
+            try:
+                collector.pre_run(run_context=run_context, provider_result=provider_result)
+            except Exception as exc:  # noqa: BLE001 — isolate collector hook failures
+                evidence.append(
+                    collector_error_evidence(
+                        collector_name=getattr(collector, "collector_name", "unknown"),
+                        title="Collector pre_run failed",
+                        message=str(exc),
+                        run_context=run_context,
+                        provider_result=provider_result,
+                        collector_version=getattr(collector, "collector_version", "0.0.0"),
+                    )
+                )
+        for collector in collectors:
+            t_collect0 = time.monotonic()
+            try:
+                batch = collector.collect(run_context=run_context, provider_result=provider_result)
+            except Exception as exc:  # noqa: BLE001
+                wall_ms = int((time.monotonic() - t_collect0) * 1000)
+                err_item = collector_error_evidence(
+                    collector_name=getattr(collector, "collector_name", "unknown"),
+                    title="Collector failed",
+                    message=str(exc),
+                    run_context=run_context,
+                    provider_result=provider_result,
+                    collector_version=getattr(collector, "collector_version", "0.0.0"),
+                )
+                pl = err_item.get("payload")
+                if isinstance(pl, dict):
+                    pl["service_layer"] = {"collect_wall_ms": wall_ms}
+                evidence.append(err_item)
+            else:
+                wall_ms = int((time.monotonic() - t_collect0) * 1000)
+                for ev in batch:
+                    pl = ev.get("payload")
+                    if isinstance(pl, dict):
+                        pl["service_layer"] = {"collect_wall_ms": wall_ms}
+                evidence.extend(batch)
+        for collector in collectors:
+            try:
+                collector.post_run(run_context=run_context, provider_result=provider_result)
+            except Exception as exc:  # noqa: BLE001
+                evidence.append(
+                    collector_error_evidence(
+                        collector_name=getattr(collector, "collector_name", "unknown"),
+                        title="Collector post_run failed",
+                        message=str(exc),
+                        run_context=run_context,
+                        provider_result=provider_result,
+                        collector_version=getattr(collector, "collector_version", "0.0.0"),
+                    )
+                )
         generated = self.artifact_generator.generate(run_context=run_context, evidence=evidence)
         attestation = self.attestation_signer.sign(payload=run.manifest or {}, signer=analyst_name)
         return RunArtifacts(
@@ -1250,6 +1837,14 @@ class SheshnaagService:
             mitigations=generated["mitigation_artifacts"],
             attestation=attestation,
         )
+
+    def _parse_iso_datetime(self, value: Optional[str]) -> Optional[datetime]:
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
     def _persist_run_artifacts(self, *, run: LabRun, artifacts: RunArtifacts) -> None:
         evidence_records: List[EvidenceArtifact] = []
@@ -1260,6 +1855,14 @@ class SheshnaagService:
                 title=item["title"],
                 summary=item["summary"],
                 sha256=item["sha256"],
+                storage_path=item.get("storage_path"),
+                content_type=item.get("content_type"),
+                byte_size=item.get("byte_size"),
+                capture_started_at=self._parse_iso_datetime(item.get("capture_started_at")),
+                capture_ended_at=self._parse_iso_datetime(item.get("capture_ended_at")),
+                collector_name=item.get("collector_name") or item.get("artifact_kind"),
+                collector_version=item.get("collector_version"),
+                truncated=bool(item.get("truncated")),
                 payload=item["payload"],
                 reviewed_state="captured",
             )
@@ -1268,38 +1871,49 @@ class SheshnaagService:
         self.session.flush()
 
         first_evidence_id = evidence_records[0].id if evidence_records else None
+        detection_records: List[DetectionArtifact] = []
         for item in artifacts.detections:
-            self.session.add(
-                DetectionArtifact(
-                    run_id=run.id,
-                    evidence_artifact_id=item.get("evidence_artifact_id") or first_evidence_id,
-                    artifact_type=item["artifact_type"],
-                    name=item["name"],
-                    rule_body=item["rule_body"],
-                    status=item["status"],
-                    sha256=item["sha256"],
-                )
+            record = DetectionArtifact(
+                run_id=run.id,
+                evidence_artifact_id=item.get("evidence_artifact_id") or first_evidence_id,
+                artifact_type=item["artifact_type"],
+                name=item["name"],
+                rule_body=item["rule_body"],
+                status=item["status"],
+                sha256=item["sha256"],
             )
+            self.session.add(record)
+            detection_records.append(record)
+        mitigation_records: List[MitigationArtifact] = []
         for item in artifacts.mitigations:
-            self.session.add(
-                MitigationArtifact(
-                    run_id=run.id,
-                    artifact_type=item["artifact_type"],
-                    title=item["title"],
-                    body=item["body"],
-                    status=item["status"],
-                )
+            record = MitigationArtifact(
+                run_id=run.id,
+                artifact_type=item["artifact_type"],
+                title=item["title"],
+                body=item["body"],
+                status=item["status"],
             )
+            self.session.add(record)
+            mitigation_records.append(record)
+        self.session.flush()
+        attestation_payload = self._build_run_attestation_payload(
+            run=run,
+            signer=artifacts.attestation["signer"],
+            evidence_records=evidence_records,
+            detection_records=detection_records,
+            mitigation_records=mitigation_records,
+        )
+        signed = self.attestation_signer.sign(payload=attestation_payload, signer=artifacts.attestation["signer"])
         self.session.add(
             AttestationRecord(
                 tenant_id=run.tenant_id,
                 run_id=run.id,
                 subject_type="run_manifest",
                 subject_id=str(run.id),
-                sha256=artifacts.attestation["sha256"],
-                signature=artifacts.attestation["signature"],
-                signer=artifacts.attestation["signer"],
-                payload=run.manifest or {},
+                sha256=signed["sha256"],
+                signature=signed["signature"],
+                signer=signed["signer"],
+                payload=attestation_payload,
             )
         )
 
@@ -1360,6 +1974,7 @@ class SheshnaagService:
             "workspace_path": run.workspace_path,
             "requires_acknowledgement": run.requires_acknowledgement,
             "acknowledged_by": run.acknowledged_by,
+            "acknowledged_at": run.acknowledged_at.isoformat() if run.acknowledged_at else None,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "ended_at": run.ended_at.isoformat() if run.ended_at else None,
             "manifest": run.manifest,
@@ -1370,10 +1985,16 @@ class SheshnaagService:
         """Apply a ProviderResult to a LabRun record."""
         run.provider_run_ref = result.provider_run_ref
         run.state = result.state.value if isinstance(result.state, RunState) else result.state
-        run.guest_image = result.plan.get("image")
-        run.image_digest = result.plan.get("image_digest")
-        run.network_mode = result.plan.get("network_mode")
-        run.manifest = result.plan
+        plan = dict(run.manifest or {})
+        if result.plan:
+            plan = dict(result.plan)
+        if result.container_id:
+            plan["container_id"] = result.container_id
+        run.guest_image = plan.get("image")
+        run.image_digest = plan.get("image_digest")
+        run.network_mode = plan.get("network_mode")
+        run.workspace_path = plan.get("host_workspace") or run.workspace_path
+        run.manifest = plan
         run.run_transcript = result.transcript
 
     def _get_candidate(self, tenant: Tenant, candidate_id: int) -> ResearchCandidate:
@@ -1411,6 +2032,13 @@ class SheshnaagService:
         if run is None:
             raise ValueError("Run not found.")
         return run
+
+    def _prepare_recipe_content(self, content: Dict[str, Any], image: str) -> Dict[str, Any]:
+        normalized = self._normalize_recipe_content(content, image)
+        validation = self.validate_recipe_content(normalized)
+        if not validation["valid"]:
+            raise ValueError("; ".join(validation["errors"]))
+        return normalized
 
     def validate_recipe_content(self, content: Dict[str, Any]) -> Dict[str, Any]:
         """Validate recipe content against schema rules."""
@@ -1456,13 +2084,14 @@ class SheshnaagService:
 
     def _normalize_recipe_content(self, content: Dict[str, Any], image: str) -> Dict[str, Any]:
         normalized = dict(content)
+        if "artifact_inputs" not in normalized and "input_artifacts" in normalized:
+            normalized["artifact_inputs"] = normalized["input_artifacts"]
         normalized.setdefault("base_image", image)
         normalized.setdefault("command", ["sleep", "1"])
         normalized.setdefault("network_policy", {"allow_egress_hosts": []})
-        normalized.setdefault(
-            "collectors",
-            ["process_tree", "package_inventory", "file_diff", "network_metadata", "service_logs", "tracee_events"],
-        )
+        from app.lab.collector_contract import DEFAULT_RECIPE_COLLECTORS
+
+        normalized.setdefault("collectors", list(DEFAULT_RECIPE_COLLECTORS))
         normalized.setdefault("teardown_policy", {"mode": "destroy_immediately", "ephemeral_workspace": True})
         normalized.setdefault("risk_level", "standard")
         normalized.setdefault("workspace_retention", "destroy_immediately")
@@ -1623,6 +2252,323 @@ class SheshnaagService:
                     )
                 )
         self.session.flush()
+
+    def _artifact_review_entries(self, target_type: str, target_id: int) -> List[ReviewDecision]:
+        return (
+            self.session.query(ReviewDecision)
+            .filter(ReviewDecision.target_type == target_type, ReviewDecision.target_id == str(target_id))
+            .order_by(ReviewDecision.created_at.desc())
+            .all()
+        )
+
+    def _detection_artifact_payload(self, item: DetectionArtifact) -> Dict[str, Any]:
+        reviews = self._artifact_review_entries("detection_artifact", item.id)
+        return {
+            "id": item.id,
+            "run_id": item.run_id,
+            "artifact_type": item.artifact_type,
+            "name": item.name,
+            "status": item.status,
+            "sha256": item.sha256,
+            "evidence_artifact_id": item.evidence_artifact_id,
+            "rule_body": item.rule_body,
+            "review_history": [
+                {
+                    "decision": row.decision,
+                    "reviewer_name": row.reviewer_name,
+                    "rationale": row.rationale,
+                    "payload": row.payload,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in reviews
+            ],
+            "feedback": [
+                {
+                    "reviewer_name": row.reviewer_name,
+                    "feedback_type": (row.payload or {}).get("feedback_type"),
+                    "note": row.rationale,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in reviews
+                if row.decision == "feedback"
+            ],
+        }
+
+    def _mitigation_artifact_payload(self, item: MitigationArtifact) -> Dict[str, Any]:
+        reviews = self._artifact_review_entries("mitigation_artifact", item.id)
+        return {
+            "id": item.id,
+            "run_id": item.run_id,
+            "artifact_type": item.artifact_type,
+            "title": item.title,
+            "status": item.status,
+            "body": item.body,
+            "review_history": [
+                {
+                    "decision": row.decision,
+                    "reviewer_name": row.reviewer_name,
+                    "rationale": row.rationale,
+                    "payload": row.payload,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in reviews
+            ],
+            "feedback": [
+                {
+                    "reviewer_name": row.reviewer_name,
+                    "feedback_type": (row.payload or {}).get("feedback_type"),
+                    "note": row.rationale,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in reviews
+                if row.decision == "feedback"
+            ],
+        }
+
+    def _get_artifact_entity(self, tenant: Tenant, artifact_family: str, artifact_id: int) -> Any:
+        if artifact_family == "detection":
+            row = (
+                self.session.query(DetectionArtifact)
+                .join(LabRun, LabRun.id == DetectionArtifact.run_id)
+                .filter(LabRun.tenant_id == tenant.id, DetectionArtifact.id == artifact_id)
+                .first()
+            )
+        elif artifact_family == "mitigation":
+            row = (
+                self.session.query(MitigationArtifact)
+                .join(LabRun, LabRun.id == MitigationArtifact.run_id)
+                .filter(LabRun.tenant_id == tenant.id, MitigationArtifact.id == artifact_id)
+                .first()
+            )
+        else:
+            raise ValueError("Artifact family must be 'detection' or 'mitigation'.")
+        if row is None:
+            raise ValueError("Artifact not found.")
+        return row
+
+    def _run_analyst_id(self, run_id: int) -> Optional[int]:
+        row = self.session.query(LabRun).filter(LabRun.id == run_id).first()
+        return row.analyst_id if row else None
+
+    def _build_run_attestation_payload(
+        self,
+        *,
+        run: LabRun,
+        signer: str,
+        evidence_records: List[EvidenceArtifact],
+        detection_records: List[DetectionArtifact],
+        mitigation_records: List[MitigationArtifact],
+    ) -> Dict[str, Any]:
+        revision = self.session.query(RecipeRevision).filter(RecipeRevision.id == run.recipe_revision_id).first()
+        analyst = self.session.query(AnalystIdentity).filter(AnalystIdentity.id == run.analyst_id).first()
+        workstation = self.session.query(WorkstationFingerprint).filter(
+            WorkstationFingerprint.id == run.workstation_fingerprint_id
+        ).first()
+        payload = {
+            "subject": {"type": "run_manifest", "id": str(run.id)},
+            "run_id": run.id,
+            "manifest": run.manifest or {},
+            "recipe_revision_id": run.recipe_revision_id,
+            "recipe_revision_digest": revision.signed_digest if revision else None,
+            "analyst": analyst.name if analyst else signer,
+            "workstation": workstation.fingerprint if workstation else None,
+            "acknowledgement": (run.manifest or {}).get("acknowledgement"),
+            "artifact_transfer": (run.manifest or {}).get("artifact_transfer"),
+            "evidence_hashes": [
+                {
+                    "id": row.id,
+                    "artifact_kind": row.artifact_kind,
+                    "sha256": row.sha256,
+                }
+                for row in evidence_records
+            ],
+            "artifact_hashes": {
+                "detections": [
+                    {"id": row.id, "artifact_type": row.artifact_type, "sha256": row.sha256}
+                    for row in detection_records
+                ],
+                "mitigations": [
+                    {
+                        "id": row.id,
+                        "artifact_type": row.artifact_type,
+                        "sha256": hashlib.sha256((row.body or "").encode("utf-8")).hexdigest(),
+                    }
+                    for row in mitigation_records
+                ],
+            },
+        }
+        signed = self.attestation_signer.sign(payload=payload, signer=signer)
+        payload["signing"] = {"backend": signed.get("backend"), "algorithm": signed.get("algorithm")}
+        return payload
+
+    def _build_reproduction_steps(self, *, run: LabRun, evidence_rows: List[EvidenceArtifact]) -> List[str]:
+        command = (run.manifest or {}).get("command") or ["sleep", "1"]
+        if isinstance(command, list):
+            command_text = " ".join(str(part) for part in command)
+        else:
+            command_text = str(command)
+        evidence_summary = f"Review {len(evidence_rows)} captured evidence artifacts for process, file, and network deltas."
+        return [
+            f"Provision the planned guest image `{run.guest_image or (run.manifest or {}).get('image', 'unknown')}` with the recorded network mode `{run.network_mode}`.",
+            f"Execute the validation command `{command_text}` under the approved recipe revision `{run.recipe_revision_id}`.",
+            evidence_summary,
+            "Compare observed behavior against the expected defensive findings and mitigation checklist before export.",
+        ]
+
+    def _render_bundle_report(
+        self,
+        *,
+        bundle_type: str,
+        title: str,
+        run: LabRun,
+        evidence_rows: List[EvidenceArtifact],
+        artifacts: List[Any],
+        warnings: List[str],
+        reproduction_steps: List[str],
+    ) -> str:
+        artifact_lines = []
+        for row in artifacts:
+            if isinstance(row, DetectionArtifact):
+                artifact_lines.append(f"- Detection `{row.artifact_type}`: {row.name} [{row.status}]")
+            else:
+                artifact_lines.append(f"- Mitigation `{row.artifact_type}`: {row.title} [{row.status}]")
+        warning_lines = [f"- {item}" for item in warnings] or ["- No export warnings were raised."]
+        return "\n".join(
+            [
+                f"# {title}",
+                "",
+                f"Bundle type: `{bundle_type}`",
+                f"Run ID: `{run.id}`",
+                f"Launch mode: `{run.launch_mode}`",
+                "",
+                "## Summary",
+                f"- Evidence included: {len(evidence_rows)}",
+                f"- Artifacts included: {len(artifacts)}",
+                "",
+                "## Export warnings",
+                *warning_lines,
+                "",
+                "## Artifacts",
+                *(artifact_lines or ["- No reviewed artifacts were available; draft artifacts were exported for internal review only."]),
+                "",
+                "## Reproduction steps",
+                *[f"{idx}. {step}" for idx, step in enumerate(reproduction_steps, start=1)],
+            ]
+        )
+
+    def _build_bundle_manifest(
+        self,
+        *,
+        run: LabRun,
+        bundle_type: str,
+        title: str,
+        signed_by: str,
+        evidence_rows: List[EvidenceArtifact],
+        artifacts: List[Any],
+        redaction_notes: List[Dict[str, Any]],
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        reproduction_steps = self._build_reproduction_steps(run=run, evidence_rows=evidence_rows)
+        return {
+            "title": title,
+            "bundle_type": bundle_type,
+            "run": self._run_summary(run),
+            "signed_by": signed_by,
+            "exported_at": utc_now().isoformat(),
+            "warnings": warnings,
+            "safety_checklist": {
+                "requires_external_confirmation": bool(warnings),
+                "contains_raw_pcap": any(row.artifact_kind == "pcap" for row in evidence_rows),
+                "contains_service_logs": any(row.artifact_kind == "service_logs" for row in evidence_rows),
+                "approved_artifact_count": sum(1 for row in artifacts if getattr(row, "status", None) == "approved"),
+            },
+            "redaction_notes": redaction_notes,
+            "reproduction_steps": reproduction_steps,
+            "evidence": [
+                {
+                    "id": row.id,
+                    "artifact_kind": row.artifact_kind,
+                    "title": row.title,
+                    "summary": row.summary,
+                    "sha256": row.sha256,
+                    "storage_path": row.storage_path,
+                }
+                for row in evidence_rows
+            ],
+            "artifacts": [
+                self._detection_artifact_payload(row) if isinstance(row, DetectionArtifact) else self._mitigation_artifact_payload(row)
+                for row in artifacts
+            ],
+            "report_markdown": self._render_bundle_report(
+                bundle_type=bundle_type,
+                title=title,
+                run=run,
+                evidence_rows=evidence_rows,
+                artifacts=artifacts,
+                warnings=warnings,
+                reproduction_steps=reproduction_steps,
+            ),
+        }
+
+    def _write_bundle_archive(
+        self,
+        *,
+        manifest: Dict[str, Any],
+        evidence_rows: List[EvidenceArtifact],
+        detection_rows: List[DetectionArtifact],
+        mitigation_rows: List[MitigationArtifact],
+    ) -> Dict[str, Any]:
+        self.export_root.mkdir(parents=True, exist_ok=True)
+        timestamp = utc_now().strftime("%Y%m%dT%H%M%SZ")
+        filename = f"sheshnaag-bundle-run-{manifest['run']['id']}-{timestamp}.zip"
+        path = self.export_root / filename
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", json.dumps({k: v for k, v in manifest.items() if k != "report_markdown"}, indent=2, sort_keys=True, default=str))
+            archive.writestr("report.md", manifest["report_markdown"])
+            for row in evidence_rows:
+                archive.writestr(
+                    f"evidence/evidence-{row.id}.json",
+                    json.dumps(
+                        {
+                            "id": row.id,
+                            "artifact_kind": row.artifact_kind,
+                            "title": row.title,
+                            "summary": row.summary,
+                            "sha256": row.sha256,
+                            "payload": row.payload,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                        default=str,
+                    ),
+                )
+            for row in detection_rows:
+                archive.writestr(f"artifacts/detection-{row.id}-{row.artifact_type}.txt", row.rule_body)
+            for row in mitigation_rows:
+                archive.writestr(f"artifacts/mitigation-{row.id}-{row.artifact_type}.md", row.body)
+        archive_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        return {
+            "path": str(path),
+            "filename": filename,
+            "sha256": archive_sha256,
+            "size": path.stat().st_size,
+        }
+
+    def _disclosure_bundle_payload(self, row: DisclosureBundle) -> Dict[str, Any]:
+        archive = (row.manifest or {}).get("archive") or {}
+        return {
+            "id": row.id,
+            "run_id": row.run_id,
+            "bundle_type": row.bundle_type,
+            "title": row.title,
+            "status": row.status,
+            "sha256": row.sha256,
+            "signed_by": row.signed_by,
+            "manifest": row.manifest,
+            "archive": archive,
+            "download_url": f"/api/disclosures/{row.id}/download?tenant_slug=demo-public",
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
 
     def _ensure_analyst_identity(self, tenant: Tenant, analyst_name: Optional[str] = None) -> AnalystIdentity:
         email = f"{(analyst_name or 'demo.analyst').lower().replace(' ', '.')}@sheshnaag.local"

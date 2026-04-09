@@ -1,34 +1,45 @@
-import { Link, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 
-const navItems = [
-  { href: "#platform", label: "Platform" },
-  { href: "#safety", label: "Safety" },
-  { href: "#architecture", label: "Architecture" },
-  { href: "#roadmap", label: "Roadmap" },
+const operatorNavItems = [
+  { to: "/intel", label: "Intel" },
+  { to: "/candidates", label: "Candidates" },
+  { to: "/recipes", label: "Recipes" },
+  { to: "/runs", label: "Runs" },
+  { to: "/evidence", label: "Evidence" },
+  { to: "/artifacts", label: "Artifacts" },
+  { to: "/provenance", label: "Provenance" },
+  { to: "/ledger", label: "Ledger" },
+  { to: "/disclosures", label: "Bundles" },
 ];
 
 export function Layout() {
   return (
-    <div className="marketing-shell">
-      <header className="marketing-header">
-        <a className="brand-lockup" href="#top">
+    <div className="app-shell">
+      <header className="app-header">
+        <NavLink className="brand-lockup" to="/intel">
           <span className="brand-marketing-mark">SN</span>
           <span>
             <strong>Project Sheshnaag</strong>
-            <small>Defensive vulnerability research lab</small>
+            <small>Operator console for defensive validation</small>
           </span>
-        </a>
+        </NavLink>
 
-        <nav className="marketing-nav" aria-label="Primary">
-          {navItems.map((item) => (
-            <a key={item.href} href={item.href}>
+        <nav className="operator-nav" aria-label="Operator">
+          {operatorNavItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => `operator-link${isActive ? " is-active" : ""}`}
+            >
               {item.label}
-            </a>
+            </NavLink>
           ))}
-          <Link to="/recipes">Recipes</Link>
         </nav>
 
         <div className="marketing-actions">
+          <NavLink className="ghost-button" to="/story">
+            Story
+          </NavLink>
           <a className="ghost-button" href="/docs" target="_blank" rel="noreferrer">
             API Docs
           </a>
@@ -38,7 +49,9 @@ export function Layout() {
         </div>
       </header>
 
-      <Outlet />
+      <main className="app-content">
+        <Outlet />
+      </main>
     </div>
   );
 }

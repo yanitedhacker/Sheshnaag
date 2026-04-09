@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -308,6 +309,7 @@ class EvidenceArtifact(Base):
     """Evidence captured from a run."""
 
     __tablename__ = "evidence_artifacts"
+    __table_args__ = (Index("ix_evidence_artifacts_run_kind", "run_id", "artifact_kind"),)
 
     id = Column(Integer, primary_key=True, index=True)
     run_id = Column(Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -316,6 +318,13 @@ class EvidenceArtifact(Base):
     summary = Column(Text)
     storage_path = Column(String(255))
     sha256 = Column(String(128), index=True)
+    content_type = Column(String(120))
+    byte_size = Column(Integer)
+    capture_started_at = Column(DateTime)
+    capture_ended_at = Column(DateTime)
+    collector_name = Column(String(80))
+    collector_version = Column(String(40))
+    truncated = Column(Boolean, default=False)
     reviewed_state = Column(String(50), default="captured")
     payload = Column(JSON, default=dict)
     created_at = Column(DateTime, default=utc_now)

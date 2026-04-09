@@ -7,6 +7,7 @@ Aligned with lab recipe content shape from sheshnaag_service._normalize_recipe_c
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
@@ -23,6 +24,10 @@ KNOWN_COLLECTORS: FrozenSet[str] = frozenset(
         "network_metadata",
         "service_logs",
         "tracee_events",
+        "osquery_snapshot",
+        "pcap",
+        "falco_events",
+        "tetragon_events",
     }
 )
 
@@ -72,6 +77,36 @@ POLICY_RELEVANT_PREFIXES: Tuple[str, ...] = (
     "mounts",
     "workspace_retention",
     "user",
+)
+
+DEFAULT_ALLOWED_HOST_PATH_ROOTS: FrozenSet[str] = frozenset({"/tmp", "/var/tmp"})
+
+BLOCKED_HOST_PATHS: FrozenSet[str] = frozenset(
+    {
+        "/",
+        "/run/docker.sock",
+        "/var/run/docker.sock",
+    }
+)
+
+BLOCKED_HOST_PREFIXES: Tuple[str, ...] = (
+    "/Applications",
+    "/Library",
+    "/System",
+    "/Users",
+    "/bin",
+    "/dev",
+    "/etc",
+    "/home",
+    "/opt/homebrew",
+    "/private",
+    "/proc",
+    "/root",
+    "/run",
+    "/sbin",
+    "/sys",
+    "/usr",
+    "/var/run",
 )
 
 
@@ -154,6 +189,48 @@ def _normalize_str_list(items: Any, label: str) -> Tuple[Optional[List[str]], Op
             return None, f"{label}[{i}] must be a string"
         out.append(item)
     return out, None
+
+
+def _normalized_host_path(value: str) -> str:
+    return os.path.normpath(value.strip())
+
+
+def _allowed_host_roots() -> FrozenSet[str]:
+    configured = os.environ.get("SHESHNAAG_ALLOWED_HOST_PATH_ROOTS", "")
+    roots = {
+        _normalized_host_path(root)
+        for root in configured.split(",")
+        if root.strip()
+    }
+    return frozenset(DEFAULT_ALLOWED_HOST_PATH_ROOTS | roots)
+
+
+def _path_within_root(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def _validate_allowed_host_path(path_value: Any, label: str) -> Optional[str]:
+    if not isinstance(path_value, str):
+        return f"{label} must be a string path"
+
+    path = _normalized_host_path(path_value)
+    if not path.startswith("/"):
+        return f"{label} must be an absolute path"
+    if path in BLOCKED_HOST_PATHS:
+        return f"{label} {path!r} is blocked by Sheshnaag host safety policy"
+    if any(path == prefix or path.startswith(f"{prefix}/") for prefix in BLOCKED_HOST_PREFIXES):
+        return f"{label} {path!r} is host-sensitive and cannot be mounted or copied into a lab"
+
+    allowed_roots = sorted(_allowed_host_roots())
+    if not any(_path_within_root(path, root) for root in allowed_roots):
+        return (
+            f"{label} {path!r} is outside the allowed host path roots {allowed_roots}; "
+            "set SHESHNAAG_ALLOWED_HOST_PATH_ROOTS for additional approved roots"
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -278,14 +355,78 @@ class RecipeSchemaValidator:
             elif not isinstance(mounts, list):
                 errors.append("'mounts' must be a list of mount objects")
             else:
+                mount_policy = content.get("mount_write_policy")
                 for i, m in enumerate(mounts):
                     if not isinstance(m, dict):
                         errors.append(f"'mounts[{i}]' must be an object with 'source' and 'target'")
                         continue
                     if "source" not in m:
                         errors.append(f"'mounts[{i}]' missing required key 'source'")
+                    else:
+                        mount_err = _validate_allowed_host_path(m.get("source"), f"'mounts[{i}].source'")
+                        if mount_err:
+                            errors.append(mount_err)
                     if "target" not in m:
                         errors.append(f"'mounts[{i}]' missing required key 'target'")
+                    elif not isinstance(m.get("target"), str) or not str(m.get("target")).startswith("/"):
+                        errors.append(f"'mounts[{i}].target' must be an absolute container path")
+                    read_only = m.get("read_only", True)
+                    if not isinstance(read_only, bool):
+                        errors.append(f"'mounts[{i}].read_only' must be a boolean when present")
+                    elif read_only is not True:
+                        if not isinstance(mount_policy, dict):
+                            errors.append(
+                                f"'mounts[{i}]' is writable; add 'mount_write_policy' with explicit approval metadata"
+                            )
+                        elif mount_policy.get("approved") is not True or not isinstance(
+                            mount_policy.get("approved_by"), str
+                        ):
+                            errors.append(
+                                f"'mounts[{i}]' is writable; 'mount_write_policy.approved=True' and "
+                                "'mount_write_policy.approved_by' are required"
+                            )
+
+        # artifact_inputs / input_artifacts
+        artifact_inputs = content.get("artifact_inputs", content.get("input_artifacts"))
+        if artifact_inputs is not None:
+            if not isinstance(artifact_inputs, list):
+                errors.append("'artifact_inputs' must be a list of input artifact objects when present")
+            else:
+                for i, artifact in enumerate(artifact_inputs):
+                    if not isinstance(artifact, dict):
+                        errors.append(f"'artifact_inputs[{i}]' must be an object")
+                        continue
+                    if "source_path" not in artifact:
+                        errors.append(f"'artifact_inputs[{i}]' missing required key 'source_path'")
+                    else:
+                        source_err = _validate_allowed_host_path(
+                            artifact.get("source_path"),
+                            f"'artifact_inputs[{i}].source_path'",
+                        )
+                        if source_err:
+                            errors.append(source_err)
+                    name = artifact.get("name")
+                    if name is not None and not isinstance(name, str):
+                        errors.append(f"'artifact_inputs[{i}].name' must be a string when present")
+                    destination = artifact.get("destination")
+                    if destination is not None and (
+                        not isinstance(destination, str) or not destination.startswith("/")
+                    ):
+                        errors.append(
+                            f"'artifact_inputs[{i}].destination' must be an absolute container path when present"
+                        )
+                    expected_sha256 = artifact.get("sha256") or artifact.get("expected_sha256")
+                    if expected_sha256 is not None:
+                        if not isinstance(expected_sha256, str) or len(expected_sha256) != 64:
+                            errors.append(
+                                f"'artifact_inputs[{i}].sha256' must be a 64-character hex digest when present"
+                            )
+                        else:
+                            lowered = expected_sha256.lower()
+                            if any(ch not in "0123456789abcdef" for ch in lowered):
+                                errors.append(
+                                    f"'artifact_inputs[{i}].sha256' must be a lowercase or uppercase hex digest"
+                                )
 
         # workspace_retention
         if "workspace_retention" in content and content["workspace_retention"] is not None:
@@ -296,6 +437,41 @@ class RecipeSchemaValidator:
                 errors.append(
                     f"Invalid workspace_retention {wr!r}; must be one of {sorted(VALID_WORKSPACE_RETENTION)}"
                 )
+
+        # Optional evidence baselines (WS6): typed when present
+        fmb = content.get("file_manifest_baseline")
+        if fmb is not None:
+            if not isinstance(fmb, list):
+                errors.append("'file_manifest_baseline' must be a list of path strings when present")
+            else:
+                for i, p in enumerate(fmb):
+                    if not isinstance(p, str):
+                        errors.append(f"'file_manifest_baseline[{i}]' must be a string")
+                        break
+        pkgb = content.get("package_baseline")
+        if pkgb is not None:
+            if not isinstance(pkgb, list):
+                errors.append("'package_baseline' must be a list of objects when present")
+            else:
+                for i, row in enumerate(pkgb):
+                    if not isinstance(row, dict):
+                        errors.append(f"'package_baseline[{i}]' must be an object with 'name'")
+                        break
+                    if "name" not in row:
+                        errors.append(f"'package_baseline[{i}]' missing required key 'name'")
+                        break
+        logs = content.get("log_sources")
+        if logs is not None:
+            if not isinstance(logs, list):
+                errors.append("'log_sources' must be a list when present")
+            else:
+                for i, entry in enumerate(logs):
+                    if isinstance(entry, str):
+                        continue
+                    if isinstance(entry, dict) and entry.get("path"):
+                        continue
+                    errors.append(f"'log_sources[{i}]' must be a string path or object with 'path'")
+                    break
 
         # Optional fields: cap_add, user, workdir — light type checks (warnings)
         if "cap_add" in content:

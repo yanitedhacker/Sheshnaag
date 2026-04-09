@@ -11,6 +11,10 @@ const COLLECTOR_IDS = [
   "network_metadata",
   "service_logs",
   "tracee_events",
+  "osquery_snapshot",
+  "pcap",
+  "falco_events",
+  "tetragon_events",
 ] as const;
 
 const DEFAULT_BASE_IMAGE = "kalilinux/kali-rolling:2026.1";
@@ -75,6 +79,32 @@ function readCollectors(content: Record<string, unknown>): Set<string> {
     return new Set(COLLECTOR_IDS);
   }
   return new Set(c.map(String));
+}
+
+function recipeSafetyHighlights(content: Record<string, unknown>): string[] {
+  const warnings: string[] = [];
+  const networkPolicy = (content.network_policy ?? {}) as Record<string, unknown>;
+  const hosts = Array.isArray(networkPolicy.allow_egress_hosts) ? networkPolicy.allow_egress_hosts.map(String) : [];
+  const selectedCollectors = Array.isArray(content.collectors) ? content.collectors.map(String) : [];
+  const mounts = Array.isArray(content.mounts) ? content.mounts : [];
+  const artifactInputs = Array.isArray(content.artifact_inputs) ? content.artifact_inputs : [];
+
+  if (content.risk_level === "sensitive" || content.risk_level === "high") {
+    warnings.push("This recipe will require an explicit analyst acknowledgement and an auditable provenance record before launch.");
+  }
+  if ((networkPolicy.mode === "bridge" || hosts.length > 0) && !selectedCollectors.includes("network_metadata")) {
+    warnings.push("Bridge egress without the network metadata collector weakens outbound activity review.");
+  }
+  if (selectedCollectors.includes("tracee_events") && !selectedCollectors.includes("process_tree")) {
+    warnings.push("Tracee without process_tree baseline can reduce runtime evidence explainability.");
+  }
+  if (mounts.some((mount) => typeof mount === "object" && mount !== null && (mount as Record<string, unknown>).read_only === false)) {
+    warnings.push("Writable host mounts now require explicit approval metadata and will otherwise be rejected.");
+  }
+  if (artifactInputs.length > 0) {
+    warnings.push("Artifact inputs are checksummed during transfer and must come from approved host roots.");
+  }
+  return warnings;
 }
 
 async function fetchCandidates(): Promise<CandidateRow[]> {
@@ -176,6 +206,8 @@ export function RecipeBuilderPage() {
     teardownMode,
     riskLevel,
   ]);
+
+  const safetyHighlights = useMemo(() => recipeSafetyHighlights(buildContent()), [buildContent]);
 
   const hydrateFromContent = useCallback((content: Record<string, unknown>) => {
     setCommandText(commandToText(content.command));
@@ -536,6 +568,24 @@ export function RecipeBuilderPage() {
           <div className="tw-mb-6 tw-rounded-lg tw-border tw-border-red-500/40 tw-bg-red-950/40 tw-px-4 tw-py-3 tw-text-sm tw-text-red-200">
             {error}
           </div>
+        ) : null}
+        {safetyHighlights.length ? (
+          <section className="panel warning-panel tw-mb-6">
+            <div className="panel-header">
+              <h2>Safety warnings</h2>
+              <span>{safetyHighlights.length} active</span>
+            </div>
+            <div className="stack-list">
+              {safetyHighlights.map((warning) => (
+                <article className="line-card" key={warning}>
+                  <div>
+                    <strong>Draft policy note</strong>
+                    <p>{warning}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         ) : null}
 
         <div className="tw-grid tw-gap-8 lg:tw-grid-cols-[1fr_380px]">

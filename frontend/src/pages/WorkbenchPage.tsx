@@ -290,8 +290,8 @@ export function WorkbenchPage() {
               </div>
 
               <div className="citation-list">
-                {selected.citations.map((citation) => (
-                  <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">
+                {selected.citations.filter((citation) => citation.url).map((citation) => (
+                  <a key={citation.url ?? citation.label} href={citation.url ?? undefined} target="_blank" rel="noreferrer">
                     {citation.label}
                   </a>
                 ))}

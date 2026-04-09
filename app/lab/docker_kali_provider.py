@@ -96,6 +96,19 @@ class DockerKaliProvider(LabProvider):
                 "Docker alone cannot enforce per-host egress filtering."
             ) if network_mode == "bridge" else "Full network isolation via Docker network=none.",
         }
+        plan["provider_safety"] = {
+            "read_only_rootfs": True,
+            "default_cap_drop": list(DEFAULT_CAP_DROP),
+            "security_options": list(DEFAULT_SECURITY_OPTS),
+            "writable_mounts_require_policy": True,
+            "network_enforcement_limits": (
+                "Bridge mode cannot enforce per-host egress allowlists without external firewall controls."
+            ),
+        }
+        # Optional evidence hints (WS6): copied into manifest so collectors can diff against baselines.
+        for opt in ("file_manifest_baseline", "package_baseline", "log_sources"):
+            if opt in revision_content:
+                plan[opt] = revision_content[opt]
         return plan
 
     def launch(self, *, revision_content: Dict[str, Any], run_context: Dict[str, Any]) -> ProviderResult:
@@ -105,10 +118,12 @@ class DockerKaliProvider(LabProvider):
         workspace = self._workspace_for_ref(provider_run_ref)
 
         if launch_mode == "dry_run":
+            plan_out = dict(plan)
+            plan_out["host_workspace"] = workspace
             return ProviderResult(
                 state=RunState.PLANNED,
                 provider_run_ref=provider_run_ref,
-                plan=plan,
+                plan=plan_out,
                 transcript="Dry run only. No container started.",
                 health=HealthStatus.UNKNOWN,
             )
@@ -167,18 +182,20 @@ class DockerKaliProvider(LabProvider):
                     )
 
                 container_id = result.stdout.strip()[:12]
+                plan_out = dict(plan)
+                plan_out["host_workspace"] = workspace
                 self._active_containers[provider_run_ref] = {
                     "container_id": container_id,
                     "container_name": container_name,
                     "workspace": workspace,
-                    "plan": plan,
+                    "plan": plan_out,
                     "state": RunState.RUNNING,
                 }
 
                 return ProviderResult(
                     state=RunState.RUNNING,
                     provider_run_ref=provider_run_ref,
-                    plan=plan,
+                    plan=plan_out,
                     transcript=f"Container {container_name} launched ({container_id}).",
                     container_id=container_id,
                     health=HealthStatus.BOOTING,
@@ -205,18 +222,20 @@ class DockerKaliProvider(LabProvider):
         provider_run_ref = self._generate_run_ref()
         workspace = self._workspace_for_ref(provider_run_ref)
         os.makedirs(workspace, exist_ok=True)
+        plan_out = dict(plan)
+        plan_out["host_workspace"] = workspace
         self._active_containers[provider_run_ref] = {
             "container_id": None,
             "container_name": self._container_name(provider_run_ref),
             "workspace": workspace,
-            "plan": plan,
+            "plan": plan_out,
             "state": RunState.PLANNED,
             "launch_mode": run_context.get("launch_mode", "simulated"),
         }
         return ProviderResult(
             state=RunState.PLANNED,
             provider_run_ref=provider_run_ref,
-            plan=plan,
+            plan=plan_out,
             transcript=f"Resources allocated. Workspace: {workspace}",
         )
 
@@ -437,6 +456,17 @@ class DockerKaliProvider(LabProvider):
                 continue
 
             pre_hash = self._file_sha256(src)
+            expected_hash = artifact.get("sha256") or artifact.get("expected_sha256")
+            if expected_hash and pre_hash != str(expected_hash).lower():
+                results.append(
+                    {
+                        "name": name,
+                        "status": "checksum_mismatch",
+                        "pre_hash": pre_hash,
+                        "expected_sha256": str(expected_hash).lower(),
+                    }
+                )
+                continue
             shutil.copy2(src, dst)
             post_hash = self._file_sha256(dst)
             if pre_hash != post_hash:

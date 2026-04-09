@@ -3,7 +3,8 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
@@ -20,6 +21,9 @@ class DisclosureBundleRequest(BaseModel):
     bundle_type: str = "vendor_disclosure"
     title: str
     signed_by: str
+    evidence_ids: list[int] = Field(default_factory=list)
+    redaction_notes: list[dict] = Field(default_factory=list)
+    confirm_external_export: bool = False
 
 
 @router.get("")
@@ -44,6 +48,25 @@ def create_disclosure_bundle(request: DisclosureBundleRequest, session: Session 
             bundle_type=request.bundle_type,
             title=request.title,
             signed_by=request.signed_by,
+            evidence_ids=request.evidence_ids,
+            redaction_notes=request.redaction_notes,
+            confirm_external_export=request.confirm_external_export,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{bundle_id}/download")
+def download_disclosure_bundle(
+    bundle_id: int,
+    tenant_slug: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
+    session: Session = Depends(get_sync_session),
+):
+    """Download a previously exported disclosure bundle archive."""
+    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    try:
+        archive = SheshnaagService(session).get_disclosure_bundle_archive(tenant, bundle_id=bundle_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path=archive["path"], filename=archive["filename"], media_type="application/zip")

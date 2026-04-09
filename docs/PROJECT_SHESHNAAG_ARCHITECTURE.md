@@ -36,7 +36,7 @@ Project Sheshnaag is split into three planes:
   - security opts
   - ephemeral workspace and teardown policy
   - network policy representation
-- default collectors in `app/lab/collectors.py`
+- default collectors via `app/lab/collectors/registry.py` and `app/lab/collector_contract.py`
 - defensive artifact generation in `app/lab/artifact_generator.py`
 - manifest signing in `app/lab/attestation.py`
 

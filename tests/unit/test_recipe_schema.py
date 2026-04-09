@@ -49,6 +49,20 @@ def test_valid_recipe_passes_schema():
 
 
 @pytest.mark.unit
+def test_optional_evidence_baselines_pass_schema():
+    v = RecipeSchemaValidator()
+    result = v.validate(
+        _valid_recipe(
+            file_manifest_baseline=["/workspace/a", "/workspace/b"],
+            package_baseline=[{"name": "curl", "version": "1.0"}],
+            log_sources=["/var/log/dpkg.log", {"path": "/tmp/x.log", "service": "app"}],
+        )
+    )
+    assert result.valid is True
+    assert result.errors == []
+
+
+@pytest.mark.unit
 def test_missing_base_image_fails():
     content = _valid_recipe()
     del content["base_image"]
@@ -136,6 +150,76 @@ def test_mount_missing_source_fails():
     )
     assert result.valid is False
     assert any("source" in e for e in result.errors)
+
+
+@pytest.mark.unit
+def test_unsafe_mount_root_is_rejected():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            mounts=[{"source": "/Users/demo/Documents", "target": "/workspace/input", "read_only": True}]
+        )
+    )
+    assert result.valid is False
+    assert any("host-sensitive" in e or "allowed host path roots" in e for e in result.errors)
+
+
+@pytest.mark.unit
+def test_writable_mount_requires_explicit_policy():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            mounts=[{"source": "/tmp/fixture", "target": "/workspace/input", "read_only": False}]
+        )
+    )
+    assert result.valid is False
+    assert any("mount_write_policy" in e for e in result.errors)
+
+
+@pytest.mark.unit
+def test_policy_approved_writable_mount_is_allowed():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            mounts=[{"source": "/tmp/fixture", "target": "/workspace/input", "read_only": False}],
+            mount_write_policy={"approved": True, "approved_by": "Security Lead"},
+        )
+    )
+    assert result.valid is True
+    assert result.errors == []
+
+
+@pytest.mark.unit
+def test_artifact_inputs_require_safe_source_and_sha256_shape():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            artifact_inputs=[
+                {
+                    "source_path": "/Users/demo/Desktop/sample.bin",
+                    "name": "sample.bin",
+                    "sha256": "abc123",
+                }
+            ]
+        )
+    )
+    assert result.valid is False
+    assert any("artifact_inputs[0].source_path" in e for e in result.errors)
+    assert any("artifact_inputs[0].sha256" in e for e in result.errors)
+
+
+@pytest.mark.unit
+def test_artifact_inputs_accept_safe_tmp_source():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            artifact_inputs=[
+                {
+                    "source_path": "/tmp/sample.bin",
+                    "name": "sample.bin",
+                    "sha256": "a" * 64,
+                    "destination": "/workspace/inputs/sample.bin",
+                }
+            ]
+        )
+    )
+    assert result.valid is True
+    assert result.errors == []
 
 
 @pytest.mark.unit

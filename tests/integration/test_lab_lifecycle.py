@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any, Dict, Optional
 
 import pytest
@@ -281,6 +284,42 @@ def test_network_policy_manifest_assertion():
         note = enp.get("enforcement_note", "")
         assert "docker" in note.lower()
         assert "per-host" in note.lower() or "per-host egress" in note.lower()
+    finally:
+        session.close()
+
+
+@pytest.mark.integration
+def test_artifact_transfer_checksum_manifest_assertion():
+    session, tenant = _bootstrap_private_lab_session()
+    try:
+        service = SheshnaagService(session)
+        with NamedTemporaryFile("wb", dir="/tmp", suffix=".bin", delete=False) as handle:
+            handle.write(b"artifact-transfer-check")
+            source_path = handle.name
+        expected_sha256 = sha256(Path(source_path).read_bytes()).hexdigest()
+
+        run = _launch_prepared_run(
+            service,
+            tenant,
+            launch_mode="simulated",
+            recipe_content={
+                **_recipe_content(),
+                "artifact_inputs": [
+                    {
+                        "source_path": source_path,
+                        "name": "fixture.bin",
+                        "sha256": expected_sha256,
+                        "destination": "/workspace/inputs/fixture.bin",
+                    }
+                ],
+            },
+        )
+        manifest = run.get("manifest") or {}
+        transfer = manifest.get("artifact_transfer") or {}
+        assert transfer["status"] == "completed"
+        assert transfer["transfers"][0]["sha256"] == expected_sha256
+        assert Path(transfer["transfers"][0]["destination"]).exists()
+        assert any(event["event_type"] == "artifact_transfer" for event in run.get("timeline", []))
     finally:
         session.close()
 

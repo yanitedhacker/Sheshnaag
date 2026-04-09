@@ -1,24 +1,34 @@
 import type {
   ApprovalResponse,
+  ArtifactListResponse,
   AssetDetail,
   AssetListResponse,
   AssetVulnerability,
+  CandidateItem,
+  CandidateListResponse,
+  CandidateWorkloadResponse,
   AuditResponse,
   CopilotResponse,
   CveDetail,
   DashboardResponse,
+  DisclosureBundleRecord,
+  DisclosureListResponse,
+  EvidenceListResponse,
   FeedbackResponse,
   GraphResponse,
   ImportResponse,
+  IntelOverviewResponse,
+  LedgerResponse,
   ModelTrustResponse,
   PatchDetail,
+  ProvenanceResponse,
   Recipe,
   RecipeDiffResult,
   RecipeLintResult,
   RecipeListResponse,
+  RunDetailResponse,
   RunHealthResponse,
   RunListResponse,
-  RunSummary,
   SimulationResponse,
   TemplateListResponse,
   TenantListResponse,
@@ -28,6 +38,7 @@ import type {
 } from "./types";
 
 const API_BASE = "";
+const WORKSPACE_SLUG_KEY = "sheshnaag.workspace.slug";
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -44,6 +55,43 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+async function getWritableTenantSlug(): Promise<string> {
+  if (typeof window === "undefined") {
+    return "demo-public";
+  }
+  const existing = window.localStorage.getItem(WORKSPACE_SLUG_KEY);
+  if (existing) {
+    return existing;
+  }
+  const tenants = await fetchJson<TenantListResponse>("/api/tenants");
+  const writable = tenants.items.find((item) => !item.is_read_only);
+  if (writable?.tenant_slug) {
+    window.localStorage.setItem(WORKSPACE_SLUG_KEY, writable.tenant_slug);
+    return writable.tenant_slug;
+  }
+  const slug = `codex-${Date.now()}`;
+  const onboarded = await fetchJson<TenantOnboardResponse>("/api/tenants/onboard", {
+    method: "POST",
+    body: JSON.stringify({
+      tenant_name: "Sheshnaag Operator Workspace",
+      tenant_slug: slug,
+      admin_email: "codex.operator@sheshnaag.local",
+      admin_password: "codex-operator-123",
+      admin_name: "Codex Operator",
+      description: "Auto-provisioned local workspace for the operator UI.",
+    }),
+  });
+  window.localStorage.setItem(WORKSPACE_SLUG_KEY, onboarded.tenant.slug);
+  return onboarded.tenant.slug;
+}
+
+async function withWritableTenant(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload.tenant_slug || payload.tenant_id) {
+    return payload;
+  }
+  return { ...payload, tenant_slug: await getWritableTenantSlug() };
 }
 
 export const api = {
@@ -81,18 +129,56 @@ export const api = {
   importVex: (payload: Record<string, unknown>) =>
     fetchJson<ImportResponse>("/api/imports/vex", { method: "POST", body: JSON.stringify(payload) }),
 
+  // Intel + candidates
+  getIntelOverview: () => fetchJson<IntelOverviewResponse>("/api/intel/overview?tenant_slug=demo-public"),
+  getCandidates: (params?: Record<string, string | number | boolean | undefined>) => {
+    const search = new URLSearchParams({ tenant_slug: "demo-public" });
+    Object.entries(params ?? {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== "") {
+        search.set(key, String(value));
+      }
+    });
+    return fetchJson<CandidateListResponse>(`/api/candidates?${search.toString()}`);
+  },
+  getCandidate: (candidateId: number) => fetchJson<CandidateItem>(`/api/candidates/${candidateId}?tenant_slug=demo-public`),
+  getCandidateWorkload: () => fetchJson<CandidateWorkloadResponse>("/api/candidates/workload/summary?tenant_slug=demo-public"),
+  assignCandidate: (candidateId: number, payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/assign`, { method: "POST", body: JSON.stringify(body) })),
+  deferCandidate: (candidateId: number, payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/defer`, { method: "POST", body: JSON.stringify(body) })),
+  rejectCandidate: (candidateId: number, payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/reject`, { method: "POST", body: JSON.stringify(body) })),
+  restoreCandidate: (candidateId: number, payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify(body) })),
+  archiveCandidate: (candidateId: number, payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/archive`, { method: "POST", body: JSON.stringify(body) })),
+  mergeCandidateDuplicate: (candidateId: number, payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<{ merged: CandidateItem; target: CandidateItem }>(
+        `/api/candidates/${candidateId}/merge`,
+        { method: "POST", body: JSON.stringify(body) },
+      )),
+
   // Recipe APIs
   listRecipes: () => fetchJson<RecipeListResponse>("/api/recipes?tenant_slug=demo-public"),
   getRecipe: (recipeId: number) => fetchJson<Recipe>(`/api/recipes/${recipeId}?tenant_slug=demo-public`),
   createRecipe: (payload: Record<string, unknown>) =>
-    fetchJson<Recipe>("/api/recipes", { method: "POST", body: JSON.stringify(payload) }),
+    withWritableTenant(payload).then((body) =>
+      fetchJson<Recipe>("/api/recipes", { method: "POST", body: JSON.stringify(body) })),
   addRecipeRevision: (recipeId: number, payload: Record<string, unknown>) =>
-    fetchJson<Recipe>(`/api/recipes/${recipeId}/revisions`, { method: "POST", body: JSON.stringify(payload) }),
+    withWritableTenant(payload).then((body) =>
+      fetchJson<Recipe>(`/api/recipes/${recipeId}/revisions`, { method: "POST", body: JSON.stringify(body) })),
   approveRecipeRevision: (recipeId: number, revisionNumber: number, payload: Record<string, unknown>) =>
-    fetchJson<Recipe>(
-      `/api/recipes/${recipeId}/revisions/${revisionNumber}/approve`,
-      { method: "POST", body: JSON.stringify(payload) },
-    ),
+    withWritableTenant(payload).then((body) =>
+      fetchJson<Recipe>(
+        `/api/recipes/${recipeId}/revisions/${revisionNumber}/approve`,
+        { method: "POST", body: JSON.stringify(body) },
+      )),
   lintRecipe: (payload: Record<string, unknown>) =>
     fetchJson<RecipeLintResult>("/api/recipes/lint", { method: "POST", body: JSON.stringify(payload) }),
   diffRecipeRevisions: (recipeId: number, oldRev: number, newRev: number) =>
@@ -102,17 +188,40 @@ export const api = {
 
   // Run APIs
   listRuns: () => fetchJson<RunListResponse>("/api/runs?tenant_slug=demo-public"),
-  getRun: (runId: number) => fetchJson<RunSummary>(`/api/runs/${runId}?tenant_slug=demo-public`),
+  getRun: (runId: number) => fetchJson<RunDetailResponse>(`/api/runs/${runId}?tenant_slug=demo-public`),
   getRunHealth: (runId: number) => fetchJson<RunHealthResponse>(`/api/runs/${runId}/health?tenant_slug=demo-public`),
   stopRun: (runId: number, payload: Record<string, unknown>) =>
-    fetchJson<RunSummary>(`/api/runs/${runId}/stop`, { method: "POST", body: JSON.stringify(payload) }),
+    withWritableTenant(payload).then((body) =>
+      fetchJson<RunDetailResponse>(`/api/runs/${runId}/stop`, { method: "POST", body: JSON.stringify(body) })),
   teardownRun: (runId: number, payload: Record<string, unknown>) =>
-    fetchJson<RunSummary>(`/api/runs/${runId}/teardown`, { method: "POST", body: JSON.stringify(payload) }),
+    withWritableTenant(payload).then((body) =>
+      fetchJson<RunDetailResponse>(`/api/runs/${runId}/teardown`, { method: "POST", body: JSON.stringify(body) })),
   destroyRun: (runId: number, payload: Record<string, unknown>) =>
-    fetchJson<RunSummary>(`/api/runs/${runId}/destroy`, { method: "POST", body: JSON.stringify(payload) }),
+    withWritableTenant(payload).then((body) =>
+      fetchJson<RunDetailResponse>(`/api/runs/${runId}/destroy`, { method: "POST", body: JSON.stringify(body) })),
   launchRun: (payload: Record<string, unknown>) =>
-    fetchJson<RunSummary>("/api/runs", { method: "POST", body: JSON.stringify(payload) }),
+    withWritableTenant(payload).then((body) =>
+      fetchJson<RunDetailResponse>("/api/runs", { method: "POST", body: JSON.stringify(body) })),
 
   // Template APIs
   listTemplates: () => fetchJson<TemplateListResponse>("/api/templates?tenant_slug=demo-public"),
+
+  // Evidence, artifacts, provenance, ledger, bundles
+  listEvidence: (runId?: number) =>
+    fetchJson<EvidenceListResponse>(`/api/evidence?tenant_slug=demo-public${runId ? `&run_id=${runId}` : ""}`),
+  listArtifacts: (runId?: number) =>
+    fetchJson<ArtifactListResponse>(`/api/artifacts?tenant_slug=demo-public${runId ? `&run_id=${runId}` : ""}`),
+  reviewArtifact: (payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<Record<string, unknown>>("/api/artifacts/review", { method: "POST", body: JSON.stringify(body) })),
+  addArtifactFeedback: (payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<Record<string, unknown>>("/api/artifacts/feedback", { method: "POST", body: JSON.stringify(body) })),
+  getProvenance: (runId?: number) =>
+    fetchJson<ProvenanceResponse>(`/api/provenance?tenant_slug=demo-public${runId ? `&run_id=${runId}` : ""}`),
+  getLedger: () => fetchJson<LedgerResponse>("/api/ledger?tenant_slug=demo-public"),
+  listDisclosures: () => fetchJson<DisclosureListResponse>("/api/disclosures?tenant_slug=demo-public"),
+  createDisclosureBundle: (payload: Record<string, unknown>) =>
+    withWritableTenant(payload).then((body) =>
+      fetchJson<DisclosureBundleRecord>("/api/disclosures", { method: "POST", body: JSON.stringify(body) })),
 };

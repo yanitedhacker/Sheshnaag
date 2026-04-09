@@ -2,7 +2,7 @@
 
 Project Sheshnaag is a local-first defensive vulnerability research lab for enterprise software CVEs. It ingests live vulnerability intelligence, scores research candidates, creates constrained Kali-backed validation plans, captures evidence, generates defensive artifacts, and preserves signed provenance plus analyst credit.
 
-This repo is a hard pivot from CVE Threat Radar into the first Sheshnaag release. The frontend currently acts as a marketing site while the operator workflows live behind backend APIs and tests.
+This repo is a hard pivot from CVE Threat Radar into the first Sheshnaag release. The frontend now exposes the operator console routes for intel, candidates, recipes, runs, evidence, artifacts, provenance, ledger, and disclosure bundles on top of the Sheshnaag backend APIs.
 
 ## What Exists Now
 
@@ -18,7 +18,7 @@ This repo is a hard pivot from CVE Threat Radar into the first Sheshnaag release
   - `/api/disclosures/*`
 - Constrained `docker_kali` validation provider abstraction with room for a future VM-backed provider.
 - New Sheshnaag domain models for candidates, recipes, runs, evidence, artifacts, attestations, disclosure bundles, and ledger entries.
-- Marketing-only React frontend for product narrative, safety posture, and API entry points.
+- React operator console for the core Sheshnaag workflows plus the product narrative and safety posture pages.
 - Existing CVE, tenant, SBOM, VEX, asset, and graph foundations retained as applicability context.
 
 ## Safety Posture
@@ -82,6 +82,18 @@ npm --prefix frontend run dev
 PYTHONPATH=. pytest -q
 npm --prefix frontend run build
 ```
+
+### Smoke And Rehearsal
+
+```bash
+python scripts/sheshnaag_api_smoke.py
+npm --prefix frontend run smoke:routes
+bash scripts/sheshnaag_release_rehearsal.sh
+```
+
+- `scripts/sheshnaag_api_smoke.py` spins up an in-memory FastAPI test surface and exercises intel, candidates, recipes, runs, evidence, artifacts, provenance, ledger, templates, and disclosure export.
+- `npm --prefix frontend run smoke:routes` verifies that every operator page is still wired into the route map and top-level nav.
+- `scripts/sheshnaag_release_rehearsal.sh` runs the backend smoke, frontend route smoke, targeted Sheshnaag pytest suite, and frontend build in one repeatable pass.
 
 ## Implementation Notes
 
