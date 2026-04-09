@@ -46,4 +46,24 @@ Use `.env.release.example` for rehearsals and run:
 bash scripts/sheshnaag_release_rehearsal.sh
 ```
 
-The rehearsal emits environment metadata, image verification steps, Docker-backed smokes, and frontend/build checks.
+The default rehearsal emits environment metadata, image verification steps, Docker-backed smokes, and frontend/build checks.
+
+For hosts that are expected to support secure-mode release gating, also run:
+
+```bash
+bash scripts/sheshnaag_secure_host_rehearsal.sh
+```
+
+That host lane archives:
+
+- release metadata including `limactl` version
+- the Alembic migration rehearsal summary
+- Docker-backed advanced telemetry smoke logs
+- secure-mode smoke JSON proving lifecycle, execute, and teardown audit metadata
+
+## Secure-mode prerequisites
+
+- `limactl` installed and working on the host
+- writable `SHESHNAAG_LIMA_WORKSPACE_ROOT`
+- access to the trusted `secure_lima` image/template path
+- operators prepared to review bounded PCAP evidence before external export

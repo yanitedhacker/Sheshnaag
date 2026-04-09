@@ -7,6 +7,9 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from app.lab.telemetry_slices import build_telemetry_slices
+from app.lab.collectors.runtime import guest_ref, guest_transport
+
 
 def utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -28,6 +31,7 @@ def collector_health_meta(
     skip_reason: Optional[str] = None,
     error: Optional[str] = None,
     tool: Optional[str] = None,
+    **extra: Any,
 ) -> Dict[str, Any]:
     try:
         t0 = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
@@ -35,7 +39,7 @@ def collector_health_meta(
         duration_ms = max(0, int((t1 - t0).total_seconds() * 1000))
     except (TypeError, ValueError):
         duration_ms = 0
-    return {
+    payload = {
         "collector": collector,
         "version": version,
         "started_at": started_at,
@@ -47,6 +51,8 @@ def collector_health_meta(
         "error": error,
         "tool": tool,
     }
+    payload.update(extra)
+    return payload
 
 
 def build_evidence_dict(
@@ -120,6 +126,21 @@ def synthetic_from_plan(
             skip_reason="non_execute_launch_mode_or_synthetic_fallback",
         ),
     }
+    if collector_name in {"tracee_events", "falco_events", "tetragon_events", "pcap"}:
+        payload.update(
+            build_telemetry_slices(
+                collector_name=collector_name,
+                normalized_events=[],
+                findings=[],
+                collector_health=payload["collector_health"],
+                extra={
+                    "mode": "synthetic",
+                    "run_id": run_context.get("run_id"),
+                    "provider_run_ref": provider_result.get("provider_run_ref"),
+                    "plan": plan,
+                },
+            )
+        )
     return build_evidence_dict(
         artifact_kind=collector_name,
         title=title,
@@ -160,6 +181,21 @@ def collector_error_evidence(
             tool=tool,
         ),
     }
+    if collector_name in {"tracee_events", "falco_events", "tetragon_events", "pcap"}:
+        payload.update(
+            build_telemetry_slices(
+                collector_name=collector_name,
+                normalized_events=[],
+                findings=[],
+                collector_health=payload["collector_health"],
+                extra={
+                    "mode": "error",
+                    "message": message,
+                    "run_id": run_context.get("run_id"),
+                    "provider_run_ref": provider_result.get("provider_run_ref"),
+                },
+            )
+        )
     return build_evidence_dict(
         artifact_kind=collector_name,
         title=title,
@@ -169,6 +205,114 @@ def collector_error_evidence(
         capture_ended_at=ended,
         collector_name=collector_name,
         collector_version=collector_version,
+    )
+
+
+def build_advanced_telemetry_evidence(
+    *,
+    artifact_kind: str,
+    title: str,
+    summary: str,
+    run_context: Dict[str, Any],
+    provider_result: Dict[str, Any],
+    collector_version: str,
+    tool: str,
+    mode: str,
+    normalized_events: List[Dict[str, Any]],
+    findings: List[Dict[str, Any]],
+    started_at: str,
+    ended_at: str,
+    command: Optional[str] = None,
+    raw_preview: str = "",
+    stderr_preview: str = "",
+    exit_code: Optional[int] = None,
+    status: str = "ok",
+    skip_reason: Optional[str] = None,
+    error: Optional[str] = None,
+    event_limit: Optional[int] = None,
+    byte_limit: Optional[int] = None,
+    time_limit_seconds: Optional[int] = None,
+    truncated: bool = False,
+    supported: bool = True,
+    support_reason: Optional[str] = None,
+    storage_eligible: bool = False,
+    storage_path: Optional[str] = None,
+    contains_raw_payload: bool = False,
+    sensitivity: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    collector_health = collector_health_meta(
+        collector=artifact_kind,
+        version=collector_version,
+        started_at=started_at,
+        ended_at=ended_at,
+        status=status,
+        output_bytes=len((raw_preview or "").encode("utf-8")),
+        skip_reason=skip_reason,
+        error=error,
+        tool=tool,
+        event_count=len(normalized_events),
+        truncated=truncated,
+    )
+    session = {
+        "tool": tool,
+        "command": command,
+        "transport": guest_transport(provider_result),
+        "guest_ref": guest_ref(provider_result),
+        "provider": (provider_result.get("plan") or {}).get("provider"),
+        "exit_code": exit_code,
+        "event_count": len(normalized_events),
+        "finding_count": len(findings),
+        "event_limit": event_limit,
+        "byte_limit": byte_limit,
+        "time_limit_seconds": time_limit_seconds,
+        "truncated": truncated,
+        "live_capture": mode == "live",
+    }
+    payload = build_telemetry_slices(
+        collector_name=artifact_kind,
+        normalized_events=normalized_events,
+        findings=findings,
+        collector_health=collector_health,
+        raw_preview=raw_preview,
+        extra={
+            "mode": mode,
+            "session": session,
+            "support": {
+                "supported": supported,
+                "reason": support_reason,
+            },
+            "capture_policy": {
+                "event_limit": event_limit,
+                "byte_limit": byte_limit,
+                "time_limit_seconds": time_limit_seconds,
+                "bounded_capture": True,
+            },
+            "storage": {
+                "eligible_for_export": storage_eligible,
+                "storage_path": storage_path,
+                "contains_raw_payload": contains_raw_payload,
+            },
+            "review_sensitivity": sensitivity
+            or {
+                "classification": "standard",
+                "external_export_requires_confirmation": False,
+            },
+            "stderr_preview": stderr_preview[:2000] if stderr_preview else "",
+        },
+    )
+    if extra:
+        payload.update(extra)
+    return build_evidence_dict(
+        artifact_kind=artifact_kind,
+        title=title,
+        summary=summary,
+        payload=payload,
+        capture_started_at=started_at,
+        capture_ended_at=ended_at,
+        collector_name=artifact_kind,
+        collector_version=collector_version,
+        truncated=truncated,
     )
 
 

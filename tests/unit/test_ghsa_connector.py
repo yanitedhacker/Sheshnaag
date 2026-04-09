@@ -14,7 +14,7 @@ from app.ingestion.connector import get_registered_connectors
 from app.ingestion.ghsa_client import GHSAClient
 from app.ingestion.ghsa_connector import GHSAConnector
 from app.models.cve import CVE
-from app.models.sheshnaag import AdvisoryRecord, PackageRecord
+from app.models.sheshnaag import AdvisoryPackageLink, AdvisoryRecord, PackageRecord, VersionRange
 
 
 def _make_session():
@@ -79,9 +79,11 @@ def test_parse_ghsa_advisory_with_cve():
     assert parsed["cve_id"] == "CVE-2024-99999"
     assert parsed["severity"] == "high"
     assert len(parsed["packages"]) == 2
-    assert parsed["packages"][0] == {"ecosystem": "pip", "name": "test-pkg"}
+    assert parsed["packages"][0]["ecosystem"] == "pypi"
+    assert parsed["packages"][0]["name"] == "test-pkg"
     assert len(parsed["version_ranges"]) == 2
     assert len(parsed["references"]) == 2
+    assert parsed["canonical_id"] == "CVE-2024-99999"
     assert parsed["payload_hash"]
 
 
@@ -114,7 +116,9 @@ def test_save_advisory_creates_advisory_and_packages():
     pkgs = session.query(PackageRecord).all()
     assert len(pkgs) == 2
     ecosystems = {p.ecosystem for p in pkgs}
-    assert ecosystems == {"pip", "npm"}
+    assert ecosystems == {"pypi", "npm"}
+    assert session.query(AdvisoryPackageLink).count() == 2
+    assert session.query(VersionRange).count() == 2
 
 
 @pytest.mark.unit

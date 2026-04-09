@@ -180,3 +180,18 @@ def test_disclosure_route_exports_downloadable_archive():
     )
     assert download.status_code == 200
     assert download.headers["content-type"] == "application/zip"
+
+    review = client.post(
+        "/api/disclosures/review",
+        json={
+            "tenant_slug": "integration-routes-private",
+            "bundle_id": bundle["id"],
+            "reviewer_name": "Lead Reviewer",
+            "reviewer_role": "psirt",
+            "decision": "approved",
+            "checklist": {"provenance_verified": True, "redaction_reviewed": True},
+            "export_gating": {"external_release_ok": True},
+        },
+    )
+    assert review.status_code == 200
+    assert review.json()["status"] == "approved"

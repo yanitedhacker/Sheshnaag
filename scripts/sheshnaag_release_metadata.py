@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import platform
 import shutil
@@ -21,6 +22,9 @@ def command_output(argv: list[str]) -> str | None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", default=None, help="Optional file path to also write the metadata JSON.")
+    args = parser.parse_args()
     payload = {
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "platform": {
@@ -37,7 +41,11 @@ def main() -> int:
             "limactl": command_output(["limactl", "--version"]) if shutil.which("limactl") else None,
         },
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    print(text)
     return 0
 
 

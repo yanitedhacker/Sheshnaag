@@ -38,8 +38,10 @@ from app.models.cve import AffectedProduct, CVE
 from app.models.risk_score import RiskScore
 from app.models.sheshnaag import (
     AdvisoryRecord,
+    AdvisoryPackageLink,
     AnalystIdentity,
     AttestationRecord,
+    CandidateScoreRecalculationRun,
     ContributionLedgerEntry,
     DetectionArtifact,
     DisclosureBundle,
@@ -62,29 +64,14 @@ from app.models.sheshnaag import (
     WorkstationFingerprint,
 )
 from app.models.v2 import AssetSoftware, EPSSSnapshot, KEVEntry, KnowledgeDocument, SoftwareComponent, Tenant, VexStatement
+from app.services.advisory_normalization import summarize_advisory_records
+from app.services.candidate_scoring import (
+    CANDIDATE_SCORING_WEIGHTS,
+    CandidateScoringContext,
+    compute_candidate_explainability,
+)
 from app.services.intel_service import ThreatIntelService
 from app.services.knowledge_service import KnowledgeRetrievalService
-
-
-CANDIDATE_SCORING_WEIGHTS: Dict[str, float] = {
-    "risk_score": 0.17,
-    "epss": 0.14,
-    "kev": 0.12,
-    "package_match_confidence": 0.10,
-    "product_match_quality": 0.08,
-    "attack_surface": 0.08,
-    "observability": 0.07,
-    "linux_reproducibility": 0.07,
-    "patch_availability": 0.05,
-    "exploit_maturity": 0.04,
-    "vendor_advisory_presence": 0.03,
-    "patch_note_linkage": 0.02,
-    "source_freshness": 0.02,
-    "evidence_readiness": 0.01,
-}
-"""Named weights for candidate scoring.  All weights must sum to 1.0.
-Each key corresponds to a `ScoringFactor.key`.  Changing a weight here
-is the *only* place that affects score output, making auditing trivial."""
 
 VALID_CANDIDATE_STATUSES = {
     "queued",
@@ -103,19 +90,6 @@ CANDIDATE_STATUS_TRANSITIONS: Dict[str, set] = {
     "duplicate": set(),
     "archived": {"queued"},
 }
-
-
-@dataclass
-class ScoringFactor:
-    """One named factor contributing to a candidate score."""
-
-    key: str
-    raw_value: float
-    weight: float
-    weighted_value: float
-    reason: str
-
-
 @dataclass
 class RunArtifacts:
     """In-memory run outputs before persistence."""
@@ -632,6 +606,158 @@ class SheshnaagService:
             "by_status": by_status,
         }
 
+    def recalculate_candidate_scores(
+        self,
+        tenant: Tenant,
+        *,
+        requested_by: str,
+        dry_run: bool = True,
+        reason: Optional[str] = None,
+        candidate_ids: Optional[List[int]] = None,
+        package_name: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Recompute candidate scores/explainability and persist a recalculation summary."""
+        self.sync_candidates(tenant)
+        query = self.session.query(ResearchCandidate).filter(ResearchCandidate.tenant_id == tenant.id)
+        if candidate_ids:
+            query = query.filter(ResearchCandidate.id.in_(candidate_ids))
+        if package_name:
+            query = query.filter(ResearchCandidate.package_name.ilike(f"%{package_name}%"))
+        query = query.order_by(ResearchCandidate.id.asc())
+        if limit:
+            query = query.limit(limit)
+        rows = query.all()
+
+        epss_map = self.intel.get_latest_epss_map([row.cve.cve_id for row in rows if row.cve and row.cve.cve_id])
+        kev_map = self.intel.get_kev_map([row.cve.cve_id for row in rows if row.cve and row.cve.cve_id])
+        latest_risk = self._latest_risk_by_cve_id([row.cve_id for row in rows if row.cve_id])
+
+        changed_count = 0
+        total_delta = 0.0
+        items: List[Dict[str, Any]] = []
+        for candidate in rows:
+            cve = candidate.cve
+            if cve is None:
+                continue
+            affected = self.session.query(AffectedProduct).filter(AffectedProduct.cve_id == cve.id).first()
+            product = self._ensure_product_record(affected)
+            package = self._ensure_package_record(affected)
+            explainability = self._build_candidate_explainability(
+                cve=cve,
+                tenant=tenant,
+                risk=latest_risk.get(cve.id),
+                kev=kev_map.get(cve.cve_id.upper()),
+                epss=epss_map.get(cve.cve_id.upper()),
+                affected=affected,
+            )
+            new_score = explainability["score"]
+            score_delta = round(float(new_score) - float(candidate.candidate_score or 0.0), 2)
+            old_status = candidate.status
+            new_status = "queued" if new_score >= 35 else "deferred"
+            changed = (
+                round(float(candidate.candidate_score or 0.0), 2) != round(float(new_score), 2)
+                or candidate.explainability != explainability
+                or candidate.status != new_status
+            )
+            if changed:
+                changed_count += 1
+                total_delta += score_delta
+            items.append(
+                {
+                    "candidate_id": candidate.id,
+                    "cve_id": cve.cve_id,
+                    "previous_score": round(float(candidate.candidate_score or 0.0), 2),
+                    "new_score": round(float(new_score), 2),
+                    "score_delta": score_delta,
+                    "previous_status": old_status,
+                    "new_status": new_status,
+                    "changed": changed,
+                }
+            )
+            if dry_run:
+                continue
+            candidate.candidate_score = new_score
+            candidate.status = new_status
+            candidate.explainability = explainability
+            candidate.package_record_id = package.id if package else candidate.package_record_id
+            candidate.product_record_id = product.id if product else candidate.product_record_id
+            candidate.package_name = affected.product if affected else candidate.package_name
+            candidate.product_name = affected.product if affected else candidate.product_name
+            candidate.patch_available = explainability["patch_available"]
+            candidate.linux_reproducibility_confidence = explainability["linux_reproducibility_confidence"]
+            candidate.observability_score = explainability["observability_score"]
+
+        summary = {
+            "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
+            "dry_run": dry_run,
+            "requested_by": requested_by,
+            "reason": reason,
+            "total_candidates": len(items),
+            "changed_count": changed_count,
+            "unchanged_count": max(0, len(items) - changed_count),
+            "average_score_delta": round((total_delta / changed_count), 2) if changed_count else 0.0,
+            "items": items[:200],
+        }
+        record = CandidateScoreRecalculationRun(
+            tenant_id=tenant.id,
+            requested_by=requested_by,
+            status="completed",
+            dry_run=dry_run,
+            reason=reason,
+            filters={
+                "candidate_ids": candidate_ids or [],
+                "package_name": package_name,
+                "limit": limit,
+            },
+            summary=summary,
+        )
+        self.session.add(record)
+        self.session.flush()
+        self._ledger(
+            tenant.id,
+            None,
+            "candidate_scores_recalculated",
+            "candidate_score_recalculation_run",
+            str(record.id),
+            1.5,
+            {
+                "dry_run": dry_run,
+                "changed_count": changed_count,
+                "requested_by": requested_by,
+            },
+        )
+        summary["recalculation_run_id"] = record.id
+        if not dry_run:
+            self.session.flush()
+        return summary
+
+    def list_candidate_recalculation_runs(self, tenant: Tenant, *, limit: int = 20) -> Dict[str, Any]:
+        rows = (
+            self.session.query(CandidateScoreRecalculationRun)
+            .filter(CandidateScoreRecalculationRun.tenant_id == tenant.id)
+            .order_by(desc(CandidateScoreRecalculationRun.created_at), desc(CandidateScoreRecalculationRun.id))
+            .limit(limit)
+            .all()
+        )
+        return {
+            "count": len(rows),
+            "items": [
+                {
+                    "id": row.id,
+                    "requested_by": row.requested_by,
+                    "status": row.status,
+                    "dry_run": row.dry_run,
+                    "reason": row.reason,
+                    "filters": row.filters,
+                    "summary": row.summary,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                }
+                for row in rows
+            ],
+        }
+
     def assign_candidate(self, tenant: Tenant, *, candidate_id: int, analyst_name: str, assigned_by: Optional[str] = None) -> Dict[str, Any]:
         """Assign candidate to an analyst."""
         candidate = self._get_candidate(tenant, candidate_id)
@@ -882,7 +1008,21 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=analyst_name, candidate=candidate
         )
-        provider_result = provider.launch(revision_content=revision.content, run_context=run_context)
+        if launch_mode == "execute":
+            built_plan = provider.build_plan(revision_content=revision.content, run_context=run_context)
+            allocated_result = provider.create(plan=built_plan, run_context=run_context)
+            self._apply_provider_result(run, allocated_result)
+            self._annotate_run_manifest(
+                run=run,
+                revision=revision,
+                analyst_name=analyst_name,
+                acknowledgement_recorded=acknowledge_sensitive,
+            )
+            self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
+            self._add_run_event(run, "run_allocated", allocated_result)
+            provider_result = provider.boot(provider_run_ref=allocated_result.provider_run_ref)
+        else:
+            provider_result = provider.launch(revision_content=revision.content, run_context=run_context)
         self._apply_provider_result(run, provider_result)
         self._annotate_run_manifest(
             run=run,
@@ -897,7 +1037,8 @@ class SheshnaagService:
             analyst_name=analyst_name,
             acknowledged=acknowledge_sensitive,
         )
-        self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
+        if launch_mode != "execute":
+            self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
         run.started_at = utc_now()
         terminal_states = {RunState.COMPLETED.value, RunState.BLOCKED.value, RunState.PLANNED.value, RunState.ERRORED.value}
         if run.state in terminal_states:
@@ -1075,6 +1216,166 @@ class SheshnaagService:
             "evidence_summary": self._evidence_summary(run.id),
         }
 
+    def list_review_queue(
+        self,
+        tenant: Tenant,
+        *,
+        entity_type: Optional[str] = None,
+        status: Optional[str] = None,
+        run_id: Optional[int] = None,
+        reviewer: Optional[str] = None,
+        needs_attention: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Aggregate reviewable runs, evidence, artifacts, and bundles into one operator queue."""
+        items: List[Dict[str, Any]] = []
+        if entity_type in (None, "run"):
+            for run in self.session.query(LabRun).filter(LabRun.tenant_id == tenant.id).all():
+                manifest = run.manifest or {}
+                blocking_reasons: List[str] = []
+                readiness = manifest.get("provider_readiness") or {}
+                if readiness.get("status") in {"degraded", "unavailable"}:
+                    blocking_reasons.append(f"provider_readiness:{readiness.get('status')}")
+                if (manifest.get("artifact_transfer") or {}).get("status") == "completed_with_errors":
+                    blocking_reasons.append("artifact_transfer_warnings")
+                for capability in manifest.get("collector_capabilities") or []:
+                    if capability.get("selected") and capability.get("status") in {"degraded", "unavailable"}:
+                        blocking_reasons.append(f"collector:{capability.get('collector_name')}:{capability.get('status')}")
+                secure_audit = manifest.get("secure_mode_audit") or {}
+                execute_result = secure_audit.get("execute_result") or {}
+                if manifest.get("provider") == "lima" and run.launch_mode == "execute" and not execute_result:
+                    blocking_reasons.append("secure_execute_audit_missing")
+                latest_review = self._latest_review_entry("run", run.id)
+                items.append(
+                    self._review_queue_item(
+                        entity_type="run",
+                        entity_id=run.id,
+                        run_id=run.id,
+                        title=f"Run #{run.id}",
+                        status=run.state,
+                        review_state="needs_attention" if blocking_reasons else "ready",
+                        sensitivity={
+                            "requires_acknowledgement": bool(run.requires_acknowledgement),
+                            "secure_mode": bool(manifest.get("secure_mode")),
+                        },
+                        blocking_reasons=blocking_reasons,
+                        last_review=latest_review,
+                        updated_at=run.updated_at or run.created_at,
+                        route=f"/runs",
+                        extra={
+                            "provider": run.provider,
+                            "launch_mode": run.launch_mode,
+                            "bundle_export_gating": None,
+                        },
+                    )
+                )
+        if entity_type in (None, "evidence"):
+            evidence_query = self.session.query(EvidenceArtifact).join(LabRun, LabRun.id == EvidenceArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
+            if run_id is not None:
+                evidence_query = evidence_query.filter(EvidenceArtifact.run_id == run_id)
+            for row in evidence_query.all():
+                payload = row.payload or {}
+                blocking_reasons = []
+                if row.reviewed_state in {"captured", "under_review"}:
+                    blocking_reasons.append("unreviewed_evidence")
+                if row.artifact_kind in {"pcap", "service_logs"}:
+                    blocking_reasons.append("sensitive_evidence")
+                latest_review = self._latest_review_entry("evidence_artifact", row.id)
+                items.append(
+                    self._review_queue_item(
+                        entity_type="evidence",
+                        entity_id=row.id,
+                        run_id=row.run_id,
+                        title=row.title,
+                        status=row.artifact_kind,
+                        review_state=row.reviewed_state,
+                        sensitivity={
+                            "artifact_kind": row.artifact_kind,
+                            "sensitive": row.artifact_kind in {"pcap", "service_logs"},
+                            "review_sensitivity": payload.get("review_sensitivity") or {},
+                        },
+                        blocking_reasons=blocking_reasons,
+                        last_review=latest_review,
+                        updated_at=row.updated_at or row.created_at,
+                        route="/evidence",
+                        extra={
+                            "bundle_export_gating": bool((payload.get("review_sensitivity") or {}).get("external_export_requires_confirmation")),
+                        },
+                    )
+                )
+        if entity_type in (None, "artifact"):
+            artifacts = [
+                *self.session.query(DetectionArtifact).join(LabRun, LabRun.id == DetectionArtifact.run_id).filter(LabRun.tenant_id == tenant.id).all(),
+                *self.session.query(MitigationArtifact).join(LabRun, LabRun.id == MitigationArtifact.run_id).filter(LabRun.tenant_id == tenant.id).all(),
+            ]
+            for row in artifacts:
+                row_run_id = row.run_id
+                if run_id is not None and row_run_id != run_id:
+                    continue
+                family = "detection_artifact" if isinstance(row, DetectionArtifact) else "mitigation_artifact"
+                latest_review = self._latest_review_entry(family, row.id)
+                blocking_reasons = []
+                if row.status in {"draft", "under_review", "changes_requested"}:
+                    blocking_reasons.append(f"artifact_status:{row.status}")
+                items.append(
+                    self._review_queue_item(
+                        entity_type="artifact",
+                        entity_id=row.id,
+                        run_id=row_run_id,
+                        title=getattr(row, "name", None) or getattr(row, "title", None) or f"Artifact {row.id}",
+                        status=row.status,
+                        review_state=row.status,
+                        sensitivity={"artifact_type": row.artifact_type},
+                        blocking_reasons=blocking_reasons,
+                        last_review=latest_review,
+                        updated_at=row.updated_at or row.created_at,
+                        route="/artifacts",
+                        extra={
+                            "artifact_family": "detection" if isinstance(row, DetectionArtifact) else "mitigation",
+                            "bundle_export_gating": None,
+                        },
+                    )
+                )
+        if entity_type in (None, "bundle"):
+            bundle_query = self.session.query(DisclosureBundle).filter(DisclosureBundle.tenant_id == tenant.id)
+            if run_id is not None:
+                bundle_query = bundle_query.filter(DisclosureBundle.run_id == run_id)
+            for bundle in bundle_query.all():
+                manifest = bundle.manifest or {}
+                gating = (manifest.get("safety_checklist") or {}).get("requires_external_confirmation") or False
+                blocking_reasons = []
+                if gating and bundle.status not in {"approved", "exported"}:
+                    blocking_reasons.append("external_export_confirmation_required")
+                if manifest.get("warnings"):
+                    blocking_reasons.append("bundle_warnings_present")
+                latest_review = self._latest_review_entry("disclosure_bundle", bundle.id)
+                items.append(
+                    self._review_queue_item(
+                        entity_type="bundle",
+                        entity_id=bundle.id,
+                        run_id=bundle.run_id,
+                        title=bundle.title,
+                        status=bundle.status,
+                        review_state=bundle.status,
+                        sensitivity={"bundle_type": bundle.bundle_type, "contains_sensitive_evidence": gating},
+                        blocking_reasons=blocking_reasons,
+                        last_review=latest_review,
+                        updated_at=bundle.created_at,
+                        route="/disclosures",
+                        extra={"bundle_export_gating": gating},
+                    )
+                )
+
+        if run_id is not None:
+            items = [item for item in items if item["run_id"] == run_id]
+        if status:
+            items = [item for item in items if item["status"] == status or item["review_state"] == status]
+        if reviewer:
+            items = [item for item in items if item.get("last_reviewer") == reviewer]
+        if needs_attention is not None:
+            items = [item for item in items if bool(item["needs_attention_now"]) is needs_attention]
+        items.sort(key=lambda item: (item["needs_attention_now"], item["updated_at"] or ""), reverse=True)
+        return {"count": len(items), "items": items}
+
     def stop_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
         """Stop a running validation run."""
         run = self._get_run(tenant, run_id)
@@ -1149,10 +1450,38 @@ class SheshnaagService:
         """Aggregate ``findings`` from telemetry collector payloads (WS7-T5 operator view)."""
         rows = self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run_id).all()
         items: List[Dict[str, Any]] = []
+        per_tool_counts: Dict[str, int] = {}
+        per_severity_counts: Dict[str, int] = {}
+        collector_overhead: List[Dict[str, Any]] = []
+        telemetry_slices: List[Dict[str, Any]] = []
         for row in rows:
             pl = row.payload or {}
             if not isinstance(pl, dict):
                 continue
+            summary = pl.get("telemetry_summary")
+            if isinstance(summary, dict):
+                for tool, count in (summary.get("source_tools") or {}).items():
+                    per_tool_counts[str(tool)] = per_tool_counts.get(str(tool), 0) + int(count)
+                for sev, count in (summary.get("severity_counts") or {}).items():
+                    per_severity_counts[str(sev)] = per_severity_counts.get(str(sev), 0) + int(count)
+            if isinstance(pl.get("collector_overhead"), dict):
+                collector_overhead.append(
+                    {
+                        "collector_name": row.collector_name or row.artifact_kind,
+                        **pl["collector_overhead"],
+                    }
+                )
+            if any(key in pl for key in ("process_slice", "file_slice", "network_slice")):
+                telemetry_slices.append(
+                    {
+                        "evidence_artifact_id": row.id,
+                        "collector_name": row.collector_name or row.artifact_kind,
+                        "process_slice": pl.get("process_slice") or [],
+                        "file_slice": pl.get("file_slice") or [],
+                        "network_slice": pl.get("network_slice") or [],
+                        "policy_hits": pl.get("policy_hits") or [],
+                    }
+                )
             findings = pl.get("findings")
             if not isinstance(findings, list):
                 continue
@@ -1165,7 +1494,23 @@ class SheshnaagService:
                             "artifact_kind": row.artifact_kind,
                         }
                     )
-        return {"count": len(items), "items": items[:500]}
+        top_findings = sorted(
+            items,
+            key=lambda finding: {"critical": 4, "high": 3, "medium": 2, "warning": 2, "notice": 1, "low": 1, "info": 0}.get(
+                str(finding.get("severity") or "info").lower(),
+                0,
+            ),
+            reverse=True,
+        )
+        return {
+            "count": len(items),
+            "items": items[:500],
+            "per_tool_counts": per_tool_counts,
+            "per_severity_counts": per_severity_counts,
+            "top_findings": top_findings[:20],
+            "collector_overhead": collector_overhead,
+            "telemetry_slices": telemetry_slices[:50],
+        }
 
     def _evidence_summary(self, run_id: int) -> Dict[str, Any]:
         rows = self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run_id).all()
@@ -1290,7 +1635,7 @@ class SheshnaagService:
     ) -> Dict[str, Any]:
         """Advance an artifact through the review state machine."""
         artifact = self._get_artifact_entity(tenant, artifact_family, artifact_id)
-        valid_states = {"draft", "under_review", "approved", "rejected", "superseded", "deprecated"}
+        valid_states = {"draft", "under_review", "changes_requested", "approved", "rejected", "superseded", "deprecated"}
         if decision not in valid_states:
             raise ValueError(f"Invalid artifact review state '{decision}'.")
         artifact.status = decision
@@ -1517,6 +1862,9 @@ class SheshnaagService:
         evidence_ids: Optional[List[int]] = None,
         redaction_notes: Optional[List[Dict[str, Any]]] = None,
         attachment_policy: Optional[Dict[str, Any]] = None,
+        review_checklist: Optional[Dict[str, Any]] = None,
+        reviewer_name: Optional[str] = None,
+        reviewer_role: Optional[str] = None,
         confirm_external_export: bool = False,
     ) -> Dict[str, Any]:
         """Create a disclosure/export bundle from a run."""
@@ -1552,6 +1900,7 @@ class SheshnaagService:
             redaction_notes=redaction_notes or [],
             attachment_policy=attachment_policy or {},
             warnings=warnings,
+            review_checklist=review_checklist or {},
         )
         archive = self._write_bundle_archive(
             manifest=manifest,
@@ -1581,6 +1930,30 @@ class SheshnaagService:
         )
         self.session.add(bundle)
         self.session.flush()
+        review_actor = reviewer_name or signed_by
+        self.session.add(
+            ReviewDecision(
+                tenant_id=tenant.id,
+                reviewer_name=review_actor,
+                target_type="disclosure_bundle",
+                target_id=str(bundle.id),
+                decision="approved" if confirm_external_export else "under_review",
+                rationale="Bundle exported with explicit external confirmation." if confirm_external_export else "Bundle assembled and awaiting operator confirmation.",
+                payload={
+                    "run_id": run.id,
+                    "bundle_id": bundle.id,
+                    "bundle_type": bundle_type,
+                    "reviewer_role": reviewer_role or "analyst",
+                    "checklist": review_checklist or {},
+                    "redaction_note_count": len(redaction_notes or []),
+                    "attachment_policy": attachment_policy or {},
+                    "export_gating": {
+                        "confirm_external_export": confirm_external_export,
+                        "warnings": warnings,
+                    },
+                },
+            )
+        )
         self.session.add(
             AttestationRecord(
                 tenant_id=tenant.id,
@@ -1611,6 +1984,58 @@ class SheshnaagService:
             str(bundle.id),
             3.0,
             {"bundle_type": bundle_type, "archive_sha256": archive["sha256"]},
+        )
+        self.session.flush()
+        return self._disclosure_bundle_payload(bundle)
+
+    def review_disclosure_bundle(
+        self,
+        tenant: Tenant,
+        *,
+        bundle_id: int,
+        reviewer_name: str,
+        reviewer_role: str,
+        decision: str,
+        rationale: Optional[str] = None,
+        checklist: Optional[Dict[str, Any]] = None,
+        export_gating: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        valid_states = {"draft", "under_review", "changes_requested", "approved", "rejected", "superseded", "exported"}
+        if decision not in valid_states:
+            raise ValueError(f"Invalid disclosure bundle decision '{decision}'.")
+        bundle = (
+            self.session.query(DisclosureBundle)
+            .filter(DisclosureBundle.tenant_id == tenant.id, DisclosureBundle.id == bundle_id)
+            .first()
+        )
+        if bundle is None:
+            raise ValueError("Disclosure bundle not found.")
+        bundle.status = decision
+        self.session.add(
+            ReviewDecision(
+                tenant_id=tenant.id,
+                reviewer_name=reviewer_name,
+                target_type="disclosure_bundle",
+                target_id=str(bundle.id),
+                decision=decision,
+                rationale=rationale,
+                payload={
+                    "bundle_id": bundle.id,
+                    "run_id": bundle.run_id,
+                    "reviewer_role": reviewer_role,
+                    "checklist": checklist or {},
+                    "export_gating": export_gating or {},
+                },
+            )
+        )
+        self._ledger(
+            tenant.id,
+            self._run_analyst_id(bundle.run_id) if bundle.run_id else None,
+            f"bundle_{decision}",
+            "disclosure_bundle",
+            str(bundle.id),
+            1.25 if decision in {"approved", "exported"} else 0.75,
+            {"reviewer": reviewer_name, "reviewer_role": reviewer_role},
         )
         self.session.flush()
         return self._disclosure_bundle_payload(bundle)
@@ -1649,111 +2074,53 @@ class SheshnaagService:
         affected: Optional[AffectedProduct],
     ) -> Dict[str, Any]:
         applicability = self._compute_environment_applicability(cve=cve, tenant=tenant, affected=affected)
-        asset_matches = applicability["asset_match_count"] + applicability["sbom_match_count"]
-        vex_fixed = applicability.get("vex_status") in ("fixed", "not_affected")
-        vex_count = self.session.query(VexStatement).filter(VexStatement.cve_id == cve.cve_id.upper()).count()
-        patch_available = bool(vex_fixed or vex_count or cve.exploit_available)
-
-        factors = self._compute_scoring_factors(
-            cve=cve,
-            risk=risk,
-            kev=kev,
-            epss=epss,
-            affected=affected,
-            asset_matches=asset_matches,
-            patch_available=patch_available,
-        )
-        weighted_total = sum(f.weighted_value for f in factors)
-        score = round(weighted_total * 100.0, 2)
-
-        factors_dict = {f.key: round(f.raw_value, 3) for f in factors}
-        factors_dict["kev"] = bool(kev)
-
-        observability = next(f.raw_value for f in factors if f.key == "observability")
-        reproducibility = next(f.raw_value for f in factors if f.key == "linux_reproducibility")
-
-        citations = self._build_citations(cve=cve, tenant=tenant, kev=kev, epss=epss, affected=affected)
-
-        return {
-            "score": score,
-            "factors": factors_dict,
-            "weights": dict(CANDIDATE_SCORING_WEIGHTS),
-            "factor_details": [
-                {"key": f.key, "raw": round(f.raw_value, 3), "weight": f.weight, "weighted": round(f.weighted_value, 4), "reason": f.reason}
-                for f in factors
-            ],
-            "asset_match_count": asset_matches,
-            "patch_available": patch_available,
-            "observability_score": round(observability, 3),
-            "linux_reproducibility_confidence": round(reproducibility, 3),
-            "environment_applicability": applicability,
-            "citations": citations,
-        }
-
-    def _compute_scoring_factors(
-        self,
-        *,
-        cve: CVE,
-        risk: Optional[RiskScore],
-        kev: Optional[KEVEntry],
-        epss: Optional[EPSSSnapshot],
-        affected: Optional[AffectedProduct],
-        asset_matches: int,
-        patch_available: bool,
-    ) -> List[ScoringFactor]:
-        """Build the ordered list of scoring factors with named weights."""
-        w = CANDIDATE_SCORING_WEIGHTS
         advisory_rows = self.session.query(AdvisoryRecord).filter(AdvisoryRecord.cve_id == cve.id).all()
-        vendor_advisory_rows = [
-            row for row in advisory_rows
-            if (row.raw_data or {}).get("_advisory_type") != "patch_note"
-        ]
-        patch_note_rows = [
-            row for row in advisory_rows
-            if (row.raw_data or {}).get("_advisory_type") == "patch_note"
-        ]
-
+        advisory_summary = summarize_advisory_records(advisory_rows)
+        patch_available = bool(applicability.get("patch_available") or cve.exploit_available)
+        asset_matches = int(applicability["asset_match_count"]) + int(applicability["sbom_match_count"])
         risk_val = float(risk.overall_score / 100.0) if risk and risk.overall_score is not None else 0.35
         epss_val = float(epss.score) if epss else 0.0
-        kev_val = 1.0 if kev else 0.0
-        pkg_val = min(1.0, asset_matches / 3.0)
-        product_match_quality = 1.0 if affected and asset_matches > 0 else (0.72 if affected else 0.35)
-        vendor_advisory_presence = min(1.0, max(0, len(vendor_advisory_rows)))
-        patch_note_linkage = min(1.0, len(patch_note_rows) / 2.0)
-        source_freshness = self._source_freshness_score(["nvd", "kev", "epss", "vendor_advisory", "patch_notes"])
-        evidence_readiness = self._evidence_readiness_score()
-
-        # Attack surface: network-reachable CVEs score higher
+        kev_val = bool(kev)
         attack_surface = 0.9 if cve.attack_vector == "NETWORK" else (0.7 if cve.attack_vector == "ADJACENT" else 0.4)
-        observability = 0.85 if cve.attack_vector == "NETWORK" else 0.65
-        reproducibility = 0.9 if affected else 0.55
-        # Patch availability penalises already-patched CVEs (lower research urgency)
-        patch_factor = 0.3 if patch_available else 0.8
-
-        # Exploit maturity: KEV + high EPSS implies mature exploitation
-        exploit_maturity = min(1.0, kev_val * 0.5 + epss_val * 0.5 + (0.2 if cve.exploit_available else 0.0))
-
-        raw = {
-            "risk_score": (risk_val, "Overall risk composite from prior scoring"),
-            "epss": (epss_val, f"EPSS probability {epss_val:.3f}" if epss else "No EPSS data available"),
-            "kev": (kev_val, "In CISA KEV catalog" if kev else "Not in KEV catalog"),
-            "package_match_confidence": (pkg_val, f"{asset_matches} tenant asset(s) match affected package"),
-            "product_match_quality": (product_match_quality, "Affected product metadata aligns with tenant package/product context" if affected else "No strong product mapping available"),
-            "attack_surface": (attack_surface, f"Attack vector: {cve.attack_vector or 'UNKNOWN'}"),
-            "observability": (observability, "Network vector aids monitoring" if observability > 0.7 else "Local vector limits telemetry"),
-            "linux_reproducibility": (reproducibility, "Affected product data present" if affected else "No affected product mapping"),
-            "patch_availability": (patch_factor, "Patch available — lower research urgency" if patch_available else "No patch — higher research urgency"),
-            "exploit_maturity": (exploit_maturity, "Composite of KEV, EPSS, and known exploit signals"),
-            "vendor_advisory_presence": (vendor_advisory_presence, "Vendor advisory context linked to this CVE" if vendor_advisory_rows else "No vendor advisory captured yet"),
-            "patch_note_linkage": (patch_note_linkage, "Patch-note linkage increases operational follow-up value" if patch_note_rows else "No patch-note linkage captured yet"),
-            "source_freshness": (source_freshness, "Upstream source feeds are fresh enough for candidate materialization"),
-            "evidence_readiness": (evidence_readiness, "Local Docker validation path and baseline collectors are ready" if evidence_readiness >= 0.8 else "Live evidence path is currently degraded"),
-        }
-
-        return [
-            ScoringFactor(key=key, raw_value=val, weight=w[key], weighted_value=val * w[key], reason=reason)
-            for key, (val, reason) in raw.items()
-        ]
+        observability = 0.9 if asset_matches > 0 and cve.attack_vector == "NETWORK" else (0.72 if asset_matches > 0 else 0.55)
+        reproducibility = max(0.35, float(applicability.get("confidence") or 0.1))
+        patch_factor = 0.35 if patch_available else 0.85
+        exploit_maturity = min(1.0, (0.45 if kev_val else 0.0) + (epss_val * 0.45) + (0.1 if cve.exploit_available else 0.0))
+        vendor_context_quality = min(
+            1.0,
+            (
+                min(0.6, float(advisory_summary.get("count") or 0) * 0.2)
+                + (0.2 if advisory_summary.get("advisories_by_type", {}).get("patch_note") else 0.0)
+                + (0.2 if advisory_summary.get("advisories_by_type", {}).get("vendor") else 0.0)
+            ),
+        )
+        citations = self._build_citations(cve=cve, tenant=tenant, kev=kev, epss=epss, affected=affected)
+        return compute_candidate_explainability(
+            CandidateScoringContext(
+                risk_val=risk_val,
+                epss_val=epss_val,
+                kev=kev_val,
+                package_match_confidence=min(1.0, asset_matches / 3.0),
+                affected_version_confidence=float(applicability.get("version_match_confidence") or 0.25),
+                sbom_vex_applicability=float(applicability.get("sbom_vex_applicability") or 0.2),
+                attack_surface=attack_surface,
+                observability=observability,
+                linux_reproducibility=reproducibility,
+                patch_availability_factor=patch_factor,
+                exploit_maturity=exploit_maturity,
+                advisory_normalization_confidence=float(advisory_summary.get("normalization_confidence") or 0.5),
+                source_agreement=float(advisory_summary.get("source_agreement") or 0.6),
+                vendor_context_quality=vendor_context_quality,
+                source_freshness=self._source_freshness_score(["nvd", "kev", "epss", "osv", "ghsa", "vendor_advisory", "patch_notes"]),
+                evidence_readiness=self._evidence_readiness_score(),
+                applicability={
+                    **applicability,
+                    "patch_available": patch_available,
+                },
+                advisory_summary=advisory_summary,
+                citations=citations,
+            )
+        )
 
     def _source_freshness_score(self, feed_keys: List[str]) -> float:
         now = utc_now().replace(tzinfo=None)
@@ -1799,11 +2166,21 @@ class SheshnaagService:
         advisories = (
             self.session.query(AdvisoryRecord)
             .filter(AdvisoryRecord.cve_id == cve.id)
-            .limit(5)
+            .limit(8)
             .all()
         )
         for adv in advisories:
-            citations.append({"type": "advisory", "label": adv.title, "url": adv.source_url, "detail": adv.summary})
+            citations.append(
+                {
+                    "type": f"advisory_{adv.advisory_type or 'generic'}",
+                    "label": adv.title,
+                    "url": adv.source_url,
+                    "detail": adv.summary,
+                    "canonical_id": adv.canonical_id,
+                    "severity": adv.severity,
+                    "normalization_confidence": adv.normalization_confidence,
+                }
+            )
 
         # Knowledge document citations
         knowledge_docs = (
@@ -1860,6 +2237,25 @@ class SheshnaagService:
                 "url": None,
                 "detail": f"Version range from NVD affected product data",
             })
+
+        package_links = (
+            self.session.query(AdvisoryPackageLink, PackageRecord)
+            .join(PackageRecord, PackageRecord.id == AdvisoryPackageLink.package_record_id)
+            .join(AdvisoryRecord, AdvisoryRecord.id == AdvisoryPackageLink.advisory_record_id)
+            .filter(AdvisoryRecord.cve_id == cve.id)
+            .limit(5)
+            .all()
+        )
+        for link, pkg in package_links:
+            citations.append(
+                {
+                    "type": "package_normalization",
+                    "label": f"{pkg.ecosystem}:{pkg.name}",
+                    "url": None,
+                    "detail": f"Canonical package mapping via {link.meta.get('source') if isinstance(link.meta, dict) else 'advisory normalization'}",
+                    "purl": link.purl or pkg.purl,
+                }
+            )
 
         # Asset match rationale
         asset_count = self._asset_match_count(tenant, affected)
@@ -2337,7 +2733,7 @@ class SheshnaagService:
         run.state = result.state.value if isinstance(result.state, RunState) else result.state
         plan = dict(run.manifest or {})
         if result.plan:
-            plan = dict(result.plan)
+            plan = {**plan, **dict(result.plan)}
         if result.container_id:
             plan["container_id"] = result.container_id
         run.guest_image = plan.get("image")
@@ -2351,7 +2747,13 @@ class SheshnaagService:
         if run.launch_mode in {"dry_run", "simulated"}:
             return True
         manifest = run.manifest or {}
-        return run.launch_mode == "execute" and bool(run.provider_run_ref and manifest.get("container_id"))
+        if run.launch_mode != "execute" or not run.provider_run_ref:
+            return False
+        if manifest.get("container_id"):
+            return True
+        if run.provider == "lima" and (manifest.get("instance_name") or (manifest.get("snapshot_refs") or {}).get("booted")):
+            return True
+        return False
 
     def _get_candidate(self, tenant: Tenant, candidate_id: int) -> ResearchCandidate:
         candidate = (
@@ -2665,6 +3067,50 @@ class SheshnaagService:
             .all()
         )
 
+    def _latest_review_entry(self, target_type: str, target_id: int) -> Optional[ReviewDecision]:
+        return (
+            self.session.query(ReviewDecision)
+            .filter(ReviewDecision.target_type == target_type, ReviewDecision.target_id == str(target_id))
+            .order_by(ReviewDecision.created_at.desc())
+            .first()
+        )
+
+    def _review_queue_item(
+        self,
+        *,
+        entity_type: str,
+        entity_id: int,
+        run_id: Optional[int],
+        title: str,
+        status: str,
+        review_state: str,
+        sensitivity: Dict[str, Any],
+        blocking_reasons: List[str],
+        last_review: Optional[ReviewDecision],
+        updated_at: Optional[datetime],
+        route: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "run_id": run_id,
+            "title": title,
+            "status": status,
+            "review_state": review_state,
+            "sensitivity": sensitivity,
+            "blocking_reasons": blocking_reasons,
+            "needs_attention_now": bool(blocking_reasons) or review_state in {"captured", "draft", "under_review", "changes_requested", "blocked", "needs_attention"},
+            "last_reviewer": last_review.reviewer_name if last_review else None,
+            "last_decision": last_review.decision if last_review else None,
+            "last_decision_at": last_review.created_at.isoformat() if last_review and last_review.created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "route": route,
+        }
+        if extra:
+            payload.update(extra)
+        return payload
+
     def _detection_artifact_payload(self, item: DetectionArtifact) -> Dict[str, Any]:
         reviews = self._artifact_review_entries("detection_artifact", item.id)
         latest_review = reviews[0] if reviews else None
@@ -2858,6 +3304,12 @@ class SheshnaagService:
             "research_submission": "Research submission",
             "internal_remediation": "Internal remediation package",
         }
+        destination_language = {
+            "vendor_disclosure": "Use vendor-facing language that emphasizes impact, reproducibility, and fix guidance.",
+            "bug_bounty": "Use concise submission language that emphasizes exploitability, impact, and validation artifacts.",
+            "research_submission": "Use research-oriented language that emphasizes rigor, methodology, and reproducibility.",
+            "internal_remediation": "Use remediation-focused language that emphasizes affected scope, urgency, and rollout guidance.",
+        }
         artifact_lines = []
         for row in artifacts:
             if isinstance(row, DetectionArtifact):
@@ -2865,6 +3317,7 @@ class SheshnaagService:
             else:
                 artifact_lines.append(f"- Mitigation `{row.artifact_type}`: {row.title} [{row.status}]")
         warning_lines = [f"- {item}" for item in warnings] or ["- No export warnings were raised."]
+        evidence_lines = [f"- `{row.artifact_kind}`: {row.title}" for row in evidence_rows]
         return "\n".join(
             [
                 f"# {title}",
@@ -2878,11 +3331,17 @@ class SheshnaagService:
                 f"- Artifacts included: {len(artifacts)}",
                 f"- Provider: {run.provider}",
                 "",
+                "## Destination guidance",
+                f"- {destination_language.get(bundle_type, 'Use the attached evidence and provenance data to support the intended workflow.')}",
+                "",
                 "## Export warnings",
                 *warning_lines,
                 "",
                 "## Intended use",
                 f"- {bundle_labels.get(bundle_type, bundle_type)} workflow",
+                "",
+                "## Evidence index",
+                *(evidence_lines or ["- No evidence selected."]),
                 "",
                 "## Artifacts",
                 *(artifact_lines or ["- No reviewed artifacts were available; draft artifacts were exported for internal review only."]),
@@ -2904,6 +3363,7 @@ class SheshnaagService:
         redaction_notes: List[Dict[str, Any]],
         attachment_policy: List[Dict[str, Any]] | Dict[str, Any],
         warnings: List[str],
+        review_checklist: Dict[str, Any],
     ) -> Dict[str, Any]:
         reproduction_steps = self._build_reproduction_steps(run=run, evidence_rows=evidence_rows)
         attachment_defaults = {
@@ -2916,6 +3376,30 @@ class SheshnaagService:
             **attachment_defaults.get(bundle_type, attachment_defaults["vendor_disclosure"]),
             **(attachment_policy if isinstance(attachment_policy, dict) else {}),
         }
+        report_sections = {
+            "summary": True,
+            "impact_summary": True,
+            "reproduction_appendix": True,
+            "fix_guidance": True,
+            "evidence_index": True,
+            "review_history": True,
+            "redaction_log": True,
+            "provenance_summary": True,
+        }
+        attachment_inventory = [
+            {
+                "kind": row.artifact_kind,
+                "title": row.title,
+                "include": effective_attachment_policy.get(
+                    "include_raw_logs" if row.artifact_kind == "service_logs" else (
+                        "include_pcap" if row.artifact_kind == "pcap" else "include_screenshots"
+                    ),
+                    True,
+                ),
+                "reason": "Included by attachment policy." if effective_attachment_policy else "Included by default.",
+            }
+            for row in evidence_rows
+        ]
         return {
             "title": title,
             "bundle_type": bundle_type,
@@ -2924,12 +3408,16 @@ class SheshnaagService:
             "exported_at": utc_now().isoformat(),
             "warnings": warnings,
             "attachment_policy": effective_attachment_policy,
+            "attachment_inventory": attachment_inventory,
             "safety_checklist": {
                 "requires_external_confirmation": bool(warnings),
                 "contains_raw_pcap": any(row.artifact_kind == "pcap" for row in evidence_rows),
                 "contains_service_logs": any(row.artifact_kind == "service_logs" for row in evidence_rows),
                 "approved_artifact_count": sum(1 for row in artifacts if getattr(row, "status", None) == "approved"),
             },
+            "review_state": "approved" if not warnings else "under_review",
+            "review_checklist": review_checklist,
+            "review_history": [],
             "export_audit": {
                 "exported_by": signed_by,
                 "bundle_type": bundle_type,
@@ -2938,7 +3426,25 @@ class SheshnaagService:
                 "verification_status": "verified",
             },
             "redaction_notes": redaction_notes,
+            "redaction_log": {
+                "count": len(redaction_notes),
+                "items": redaction_notes,
+            },
             "reproduction_steps": reproduction_steps,
+            "impact_summary": {
+                "candidate_id": run.candidate_id,
+                "warning_count": len(warnings),
+                "artifact_count": len(artifacts),
+                "evidence_count": len(evidence_rows),
+            },
+            "fix_guidance": [row.title for row in artifacts if isinstance(row, MitigationArtifact)],
+            "provenance_summary": {
+                "run_id": run.id,
+                "recipe_revision_id": run.recipe_revision_id,
+                "provider": run.provider,
+                "signing": (run.manifest or {}).get("provider_contract") or {},
+            },
+            "report_sections": report_sections,
             "evidence": [
                 {
                     "id": row.id,
@@ -2980,6 +3486,11 @@ class SheshnaagService:
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("manifest.json", json.dumps({k: v for k, v in manifest.items() if k != "report_markdown"}, indent=2, sort_keys=True, default=str))
             archive.writestr("report.md", manifest["report_markdown"])
+            archive.writestr("review-history.json", json.dumps(manifest.get("review_history") or [], indent=2, sort_keys=True, default=str))
+            archive.writestr("redaction-log.json", json.dumps(manifest.get("redaction_log") or {}, indent=2, sort_keys=True, default=str))
+            archive.writestr("impact-summary.json", json.dumps(manifest.get("impact_summary") or {}, indent=2, sort_keys=True, default=str))
+            archive.writestr("provenance-summary.json", json.dumps(manifest.get("provenance_summary") or {}, indent=2, sort_keys=True, default=str))
+            archive.writestr("attachment-inventory.json", json.dumps(manifest.get("attachment_inventory") or [], indent=2, sort_keys=True, default=str))
             for row in evidence_rows:
                 archive.writestr(
                     f"evidence/evidence-{row.id}.json",
@@ -3013,6 +3524,21 @@ class SheshnaagService:
         archive = (row.manifest or {}).get("archive") or {}
         tenant = self.session.query(Tenant).filter(Tenant.id == row.tenant_id).first()
         tenant_slug = tenant.slug if tenant else "demo-public"
+        review_history = [
+            {
+                "decision": item.decision,
+                "reviewer_name": item.reviewer_name,
+                "rationale": item.rationale,
+                "payload": item.payload,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+            for item in (
+                self.session.query(ReviewDecision)
+                .filter(ReviewDecision.target_type == "disclosure_bundle", ReviewDecision.target_id == str(row.id))
+                .order_by(ReviewDecision.created_at.desc())
+                .all()
+            )
+        ]
         return {
             "id": row.id,
             "run_id": row.run_id,
@@ -3025,6 +3551,9 @@ class SheshnaagService:
             "archive": archive,
             "download_url": f"/api/disclosures/{row.id}/download?tenant_slug={tenant_slug}",
             "signing": (row.manifest or {}).get("signing") or {},
+            "attachment_policy": (row.manifest or {}).get("attachment_policy") or {},
+            "report_sections": (row.manifest or {}).get("report_sections") or {},
+            "review_history": review_history,
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }
 
@@ -3111,9 +3640,45 @@ class SheshnaagService:
         assets = self.session.query(Asset).filter(Asset.tenant_id == tenant.id).all()
         for asset in assets:
             installed = asset.installed_software or []
-            if any((item.get("product") or "").lower() == (affected.product or "").lower() for item in installed if isinstance(item, dict)):
+            if any((item.get("product") or item.get("name") or "").lower() == (affected.product or "").lower() for item in installed if isinstance(item, dict)):
                 matches += 1
         return matches
+
+    @staticmethod
+    def _version_token_tuple(value: Optional[str]) -> tuple:
+        raw = str(value or "").strip()
+        if not raw:
+            return tuple()
+        parts: List[Any] = []
+        for token in raw.replace("-", ".").split("."):
+            if token.isdigit():
+                parts.append(int(token))
+            else:
+                parts.append(token.lower())
+        return tuple(parts)
+
+    def _version_in_range(self, version: Optional[str], row: VersionRange) -> bool:
+        candidate = self._version_token_tuple(version)
+        if not candidate:
+            return False
+        start = self._version_token_tuple(row.version_start)
+        end = self._version_token_tuple(row.version_end)
+        fixed = self._version_token_tuple(row.fixed_version)
+        if start:
+            if row.is_inclusive_start:
+                if candidate < start:
+                    return False
+            elif candidate <= start:
+                return False
+        if fixed and candidate >= fixed:
+            return False
+        if end:
+            if row.is_inclusive_end:
+                if candidate > end:
+                    return False
+            elif candidate >= end:
+                return False
+        return True
 
     def _compute_environment_applicability(
         self,
@@ -3123,6 +3688,12 @@ class SheshnaagService:
         affected: Optional[AffectedProduct],
     ) -> Dict[str, Any]:
         """Compute rich applicability using SBOM components, VEX, and asset mappings."""
+        advisory_rows = self.session.query(AdvisoryRecord).filter(AdvisoryRecord.cve_id == cve.id).all()
+        advisory_summary = summarize_advisory_records(advisory_rows)
+        normalized_packages = advisory_summary.get("normalized_packages") or []
+        package_names = {str(pkg.get("name") or "").lower() for pkg in normalized_packages if pkg.get("name")}
+        if affected and affected.product:
+            package_names.add(str(affected.product).lower())
         result: Dict[str, Any] = {
             "match_sources": [],
             "confidence": 0.0,
@@ -3132,30 +3703,82 @@ class SheshnaagService:
             "sbom_component_match": False,
             "asset_match_count": 0,
             "sbom_match_count": 0,
+            "asset_matches": [],
+            "sbom_matches": [],
+            "version_ranges": [],
+            "version_match_count": 0,
+            "version_match_confidence": 0.2,
+            "sbom_vex_applicability": 0.2,
+            "normalized_packages": normalized_packages,
         }
 
         # 1. Legacy asset installed_software match
-        asset_matches = self._asset_match_count(tenant, affected)
+        assets = self.session.query(Asset).filter(Asset.tenant_id == tenant.id).all()
+        asset_matches = 0
+        version_match_count = 0
+        matched_versions: List[Dict[str, Any]] = []
+        package_ranges = (
+            self.session.query(VersionRange)
+            .filter(VersionRange.cve_id == cve.id, VersionRange.package_record_id.isnot(None))
+            .all()
+        )
+        for asset in assets:
+            installed = asset.installed_software or []
+            for item in installed:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("product") or item.get("name") or "").lower()
+                version = item.get("version")
+                if name and name in package_names:
+                    asset_matches += 1
+                    result["asset_matches"].append(
+                        {
+                            "asset_id": asset.id,
+                            "asset_name": asset.name,
+                            "package_name": name,
+                            "version": version,
+                        }
+                    )
+                    for range_row in package_ranges:
+                        if self._version_in_range(version, range_row):
+                            version_match_count += 1
+                            matched_versions.append(
+                                {
+                                    "asset_id": asset.id,
+                                    "package_name": name,
+                                    "version": version,
+                                    "range_type": range_row.range_type,
+                                    "fixed_version": range_row.fixed_version,
+                                }
+                            )
+                            break
+                    break
         result["asset_match_count"] = asset_matches
+        result["version_match_count"] = version_match_count
+        result["version_ranges"] = matched_versions
         if asset_matches > 0:
             result["match_sources"].append({"source": "asset_installed_software", "count": asset_matches, "confidence": 0.6})
+        if version_match_count > 0:
+            result["match_sources"].append({"source": "affected_version", "count": version_match_count, "confidence": 0.9})
 
         # 2. SBOM component match via SoftwareComponent table
         sbom_matches = 0
-        if affected and affected.product:
-            product_lower = affected.product.lower()
-            components = (
-                self.session.query(SoftwareComponent)
-                .filter(SoftwareComponent.tenant_id == tenant.id)
-                .all()
-            )
-            for comp in components:
-                if comp.name and comp.name.lower() == product_lower:
-                    sbom_matches += 1
-                    result["direct_product_match"] = True
-                elif comp.purl and product_lower in (comp.purl or "").lower():
-                    sbom_matches += 1
-                    result["sbom_component_match"] = True
+        components = (
+            self.session.query(SoftwareComponent)
+            .filter(SoftwareComponent.tenant_id == tenant.id)
+            .all()
+        )
+        for comp in components:
+            name = str(comp.name or "").lower()
+            purl = str(comp.purl or "").lower()
+            if name and name in package_names:
+                sbom_matches += 1
+                result["direct_product_match"] = True
+                result["sbom_matches"].append({"component_id": comp.id, "name": comp.name, "version": comp.version, "purl": comp.purl})
+            elif any(pkg_name and pkg_name in purl for pkg_name in package_names):
+                sbom_matches += 1
+                result["sbom_component_match"] = True
+                result["sbom_matches"].append({"component_id": comp.id, "name": comp.name, "version": comp.version, "purl": comp.purl})
 
         result["sbom_match_count"] = sbom_matches
         if sbom_matches > 0:
@@ -3177,6 +3800,19 @@ class SheshnaagService:
                 "status": best.status,
                 "confidence": vex_conf.get(best.status, 0.5),
             })
+        result["patch_available"] = bool(
+            result.get("vex_status") in ("fixed", "not_affected")
+            or any(match.get("fixed_version") for match in matched_versions)
+            or vex_statements
+        )
+        result["version_match_confidence"] = min(1.0, 0.25 + (0.25 if matched_versions else 0.0) + (0.2 if asset_matches else 0.0) + (0.2 if sbom_matches else 0.0))
+        result["sbom_vex_applicability"] = min(
+            1.0,
+            0.15
+            + (0.35 if sbom_matches else 0.0)
+            + (0.3 if asset_matches else 0.0)
+            + (0.2 if result.get("vex_status") in ("affected", "under_investigation") else 0.0),
+        )
 
         # Aggregate confidence: highest source wins, with additive bonus for multiple sources
         if result["match_sources"]:

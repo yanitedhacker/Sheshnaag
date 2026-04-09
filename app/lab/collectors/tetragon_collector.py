@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List
 
 from app.lab.interfaces import Collector
 
-from app.lab.collectors.common import build_evidence_dict, collector_health_meta, synthetic_from_plan, utc_iso
-from app.lab.collectors.runtime import env_flag_enabled, is_executable_guest_context, resolve_container_id, run_in_container
+from app.lab.collectors.common import build_advanced_telemetry_evidence, synthetic_from_plan, utc_iso
+from app.lab.collectors.runtime import env_flag_enabled, is_executable_guest_context, run_in_guest
 from app.lab.telemetry_envelope import normalize_tetragon_line, validate_runtime_event
 from app.lab.telemetry_translation import translate_with_enterprise_pack
 
@@ -39,47 +40,50 @@ class TetragonEventsCollector(Collector):
                     collector_version=self.collector_version,
                 )
             ]
-        cid = resolve_container_id(provider_result)
-        assert cid
         started = utc_iso()
-        code, out, err = run_in_container(
-            cid,
-            ["sh", "-c", "command -v tetra >/dev/null && tetra version 2>&1 || echo MISSING"],
+        time_limit = max(3, min(int(os.environ.get("SHESHNAAG_TETRAGON_CAPTURE_SECONDS", "6")), 20))
+        event_limit = max(10, min(int(os.environ.get("SHESHNAAG_TETRAGON_EVENT_LIMIT", "60")), 200))
+        code, version_out, version_err = run_in_guest(
+            provider_result,
+            ["sh", "-lc", "command -v tetra >/dev/null && tetra version 2>&1 || echo MISSING"],
             timeout_sec=20,
         )
-        if "MISSING" in (out or "") or code != 0:
+        if "MISSING" in (version_out or "") or code != 0:
             ended = utc_iso()
-            payload = {
-                "collector": self.collector_name,
-                "mode": "skipped",
-                "compatibility": {
-                    "supported": False,
-                    "reason": "Tetragon CLI not available in guest; typically host-level eBPF.",
-                },
-                "normalized_events": [],
-                "collector_health": collector_health_meta(
-                    collector=self.collector_name,
-                    version=self.collector_version,
+            return [
+                build_advanced_telemetry_evidence(
+                    artifact_kind=self.collector_name,
+                    title="Tetragon (skipped)",
+                    summary="Tetragon not available in container guest.",
+                    run_context=run_context,
+                    provider_result=provider_result,
+                    collector_version=self.collector_version,
+                    tool="tetra",
+                    mode="skipped",
+                    normalized_events=[],
+                    findings=[],
                     started_at=started,
                     ended_at=ended,
                     status="skipped",
                     skip_reason="tetragon_unsupported_environment",
-                    error=(err or out or "")[:2000],
-                    tool="tetra",
-                ),
-            }
-            return [
-                build_evidence_dict(
-                    artifact_kind=self.collector_name,
-                    title="Tetragon (skipped)",
-                    summary="Tetragon not available in container guest.",
-                    payload=payload,
-                    capture_started_at=started,
-                    capture_ended_at=ended,
-                    collector_name=self.collector_name,
-                    collector_version=self.collector_version,
+                    error=(version_err or version_out or "")[:2000],
+                    time_limit_seconds=time_limit,
+                    event_limit=event_limit,
+                    supported=False,
+                    support_reason="Tetragon CLI not available in guest; typically host-level eBPF.",
                 )
             ]
+        session_command = (
+            f"tmp=$(mktemp); "
+            f"(timeout {time_limit} sh -lc 'tetra getevents -o json 2>/dev/null' || true) >\"$tmp\" 2>/dev/null; "
+            f"head -n {event_limit} \"$tmp\"; "
+            "rm -f \"$tmp\""
+        )
+        code, out, err = run_in_guest(
+            provider_result,
+            ["sh", "-lc", session_command],
+            timeout_sec=time_limit + 20,
+        )
         events: List[Dict[str, Any]] = []
         for line in (out or "").splitlines():
             ne = normalize_tetragon_line(line)
@@ -89,31 +93,34 @@ class TetragonEventsCollector(Collector):
                     events.append(ne)
         translation = translate_with_enterprise_pack(events)
         ended = utc_iso()
-        payload = {
-            "collector": self.collector_name,
-            "mode": "live",
-            "normalized_events": translation["events_tagged"],
-            "findings": translation["findings"],
-            "raw_preview": (out or "")[:4000],
-            "collector_health": collector_health_meta(
-                collector=self.collector_name,
-                version=self.collector_version,
-                started_at=started,
-                ended_at=ended,
-                status="ok",
-                output_bytes=len((out or "").encode("utf-8")),
-                tool="tetra",
-            ),
-        }
+        state = "ok" if events else "degraded"
         return [
-            build_evidence_dict(
+            build_advanced_telemetry_evidence(
                 artifact_kind=self.collector_name,
                 title="Tetragon events",
-                summary=f"Tetragon CLI output; normalized {len(events)} event(s).",
-                payload=payload,
-                capture_started_at=started,
-                capture_ended_at=ended,
-                collector_name=self.collector_name,
+                summary=(
+                    f"Tetragon bounded session normalized {len(events)} event(s)."
+                    if events
+                    else "Tetragon session ran but emitted no normalized events."
+                ),
+                run_context=run_context,
+                provider_result=provider_result,
                 collector_version=self.collector_version,
+                tool="tetra",
+                mode="live" if events else "degraded",
+                normalized_events=translation["events_tagged"],
+                findings=translation["findings"],
+                started_at=started,
+                ended_at=ended,
+                command=session_command,
+                raw_preview=(out or "")[:4000],
+                stderr_preview=(err or version_err or "")[:2000],
+                exit_code=code,
+                status=state,
+                skip_reason=None if events else "live_session_empty",
+                time_limit_seconds=time_limit,
+                event_limit=event_limit,
+                supported=True,
+                support_reason="Tetragon bounded CLI session executed inside the guest.",
             )
         ]

@@ -13,6 +13,7 @@ LAYOUT_TSX = ROOT / "frontend" / "src" / "components" / "Layout.tsx"
 EXPECTED_ROUTES = {
     "/": "IntelDashboardPage",
     "intel": "IntelDashboardPage",
+    "review": "ReviewQueuePage",
     "candidates": "CandidateQueuePage",
     "recipes": "RecipeBuilderPage",
     "runs": "RunConsolePage",
@@ -25,6 +26,7 @@ EXPECTED_ROUTES = {
 
 EXPECTED_PAGE_FILES = {
     "IntelDashboardPage": ROOT / "frontend" / "src" / "pages" / "IntelDashboardPage.tsx",
+    "ReviewQueuePage": ROOT / "frontend" / "src" / "pages" / "ReviewQueuePage.tsx",
     "CandidateQueuePage": ROOT / "frontend" / "src" / "pages" / "CandidateQueuePage.tsx",
     "RecipeBuilderPage": ROOT / "frontend" / "src" / "pages" / "RecipeBuilderPage.tsx",
     "RunConsolePage": ROOT / "frontend" / "src" / "pages" / "RunConsolePage.tsx",
@@ -59,7 +61,7 @@ def main() -> int:
         require(component in app_text, f"missing import or usage for {component} in App.tsx")
         report.append(f"page file present for {component}")
 
-    for nav_path in ["/intel", "/candidates", "/recipes", "/runs", "/evidence", "/artifacts", "/provenance", "/ledger", "/disclosures"]:
+    for nav_path in ["/intel", "/review", "/candidates", "/recipes", "/runs", "/evidence", "/artifacts", "/provenance", "/ledger", "/disclosures"]:
         require(f'{{ to: "{nav_path}"' in layout_text, f"missing nav config entry for {nav_path}")
         report.append(f"nav link present for {nav_path}")
 

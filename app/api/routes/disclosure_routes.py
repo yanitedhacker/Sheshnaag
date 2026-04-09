@@ -24,7 +24,22 @@ class DisclosureBundleRequest(BaseModel):
     evidence_ids: list[int] = Field(default_factory=list)
     redaction_notes: list[dict] = Field(default_factory=list)
     attachment_policy: dict = Field(default_factory=dict)
+    review_checklist: dict = Field(default_factory=dict)
+    reviewer_name: Optional[str] = None
+    reviewer_role: Optional[str] = None
     confirm_external_export: bool = False
+
+
+class DisclosureBundleReviewRequest(BaseModel):
+    tenant_id: Optional[int] = None
+    tenant_slug: Optional[str] = None
+    bundle_id: int
+    reviewer_name: str
+    reviewer_role: str = "reviewer"
+    decision: str
+    rationale: Optional[str] = None
+    checklist: dict = Field(default_factory=dict)
+    export_gating: dict = Field(default_factory=dict)
 
 
 @router.get("")
@@ -52,7 +67,29 @@ def create_disclosure_bundle(request: DisclosureBundleRequest, session: Session 
             evidence_ids=request.evidence_ids,
             redaction_notes=request.redaction_notes,
             attachment_policy=request.attachment_policy,
+            review_checklist=request.review_checklist,
+            reviewer_name=request.reviewer_name,
+            reviewer_role=request.reviewer_role,
             confirm_external_export=request.confirm_external_export,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/review")
+def review_disclosure_bundle(request: DisclosureBundleReviewRequest, session: Session = Depends(get_sync_session)):
+    """Record review/approval state for a disclosure bundle."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    try:
+        return SheshnaagService(session).review_disclosure_bundle(
+            tenant,
+            bundle_id=request.bundle_id,
+            reviewer_name=request.reviewer_name,
+            reviewer_role=request.reviewer_role,
+            decision=request.decision,
+            rationale=request.rationale,
+            checklist=request.checklist,
+            export_gating=request.export_gating,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -7,6 +7,8 @@ import type {
   AuditResponse,
   CandidateItem,
   CandidateListResponse,
+  CandidateRecalculationHistoryResponse,
+  CandidateRecalculationResponse,
   CandidateWorkloadResponse,
   CopilotResponse,
   CveDetail,
@@ -25,6 +27,7 @@ import type {
   Recipe,
   RecipeDiffResult,
   RecipeLintResult,
+  ReviewQueueResponse,
   RecipeListResponse,
   RunDetailResponse,
   RunHealthResponse,
@@ -171,6 +174,13 @@ export const api = {
     fetchTenantJson<CandidateListResponse>("/api/candidates", params),
   getCandidate: async (candidateId: number) => fetchJson<CandidateItem>(await tenantPath(`/api/candidates/${candidateId}`)),
   getCandidateWorkload: () => fetchTenantJson<CandidateWorkloadResponse>("/api/candidates/workload/summary"),
+  getCandidateRecalculationHistory: (limit = 20) =>
+    fetchTenantJson<CandidateRecalculationHistoryResponse>("/api/candidates/recalculate/history", { limit }),
+  recalculateCandidates: async (payload: Record<string, unknown>) =>
+    fetchJson<CandidateRecalculationResponse>("/api/candidates/recalculate", {
+      method: "POST",
+      body: JSON.stringify(await withActiveTenant(payload)),
+    }),
   assignCandidate: async (candidateId: number, payload: Record<string, unknown>) =>
     fetchJson<CandidateItem>(`/api/candidates/${candidateId}/assign`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
   deferCandidate: async (candidateId: number, payload: Record<string, unknown>) =>
@@ -220,6 +230,8 @@ export const api = {
     fetchJson<RunDetailResponse>(`/api/runs/${runId}/destroy`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
   launchRun: async (payload: Record<string, unknown>) =>
     fetchJson<RunDetailResponse>("/api/runs", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  getReviewQueue: (params?: Record<string, string | number | boolean | undefined>) =>
+    fetchTenantJson<ReviewQueueResponse>("/api/review-queue", params),
 
   listTemplates: () => fetchTenantJson<TemplateListResponse>("/api/templates"),
 
@@ -234,4 +246,6 @@ export const api = {
   listDisclosures: () => fetchTenantJson<DisclosureListResponse>("/api/disclosures"),
   createDisclosureBundle: async (payload: Record<string, unknown>) =>
     fetchJson<DisclosureBundleRecord>("/api/disclosures", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  reviewDisclosureBundle: async (payload: Record<string, unknown>) =>
+    fetchJson<DisclosureBundleRecord>("/api/disclosures/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
 };

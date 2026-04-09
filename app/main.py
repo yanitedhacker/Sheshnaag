@@ -39,6 +39,7 @@ from app.api.routes import (
     provenance_router,
     risk_router,
     recipe_router,
+    review_queue_router,
     run_router,
     simulation_router,
     supply_chain_router,
@@ -273,6 +274,7 @@ app.include_router(asset_router)
 app.include_router(intel_router)
 app.include_router(candidate_router)
 app.include_router(recipe_router)
+app.include_router(review_queue_router)
 app.include_router(run_router)
 app.include_router(evidence_router)
 app.include_router(artifact_router)

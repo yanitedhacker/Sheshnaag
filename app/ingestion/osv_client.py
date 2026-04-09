@@ -9,6 +9,12 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from app.core.time import utc_now
+from app.services.advisory_normalization import (
+    advisory_normalization_confidence,
+    build_canonical_package,
+    canonical_advisory_id,
+    dedupe_references,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +121,7 @@ class OSVClient:
         aliases: List[str] = vuln.get("aliases", [])
         published: Optional[str] = vuln.get("published")
         modified: Optional[str] = vuln.get("modified")
-        references: List[Dict[str, Any]] = vuln.get("references", [])
+        references: List[Dict[str, Any]] = dedupe_references(vuln.get("references", []))
 
         cve_aliases = [a for a in aliases if a.startswith("CVE-")]
 
@@ -126,13 +132,9 @@ class OSVClient:
             pkg_info = affected.get("package", {})
             ecosystem = pkg_info.get("ecosystem", "")
             name = pkg_info.get("name", "")
-            purl = pkg_info.get("purl", "")
-            if ecosystem and name:
-                packages.append({
-                    "ecosystem": ecosystem,
-                    "name": name,
-                    "purl": purl,
-                })
+            canonical_package = build_canonical_package(pkg_info)
+            if canonical_package["ecosystem"] and canonical_package["name"]:
+                packages.append(canonical_package)
 
             for rng in affected.get("ranges", []):
                 range_type = rng.get("type", "")
@@ -149,16 +151,29 @@ class OSVClient:
                         last_affected = event["last_affected"]
 
                 version_ranges.append({
-                    "ecosystem": ecosystem,
-                    "name": name,
+                    "ecosystem": canonical_package["ecosystem"],
+                    "name": canonical_package["name"],
+                    "purl": canonical_package["purl"],
                     "range_type": range_type,
                     "version_start": introduced or "",
                     "version_end": last_affected or "",
                     "fixed_version": fixed or "",
+                    "normalized_bounds": {
+                        "introduced": introduced,
+                        "fixed": fixed,
+                        "last_affected": last_affected,
+                    },
                 })
 
+        normalization_confidence = advisory_normalization_confidence(
+            aliases=aliases,
+            packages=packages,
+            version_ranges=version_ranges,
+            references=references,
+        )
         return {
             "osv_id": vuln_id,
+            "canonical_id": canonical_advisory_id(external_id=vuln_id, aliases=aliases),
             "summary": summary,
             "details": details,
             "aliases": aliases,
@@ -168,5 +183,6 @@ class OSVClient:
             "references": references,
             "packages": packages,
             "version_ranges": version_ranges,
+            "normalization_confidence": normalization_confidence,
             "raw": vuln,
         }

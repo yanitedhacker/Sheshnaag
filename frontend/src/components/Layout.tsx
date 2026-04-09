@@ -5,6 +5,7 @@ import type { TenantWorkspace } from "../types";
 
 const operatorNavItems = [
   { to: "/intel", label: "Intel" },
+  { to: "/review", label: "Review" },
   { to: "/candidates", label: "Candidates" },
   { to: "/recipes", label: "Recipes" },
   { to: "/runs", label: "Runs" },

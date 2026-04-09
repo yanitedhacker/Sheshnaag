@@ -7,7 +7,9 @@ from app.lab.collector_contract import (
     build_provider_result_dict,
     recipe_collector_names,
 )
+from app.lab.collectors.pcap import PcapCollector
 from app.lab.collectors.osquery_snapshot import OsquerySnapshotCollector
+import app.lab.collectors.tracee_collector as tracee_module
 from app.lab.collectors.tracee_collector import TraceeEventsCollector
 from app.lab.collectors import instantiate_collectors
 from app.lab.collectors.registry import COLLECTOR_REGISTRY
@@ -109,3 +111,57 @@ def test_tracee_collector_reports_supported_image_requirement():
     )
     assert evidence[0]["payload"]["collection_state"] == "skipped"
     assert "Tracee-capable" in evidence[0]["summary"]
+
+
+@pytest.mark.unit
+def test_tracee_live_payload_uses_standardized_session_fields(monkeypatch):
+    collector = TraceeEventsCollector()
+
+    def fake_run_in_guest(provider_result, argv, timeout_sec=90, stdin_text=None):
+        joined = " ".join(argv)
+        if "tracee version" in joined:
+            return 0, "tracee version 1.0.0", ""
+        return 0, '{"processName":"sh","eventName":"execve","argsNum":1}\n', ""
+
+    monkeypatch.setattr(tracee_module, "run_in_guest", fake_run_in_guest)
+    evidence = collector.collect(
+        run_context={"run_id": 1, "launch_mode": "execute"},
+        provider_result=build_provider_result_dict(
+            provider_run_ref="run-1",
+            plan={"provider": "docker_kali", "tooling_profile": {"profile": "tracee_capable", "tracee_available": True}},
+            state="running",
+            container_id="container-123",
+        ),
+    )
+    payload = evidence[0]["payload"]
+    assert payload["mode"] == "live"
+    assert payload["session"]["transport"] == "docker_exec"
+    assert payload["session"]["event_limit"] >= 1
+    assert payload["support"]["supported"] is True
+
+
+@pytest.mark.unit
+def test_pcap_payload_marks_sensitive_bounded_capture(monkeypatch):
+    collector = PcapCollector()
+
+    def fake_run_in_guest(provider_result, argv, timeout_sec=90, stdin_text=None):
+        return 0, "c2hlc2huYWFnLXBjYXAtcHJldmlldw==", ""
+
+    import app.lab.collectors.pcap as pcap_module
+
+    monkeypatch.setattr(pcap_module, "run_in_guest", fake_run_in_guest)
+    monkeypatch.setattr(pcap_module, "env_flag_enabled", lambda name, default=False: True)
+
+    evidence = collector.collect(
+        run_context={"run_id": 1, "launch_mode": "execute"},
+        provider_result=build_provider_result_dict(
+            provider_run_ref="lima-1",
+            plan={"provider": "lima", "instance_name": "sheshnaag-lima-1"},
+            state="running",
+        ),
+    )
+    payload = evidence[0]["payload"]
+    assert payload["mode"] == "live"
+    assert payload["capture_policy"]["bounded_capture"] is True
+    assert payload["review_sensitivity"]["external_export_requires_confirmation"] is True
+    assert payload["storage"]["contains_raw_payload"] is True

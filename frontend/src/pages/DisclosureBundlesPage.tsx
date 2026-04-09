@@ -41,6 +41,7 @@ export function DisclosureBundlesPage() {
   const [title, setTitle] = useState("Sheshnaag disclosure bundle");
   const [signedBy, setSignedBy] = useState("Demo Analyst");
   const [confirmExternalExport, setConfirmExternalExport] = useState(false);
+  const [reviewerName, setReviewerName] = useState("Demo Reviewer");
   const [error, setError] = useState<string | null>(null);
 
   async function loadBundles() {
@@ -74,6 +75,13 @@ export function DisclosureBundlesPage() {
         bundle_type: bundleType,
         title,
         signed_by: signedBy,
+        reviewer_name: reviewerName,
+        reviewer_role: "reviewer",
+        review_checklist: {
+          provenance_verified: true,
+          evidence_selected: true,
+          redaction_reviewed: true,
+        },
         confirm_external_export: confirmExternalExport,
       });
       await loadBundles();
@@ -134,6 +142,7 @@ export function DisclosureBundlesPage() {
           </select>
           <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Bundle title" />
           <input value={signedBy} onChange={(event) => setSignedBy(event.target.value)} placeholder="Signed by" />
+          <input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} placeholder="Reviewer" />
           <label className="checkbox-row">
             <input type="checkbox" checked={confirmExternalExport} onChange={(event) => setConfirmExternalExport(event.target.checked)} />
             Confirm external export for sensitive evidence
@@ -161,6 +170,15 @@ export function DisclosureBundlesPage() {
                 <p className="muted">
                   {String((bundle.manifest?.export_audit as Record<string, unknown> | undefined)?.provider ?? "unknown provider")} ·{" "}
                   {String((bundle.manifest?.export_audit as Record<string, unknown> | undefined)?.verification_status ?? "verification unknown")}
+                </p>
+                <p className="muted">
+                  Sections: {Object.entries(bundle.report_sections ?? {})
+                    .filter(([, enabled]) => Boolean(enabled))
+                    .map(([section]) => section)
+                    .join(", ") || "report sections unavailable"}
+                </p>
+                <p className="muted">
+                  Review history: {(bundle.review_history ?? []).length}
                 </p>
               </div>
               <a className="ghost-button" href={bundle.download_url}>Download</a>

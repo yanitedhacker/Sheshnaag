@@ -53,6 +53,7 @@ def test_sheshnaag_intel_overview_and_candidates_bootstrap_from_demo_seed():
     assert candidates["count"] >= 1
     assert candidates["items"][0]["candidate_score"] >= 0
     assert "factors" in candidates["items"][0]["explainability"]
+    assert "normalized_advisories" in candidates["items"][0]["explainability"]
 
 
 @pytest.mark.unit
@@ -153,6 +154,7 @@ def test_private_tenant_recipe_run_bundle_flow_creates_evidence_provenance_and_l
     assert len(provenance["review_history"]) >= 1
     assert ledger["count"] >= 3
     assert disclosure["status"] == "exported"
+    assert disclosure["report_sections"]["impact_summary"] is True
     assert Path(disclosure["archive"]["path"]).exists()
 
 
@@ -353,3 +355,75 @@ def test_launch_run_transfers_artifact_inputs_into_workspace():
     assert transfer["transfers"][0]["status"] == "transferred"
     assert transfer["transfers"][0]["destination"] == "/workspace/inputs/fixture.bin"
     assert Path(transfer["transfers"][0]["host_path"]).exists()
+
+
+@pytest.mark.unit
+def test_recalculate_candidate_scores_persists_summary():
+    session = make_session()
+    DemoSeedService(session).seed()
+    tenant = get_or_create_demo_tenant(session)
+    service = SheshnaagService(session)
+
+    result = service.recalculate_candidate_scores(
+        tenant,
+        requested_by="Demo Analyst",
+        dry_run=True,
+        reason="unit test",
+        limit=5,
+    )
+
+    assert result["dry_run"] is True
+    assert result["recalculation_run_id"] >= 1
+    assert result["total_candidates"] >= 1
+    history = service.list_candidate_recalculation_runs(tenant, limit=5)
+    assert history["count"] >= 1
+    assert history["items"][0]["summary"]["requested_by"] == "Demo Analyst"
+
+
+@pytest.mark.unit
+def test_review_queue_surfaces_sensitive_evidence_and_bundle_blockers():
+    session = make_session()
+    DemoSeedService(session).seed()
+    tenant = get_or_create_demo_tenant(session)
+    service = SheshnaagService(session)
+    candidate = service.list_candidates(tenant, limit=1)["items"][0]
+    recipe = service.create_recipe(
+        tenant,
+        candidate_id=candidate["id"],
+        name="Sensitive queue recipe",
+        objective="queue test",
+        created_by="Demo Analyst",
+        content={
+            "provider": "lima",
+            "image_profile": "secure_lima",
+            "execution_policy": {"secure_mode_required": True},
+            "command": ["bash", "-lc", "echo queue-test"],
+            "network_policy": {"allow_egress_hosts": []},
+            "collectors": ["process_tree", "pcap"],
+        },
+    )
+    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    run = service.launch_run(
+        tenant,
+        recipe_id=recipe["id"],
+        revision_number=1,
+        analyst_name="Demo Analyst",
+        workstation={"hostname": "queue-host", "os_family": "macOS", "architecture": "arm64", "fingerprint": "queue-fp"},
+        launch_mode="simulated",
+        acknowledge_sensitive=False,
+    )
+    bundle = service.create_disclosure_bundle(
+        tenant,
+        run_id=run["id"],
+        bundle_type="vendor_disclosure",
+        title="Queue bundle",
+        signed_by="Demo Analyst",
+        reviewer_name="Demo Reviewer",
+        reviewer_role="reviewer",
+        confirm_external_export=True,
+    )
+
+    queue = service.list_review_queue(tenant)
+    attention_queue = service.list_review_queue(tenant, needs_attention=True)
+    assert any(item["entity_type"] == "evidence" and "sensitive_evidence" in item["blocking_reasons"] for item in attention_queue["items"])
+    assert any(item["entity_type"] == "bundle" and item["entity_id"] == bundle["id"] for item in queue["items"])

@@ -74,11 +74,22 @@ class TestScoringWeights:
 
     def test_expected_factor_keys_present(self):
         expected = {
-            "risk_score", "epss", "kev", "package_match_confidence",
-            "product_match_quality",
-            "attack_surface", "observability", "linux_reproducibility",
-            "patch_availability", "exploit_maturity", "vendor_advisory_presence",
-            "patch_note_linkage", "source_freshness", "evidence_readiness",
+            "risk_score",
+            "epss",
+            "kev",
+            "package_match_confidence",
+            "affected_version_confidence",
+            "sbom_vex_applicability",
+            "attack_surface",
+            "observability",
+            "linux_reproducibility",
+            "patch_availability",
+            "exploit_maturity",
+            "advisory_normalization_confidence",
+            "source_agreement",
+            "vendor_context_quality",
+            "source_freshness",
+            "evidence_readiness",
         }
         assert set(CANDIDATE_SCORING_WEIGHTS.keys()) == expected
 
@@ -98,6 +109,8 @@ class TestScoringFactors:
 
         assert "factor_details" in explain
         assert "weights" in explain
+        assert "normalized_advisories" in explain
+        assert "applicability_summary" in explain
         assert len(explain["factor_details"]) == len(CANDIDATE_SCORING_WEIGHTS)
 
         for detail in explain["factor_details"]:

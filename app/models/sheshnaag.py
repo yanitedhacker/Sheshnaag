@@ -50,13 +50,38 @@ class AdvisoryRecord(Base):
     source_feed_id = Column(Integer, ForeignKey("source_feeds.id", ondelete="SET NULL"), index=True)
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
     product_id = Column(Integer, ForeignKey("product_records.id", ondelete="SET NULL"), index=True)
+    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True)
 
     external_id = Column(String(120), index=True)
+    canonical_id = Column(String(160), index=True)
+    advisory_type = Column(String(80), default="advisory", index=True)
+    severity = Column(String(40), index=True)
     title = Column(String(255), nullable=False)
     summary = Column(Text)
     source_url = Column(Text)
     published_at = Column(DateTime)
+    normalization_confidence = Column(Float, default=0.5)
+    aliases = Column(JSON, default=list)
+    references = Column(JSON, default=list)
     raw_data = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class AdvisoryPackageLink(Base):
+    """Structured package linkage for package-backed advisories."""
+
+    __tablename__ = "advisory_package_links"
+    __table_args__ = (
+        UniqueConstraint("advisory_record_id", "package_record_id", name="uq_advisory_package_link"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    advisory_record_id = Column(Integer, ForeignKey("advisory_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    package_role = Column(String(80), default="affected")
+    purl = Column(String(500))
+    meta = Column("metadata", JSON, default=dict)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
@@ -99,13 +124,18 @@ class VersionRange(Base):
     __tablename__ = "version_ranges"
 
     id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("product_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    advisory_record_id = Column(Integer, ForeignKey("advisory_records.id", ondelete="CASCADE"), index=True)
+    product_id = Column(Integer, ForeignKey("product_records.id", ondelete="CASCADE"), index=True)
+    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True)
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
+    range_type = Column(String(80))
+    source_label = Column(String(120))
     version_start = Column(String(120))
     version_end = Column(String(120))
     fixed_version = Column(String(120))
     is_inclusive_start = Column(Boolean, default=True, nullable=False)
     is_inclusive_end = Column(Boolean, default=True, nullable=False)
+    normalized_bounds = Column(JSON, default=dict)
     created_at = Column(DateTime, default=utc_now)
 
 
@@ -487,5 +517,21 @@ class DisclosureBundle(Base):
     manifest = Column(JSON, default=dict)
     sha256 = Column(String(128), index=True)
     signed_by = Column(String(200))
+    created_at = Column(DateTime, default=utc_now)
+
+
+class CandidateScoreRecalculationRun(Base):
+    """Persisted audit record for candidate score recalculation/backfill operations."""
+
+    __tablename__ = "candidate_score_recalculation_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    requested_by = Column(String(200), nullable=False)
+    status = Column(String(50), default="completed", nullable=False)
+    dry_run = Column(Boolean, default=True, nullable=False)
+    reason = Column(Text)
+    filters = Column(JSON, default=dict)
+    summary = Column(JSON, default=dict)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

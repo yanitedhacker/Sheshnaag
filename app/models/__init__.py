@@ -32,8 +32,10 @@ from app.models.v2 import (
 )
 from app.models.sheshnaag import (
     AdvisoryRecord,
+    AdvisoryPackageLink,
     AnalystIdentity,
     AttestationRecord,
+    CandidateScoreRecalculationRun,
     ContributionLedgerEntry,
     DetectionArtifact,
     DisclosureBundle,
@@ -98,6 +100,7 @@ __all__ = [
     "DecisionAuditEvent",
     "SourceFeed",
     "AdvisoryRecord",
+    "AdvisoryPackageLink",
     "PackageRecord",
     "ProductRecord",
     "VersionRange",
@@ -113,6 +116,7 @@ __all__ = [
     "MitigationArtifact",
     "DisclosureBundle",
     "AttestationRecord",
+    "CandidateScoreRecalculationRun",
     "AnalystIdentity",
     "TenantSigningKey",
     "WorkstationFingerprint",

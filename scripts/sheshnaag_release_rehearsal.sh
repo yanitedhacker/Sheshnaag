@@ -14,6 +14,7 @@ declare -a STEPS=(
   "Execute smoke [runtime-execution]|python scripts/sheshnaag_execute_smoke.py"
   "osquery smoke [runtime-execution]|python scripts/sheshnaag_osquery_smoke.py"
   "Tracee smoke [runtime-execution]|python scripts/sheshnaag_tracee_smoke.py"
+  "Secure-mode smoke [secure-mode]|python scripts/sheshnaag_secure_mode_smoke.py"
   "Frontend build [deployment]|npm --prefix frontend run build"
 )
 
@@ -37,6 +38,8 @@ done
 echo "Manual follow-up"
 echo "- Review warning output for collector skips, deprecations, and disclosure safety prompts."
 echo "- If running execute-mode labs, rerun lifecycle checks with Docker available and capture the host environment in release notes."
+echo "- For the dedicated secure host lane, run bash scripts/sheshnaag_secure_host_rehearsal.sh and archive the generated JSON/log bundle."
+echo "- If secure-mode smoke ran, archive the reported Lima capability state and any snapshot/revert audit metadata."
 echo "- Confirm bundle exports were created under the expected export root and remove stale archives after review."
 echo
 

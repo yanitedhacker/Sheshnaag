@@ -3,7 +3,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
@@ -32,6 +32,17 @@ class CandidateMergeRequest(BaseModel):
     tenant_slug: Optional[str] = None
     merge_into_id: int
     merged_by: Optional[str] = None
+
+
+class CandidateRecalculationRequest(BaseModel):
+    tenant_id: Optional[int] = None
+    tenant_slug: Optional[str] = None
+    requested_by: str
+    dry_run: bool = True
+    reason: Optional[str] = None
+    candidate_ids: list[int] = Field(default_factory=list)
+    package_name: Optional[str] = None
+    limit: Optional[int] = None
 
 
 @router.get("")
@@ -183,3 +194,30 @@ def candidate_workload_summary(
     """Return per-analyst queue counts and unassigned totals."""
     tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
     return SheshnaagService(session).get_workload_summary(tenant)
+
+
+@router.get("/recalculate/history")
+def candidate_recalculation_history(
+    tenant_slug: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    session: Session = Depends(get_sync_session),
+):
+    """List persisted candidate score recalculation runs."""
+    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    return SheshnaagService(session).list_candidate_recalculation_runs(tenant, limit=limit)
+
+
+@router.post("/recalculate")
+def recalculate_candidates(request: CandidateRecalculationRequest, session: Session = Depends(get_sync_session)):
+    """Recompute candidate scoring/explainability and persist an execution summary."""
+    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    return SheshnaagService(session).recalculate_candidate_scores(
+        tenant,
+        requested_by=request.requested_by,
+        dry_run=request.dry_run,
+        reason=request.reason,
+        candidate_ids=request.candidate_ids or None,
+        package_name=request.package_name,
+        limit=request.limit,
+    )

@@ -135,6 +135,20 @@ export function CandidateQueuePage() {
                 <article><span>Patch</span><strong>{selected.patch_available ? "available" : "missing"}</strong></article>
                 <article><span>Assignee</span><strong>{selected.assigned_to ?? "unassigned"}</strong></article>
               </div>
+              <div className="stat-inline-grid">
+                <article>
+                  <span>Normalization</span>
+                  <strong>{Number((selected.explainability.normalized_advisories as Record<string, unknown> | undefined)?.normalization_confidence ?? 0).toFixed(2)}</strong>
+                </article>
+                <article>
+                  <span>Source agreement</span>
+                  <strong>{Number((selected.explainability.normalized_advisories as Record<string, unknown> | undefined)?.source_agreement ?? 0).toFixed(2)}</strong>
+                </article>
+                <article>
+                  <span>Version confidence</span>
+                  <strong>{Number((selected.explainability.applicability_summary as Record<string, unknown> | undefined)?.affected_version_confidence ?? 0).toFixed(2)}</strong>
+                </article>
+              </div>
               <div className="stack-list">
                 {selected.explainability.factor_details.map((factor) => (
                   <article className="line-card" key={factor.key}>
@@ -146,6 +160,33 @@ export function CandidateQueuePage() {
                   </article>
                 ))}
               </div>
+              <section className="panel-subsection">
+                <h3>Advisory normalization</h3>
+                <div className="stack-list">
+                  <article className="line-card">
+                    <div>
+                      <strong>Canonical packages</strong>
+                      <p>
+                        {(((selected.explainability.normalized_advisories as Record<string, unknown> | undefined)?.normalized_packages as Array<Record<string, unknown>> | undefined) ?? [])
+                          .map((pkg) => `${String(pkg.ecosystem ?? "unknown")}:${String(pkg.name ?? "unknown")}`)
+                          .join(", ") || "No normalized package mapping yet."}
+                      </p>
+                    </div>
+                    <span>{Number((selected.explainability.normalized_advisories as Record<string, unknown> | undefined)?.count ?? 0)} advisories</span>
+                  </article>
+                  <article className="line-card">
+                    <div>
+                      <strong>Applicability summary</strong>
+                      <p>
+                        Asset matches {String((selected.explainability.environment_applicability.asset_match_count as number | undefined) ?? 0)} ·
+                        SBOM matches {String((selected.explainability.environment_applicability.sbom_match_count as number | undefined) ?? 0)} ·
+                        VEX {String((selected.explainability.environment_applicability.vex_status as string | undefined) ?? "none")}
+                      </p>
+                    </div>
+                    <span>{Number((selected.explainability.environment_applicability.version_match_confidence as number | undefined) ?? 0).toFixed(2)}</span>
+                  </article>
+                </div>
+              </section>
               <div className="toolbar">
                 <input value={assignee} onChange={(event) => setAssignee(event.target.value)} placeholder="Reviewer / analyst" />
                 <button className="ghost-button" disabled={busy} onClick={() => runAction("assign")}>Assign</button>

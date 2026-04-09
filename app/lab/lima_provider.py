@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -45,8 +46,11 @@ class LimaProvider(LabProvider):
             or revision_content.get("lima_yaml_template_path")
             or LIMA_TEMPLATE_PATH
         )
+        template_metadata = self._template_metadata(template_path)
+        limactl_version = self._limactl_version()
         return {
             "provider": self.provider_name,
+            "secure_mode": True,
             "image": catalog_entry.image,
             "image_digest": catalog_entry.digest,
             "image_profile": catalog_entry.profile,
@@ -58,6 +62,7 @@ class LimaProvider(LabProvider):
                 "tracee_available": bool(catalog_entry.supports_tracee),
             },
             "collectors": collectors,
+            "command": revision_content.get("command") or ["sleep", "1"],
             "vm": {
                 "cpu": cpu,
                 "memory_mb": memory_mb,
@@ -72,13 +77,38 @@ class LimaProvider(LabProvider):
             "workspace_sync": {
                 "mode": "host-to-guest-staging",
                 "export_mode": "guest-to-host-artifact-copy",
+                "guest_workspace": "/workspace",
             },
             "snapshot_policy": {
                 "baseline_snapshot": "baseline",
                 "revert_behavior": "revert_to_baseline_before_destroy",
             },
+            "secure_mode_contract": {
+                "provider": self.provider_name,
+                "snapshot_revert_supported": True,
+                "secure_collectors": ["pcap"],
+            },
+            "provider_contract": {
+                "provider": self.provider_name,
+                "snapshot_revert_supported": True,
+                "secure_collectors": ["pcap"],
+            },
+            "template_metadata": template_metadata,
             "provider_readiness": self._provider_readiness(template_path=template_path),
             "collector_capabilities": self._collector_capabilities(collectors=collectors),
+            "secure_mode_audit": {
+                "host_checks": self._provider_readiness(template_path=template_path),
+                "limactl_version": limactl_version,
+                "template": template_metadata,
+                "lifecycle": [],
+                "execute_result": None,
+                "snapshot_revert_audit": {
+                    "baseline_snapshot_ref": None,
+                    "booted_snapshot_ref": None,
+                    "revert_behavior": "revert_to_baseline_before_destroy",
+                    "revert_outcome": "pending",
+                },
+            },
             "generated_at": utc_now().isoformat(),
             "run_context": {
                 "tenant_slug": run_context.get("tenant_slug"),
@@ -120,6 +150,32 @@ class LimaProvider(LabProvider):
         plan_out = dict(plan)
         plan_out["host_workspace"] = str(workspace)
         plan_out["snapshot_refs"] = {"baseline": snapshot_ref}
+        generated_template_path = self._materialize_template(plan=plan_out, workspace=workspace)
+        plan_out["generated_template_path"] = generated_template_path
+        plan_out["workspace_sync"] = {
+            **(plan_out.get("workspace_sync") or {}),
+            "host_workspace": str(workspace),
+            "status": "allocated",
+        }
+        plan_out["guest_instance"] = {
+            "instance_name": None,
+            "host_workspace": str(workspace),
+            "guest_workspace": "/workspace",
+            "generated_template_path": generated_template_path,
+        }
+        secure_audit = dict(plan_out.get("secure_mode_audit") or {})
+        secure_audit.setdefault("lifecycle", []).append(
+            {
+                "event": "allocated",
+                "at": utc_now().isoformat(),
+                "host_workspace": str(workspace),
+                "generated_template_path": generated_template_path,
+            }
+        )
+        snapshot_audit = dict(secure_audit.get("snapshot_revert_audit") or {})
+        snapshot_audit["baseline_snapshot_ref"] = snapshot_ref
+        secure_audit["snapshot_revert_audit"] = snapshot_audit
+        plan_out["secure_mode_audit"] = secure_audit
         self._instances[provider_run_ref] = {
             "plan": plan_out,
             "workspace": str(workspace),
@@ -149,6 +205,7 @@ class LimaProvider(LabProvider):
         if launch_mode == "simulated":
             info["state"] = RunState.COMPLETED
             plan["guest_status"] = "simulated"
+            self._record_lifecycle_event(plan, event="simulated_complete")
             return ProviderResult(
                 state=RunState.COMPLETED,
                 provider_run_ref=provider_run_ref,
@@ -165,6 +222,7 @@ class LimaProvider(LabProvider):
                 health=HealthStatus.UNKNOWN,
             )
         if shutil.which("limactl") is None:
+            self._record_lifecycle_event(plan, event="blocked", detail="limactl missing")
             return ProviderResult(
                 state=RunState.BLOCKED,
                 provider_run_ref=provider_run_ref,
@@ -174,7 +232,11 @@ class LimaProvider(LabProvider):
                 health=HealthStatus.UNKNOWN,
             )
         instance_name = f"sheshnaag-{provider_run_ref}"
-        template_path = plan.get("vm", {}).get("lima_yaml_template_path") or LIMA_TEMPLATE_PATH
+        template_path = (
+            plan.get("generated_template_path")
+            or plan.get("vm", {}).get("lima_yaml_template_path")
+            or LIMA_TEMPLATE_PATH
+        )
         try:
             subprocess.run(
                 ["limactl", "start", "--name", instance_name, template_path],
@@ -185,7 +247,47 @@ class LimaProvider(LabProvider):
             )
             plan["instance_name"] = instance_name
             plan.setdefault("snapshot_refs", {})["booted"] = f"{provider_run_ref}:booted"
+            plan["guest_status"] = "booted"
+            plan.setdefault("workspace_sync", {})["status"] = "booted"
+            plan.setdefault("guest_instance", {})["instance_name"] = instance_name
+            secure_audit = dict(plan.get("secure_mode_audit") or {})
+            snapshot_audit = dict(secure_audit.get("snapshot_revert_audit") or {})
+            snapshot_audit["booted_snapshot_ref"] = f"{provider_run_ref}:booted"
+            secure_audit["snapshot_revert_audit"] = snapshot_audit
+            plan["secure_mode_audit"] = secure_audit
+            self._record_lifecycle_event(plan, event="booted", detail=f"instance {instance_name} booted")
+            ready_code, ready_out, ready_err = self._guest_shell(
+                instance_name,
+                "test -d /workspace && echo ready",
+                timeout=30,
+            )
+            readiness_state = "ready" if ready_code == 0 and "ready" in (ready_out or "") else "degraded"
+            self._record_lifecycle_event(
+                plan,
+                event="readiness_check",
+                detail=readiness_state,
+                payload={
+                    "exit_code": ready_code,
+                    "stdout": (ready_out or "")[:1000],
+                    "stderr": (ready_err or "")[:1000],
+                },
+            )
             info["state"] = RunState.RUNNING
+            if launch_mode == "execute":
+                execute = self._execute_in_guest(plan=plan, instance_name=instance_name)
+                info["state"] = RunState.RUNNING if execute["exit_code"] == 0 else RunState.ERRORED
+                return ProviderResult(
+                    state=RunState.RUNNING if execute["exit_code"] == 0 else RunState.ERRORED,
+                    provider_run_ref=provider_run_ref,
+                    plan=plan,
+                    transcript=(
+                        f"Lima instance {instance_name} booted and executed guest command."
+                        if execute["exit_code"] == 0
+                        else f"Lima guest command failed in {instance_name}: {execute['stderr'][:400]}"
+                    ),
+                    health=HealthStatus.READY if execute["exit_code"] == 0 else HealthStatus.ERRORED,
+                    error=None if execute["exit_code"] == 0 else execute["stderr"][:1000] or "execute_failed",
+                )
             return ProviderResult(
                 state=RunState.RUNNING,
                 provider_run_ref=provider_run_ref,
@@ -194,6 +296,7 @@ class LimaProvider(LabProvider):
                 health=HealthStatus.BOOTING,
             )
         except (subprocess.SubprocessError, OSError) as exc:
+            self._record_lifecycle_event(plan, event="boot_failed", detail=str(exc))
             return ProviderResult(
                 state=RunState.ERRORED,
                 provider_run_ref=provider_run_ref,
@@ -214,6 +317,29 @@ class LimaProvider(LabProvider):
                 health=HealthStatus.UNKNOWN,
             )
         state = info.get("state", RunState.PLANNED)
+        plan = info.get("plan") or {}
+        instance_name = plan.get("instance_name")
+        if instance_name and shutil.which("limactl") and state == RunState.RUNNING:
+            try:
+                proc = subprocess.run(
+                    ["limactl", "list", "--format", "{{.Name}} {{.Status}}"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                statuses = {}
+                for line in (proc.stdout or "").splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        statuses[parts[0]] = parts[1].lower()
+                raw_status = statuses.get(instance_name)
+                if raw_status in {"running", "started"}:
+                    state = RunState.RUNNING
+                elif raw_status in {"stopped", "exited"}:
+                    state = RunState.STOPPED
+            except (subprocess.SubprocessError, OSError):
+                pass
         health_map = {
             RunState.PLANNED: HealthStatus.UNKNOWN,
             RunState.RUNNING: HealthStatus.READY,
@@ -245,7 +371,10 @@ class LimaProvider(LabProvider):
         if instance_name and shutil.which("limactl"):
             try:
                 subprocess.run(["limactl", "stop", instance_name], check=True, capture_output=True, text=True, timeout=90)
+                plan["guest_status"] = "stopped"
+                self._record_lifecycle_event(plan, event="stopped", detail=f"instance {instance_name} stopped")
             except (subprocess.SubprocessError, OSError) as exc:
+                self._record_lifecycle_event(plan, event="stop_failed", detail=str(exc))
                 return ProviderResult(
                     state=RunState.ERRORED,
                     provider_run_ref=provider_run_ref,
@@ -282,7 +411,22 @@ class LimaProvider(LabProvider):
                 "retain_workspace": retain_workspace,
                 "restore_action": restore_action,
                 "completed_at": utc_now().isoformat(),
+                "snapshot_refs": plan.get("snapshot_refs") or {},
             }
+        )
+        plan.setdefault("workspace_sync", {})["status"] = "retained" if retain_workspace else "removed"
+        plan["guest_status"] = "destroyed"
+        secure_audit = dict(plan.get("secure_mode_audit") or {})
+        snapshot_audit = dict(secure_audit.get("snapshot_revert_audit") or {})
+        snapshot_audit["revert_outcome"] = "recorded"
+        snapshot_audit["reverted_at"] = utc_now().isoformat()
+        secure_audit["snapshot_revert_audit"] = snapshot_audit
+        plan["secure_mode_audit"] = secure_audit
+        self._record_lifecycle_event(
+            plan,
+            event="teardown",
+            detail="baseline revert audit recorded",
+            payload={"retain_workspace": retain_workspace},
         )
         info["state"] = RunState.DESTROYED
         return ProviderResult(
@@ -307,6 +451,7 @@ class LimaProvider(LabProvider):
         if instance_name and shutil.which("limactl"):
             try:
                 subprocess.run(["limactl", "delete", "-f", instance_name], check=True, capture_output=True, text=True, timeout=90)
+                self._record_lifecycle_event(plan, event="deleted", detail=f"instance {instance_name} deleted")
             except (subprocess.SubprocessError, OSError):
                 pass
         result = self.teardown(provider_run_ref=provider_run_ref, retain_workspace=False)
@@ -349,11 +494,18 @@ class LimaProvider(LabProvider):
         limactl_available = shutil.which("limactl") is not None
         template_exists = Path(template_path).exists()
         workspace_ready = self._safe_workspace_root_ready()
+        limactl_version = self._limactl_version()
         checks = [
             {
                 "name": "limactl",
                 "status": "ready" if limactl_available else "unavailable",
-                "detail": "limactl available on host." if limactl_available else "limactl not found on host.",
+                "detail": (
+                    f"limactl available on host ({limactl_version})."
+                    if limactl_available and limactl_version
+                    else "limactl available on host."
+                )
+                if limactl_available
+                else "limactl not found on host.",
             },
             {
                 "name": "template",
@@ -378,6 +530,7 @@ class LimaProvider(LabProvider):
             "status": overall,
             "checks": checks,
             "workspace_root": str(LIMA_WORKSPACE_ROOT),
+            "limactl_version": limactl_version,
         }
 
     @staticmethod
@@ -429,3 +582,149 @@ class LimaProvider(LabProvider):
             for chunk in iter(lambda: handle.read(65536), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    @staticmethod
+    def _limactl_version() -> str | None:
+        if shutil.which("limactl") is None:
+            return None
+        try:
+            proc = subprocess.run(["limactl", "--version"], check=False, capture_output=True, text=True, timeout=15)
+            return (proc.stdout or proc.stderr or "").strip() or None
+        except (subprocess.SubprocessError, OSError):
+            return None
+
+    def _template_metadata(self, template_path: str) -> Dict[str, Any]:
+        path = Path(template_path)
+        return {
+            "path": str(path),
+            "exists": path.exists(),
+            "sha256": self._file_sha256(str(path)) if path.exists() else None,
+        }
+
+    def _materialize_template(self, *, plan: Dict[str, Any], workspace: Path) -> str:
+        source_path = Path(plan.get("vm", {}).get("lima_yaml_template_path") or LIMA_TEMPLATE_PATH)
+        generated_path = workspace / "sheshnaag-generated-lima.yaml"
+        source_text = source_path.read_text() if source_path.exists() else ""
+        cpu = int((plan.get("vm") or {}).get("cpu") or 2)
+        memory_mb = int((plan.get("vm") or {}).get("memory_mb") or 4096)
+        disk_gb = int((plan.get("vm") or {}).get("disk_gb") or 20)
+        if source_text:
+            lines = source_text.splitlines()
+            output: List[str] = []
+            inserted_mount = False
+            for line in lines:
+                if line.startswith("cpus:"):
+                    output.append(f"cpus: {cpu}")
+                    continue
+                if line.startswith("memory:"):
+                    output.append(f'memory: "{memory_mb}MiB"')
+                    continue
+                if line.startswith("disk:"):
+                    output.append(f'disk: "{disk_gb}GiB"')
+                    continue
+                if not inserted_mount and line.startswith("provision:"):
+                    output.extend(
+                        [
+                            f'  - location: "{workspace}"',
+                            '    mountPoint: "/workspace"',
+                            "    writable: true",
+                        ]
+                    )
+                    inserted_mount = True
+                output.append(line)
+            if not inserted_mount:
+                output.extend(
+                    [
+                        "mounts:",
+                        f'  - location: "{workspace}"',
+                        '    mountPoint: "/workspace"',
+                        "    writable: true",
+                    ]
+                )
+            generated_text = "\n".join(output) + "\n"
+        else:
+            generated_text = "\n".join(
+                [
+                    "arch: x86_64",
+                    f"cpus: {cpu}",
+                    f'memory: "{memory_mb}MiB"',
+                    f'disk: "{disk_gb}GiB"',
+                    "mounts:",
+                    f'  - location: "{workspace}"',
+                    '    mountPoint: "/workspace"',
+                    "    writable: true",
+                ]
+            ) + "\n"
+        generated_path.write_text(generated_text)
+        return str(generated_path)
+
+    def _guest_shell(self, instance_name: str, command: str, *, timeout: int = 120) -> tuple[int, str, str]:
+        return self._guest_argv(
+            instance_name,
+            ["/bin/sh", "-lc", command],
+            timeout=timeout,
+        )
+
+    def _guest_argv(self, instance_name: str, argv: List[str], *, timeout: int = 120) -> tuple[int, str, str]:
+        try:
+            proc = subprocess.run(
+                ["limactl", "shell", instance_name, "--", *argv],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return proc.returncode, proc.stdout or "", proc.stderr or ""
+        except subprocess.TimeoutExpired:
+            return 124, "", "timeout"
+        except (subprocess.SubprocessError, OSError) as exc:
+            return 1, "", str(exc)
+
+    def _execute_in_guest(self, *, plan: Dict[str, Any], instance_name: str) -> Dict[str, Any]:
+        command = plan.get("command") or ["sleep", "1"]
+        command_text = command if isinstance(command, str) else shlex.join([str(part) for part in command])
+        started_at = utc_now().isoformat()
+        code, out, err = self._guest_shell(
+            instance_name,
+            f"cd /workspace && {command_text}",
+            timeout=180,
+        )
+        ended_at = utc_now().isoformat()
+        result = {
+            "command": command,
+            "command_text": command_text,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "exit_code": code,
+            "stdout": (out or "")[:8000],
+            "stderr": (err or "")[:8000],
+            "stdout_truncated": len(out or "") > 8000,
+            "stderr_truncated": len(err or "") > 8000,
+            "workspace": "/workspace",
+        }
+        secure_audit = dict(plan.get("secure_mode_audit") or {})
+        secure_audit["execute_result"] = result
+        plan["secure_mode_audit"] = secure_audit
+        plan["execute_result"] = result
+        plan.setdefault("workspace_sync", {})["status"] = "executed"
+        self._record_lifecycle_event(
+            plan,
+            event="executed",
+            detail=f"guest command exit={code}",
+            payload={"exit_code": code},
+        )
+        return result
+
+    @staticmethod
+    def _record_lifecycle_event(plan: Dict[str, Any], *, event: str, detail: str | None = None, payload: Dict[str, Any] | None = None) -> None:
+        secure_audit = dict(plan.get("secure_mode_audit") or {})
+        lifecycle = list(secure_audit.get("lifecycle") or [])
+        lifecycle.append(
+            {
+                "event": event,
+                "at": utc_now().isoformat(),
+                "detail": detail,
+                "payload": payload or {},
+            }
+        )
+        secure_audit["lifecycle"] = lifecycle
+        plan["secure_mode_audit"] = secure_audit

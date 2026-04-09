@@ -605,6 +605,11 @@ export type RunDetailResponse = RunSummary & {
   runtime_findings_summary: {
     count: number;
     items: RuntimeFinding[];
+    per_tool_counts?: Record<string, number>;
+    per_severity_counts?: Record<string, number>;
+    top_findings?: RuntimeFinding[];
+    collector_overhead?: Array<Record<string, unknown>>;
+    telemetry_slices?: Array<Record<string, unknown>>;
   };
 };
 
@@ -677,6 +682,9 @@ export type CandidateExplainability = {
   observability_score: number;
   linux_reproducibility_confidence: number;
   environment_applicability: Record<string, unknown>;
+  normalized_advisories?: Record<string, unknown>;
+  applicability_summary?: Record<string, unknown>;
+  citation_groups?: Record<string, Citation[]>;
   citations: Citation[];
 };
 
@@ -720,6 +728,71 @@ export type CandidateWorkloadResponse = {
   unassigned: number;
   by_analyst: Array<{ analyst: string; count: number }>;
   by_status: Record<string, number>;
+};
+
+export type CandidateRecalculationRun = {
+  id: number;
+  requested_by: string;
+  status: string;
+  dry_run: boolean;
+  reason?: string | null;
+  filters: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type CandidateRecalculationHistoryResponse = {
+  count: number;
+  items: CandidateRecalculationRun[];
+};
+
+export type CandidateRecalculationResponse = {
+  tenant: { id: number; slug: string; name: string };
+  dry_run: boolean;
+  requested_by: string;
+  reason?: string | null;
+  total_candidates: number;
+  changed_count: number;
+  unchanged_count: number;
+  average_score_delta: number;
+  items: Array<{
+    candidate_id: number;
+    cve_id: string;
+    previous_score: number;
+    new_score: number;
+    score_delta: number;
+    previous_status: string;
+    new_status: string;
+    changed: boolean;
+  }>;
+  recalculation_run_id: number;
+};
+
+export type ReviewQueueItem = {
+  entity_type: string;
+  entity_id: number;
+  run_id?: number | null;
+  title: string;
+  status: string;
+  review_state: string;
+  sensitivity: Record<string, unknown>;
+  blocking_reasons: string[];
+  needs_attention_now: boolean;
+  last_reviewer?: string | null;
+  last_decision?: string | null;
+  last_decision_at?: string | null;
+  updated_at?: string | null;
+  route: string;
+  provider?: string;
+  launch_mode?: string;
+  artifact_family?: string;
+  bundle_export_gating?: boolean | null;
+};
+
+export type ReviewQueueResponse = {
+  count: number;
+  items: ReviewQueueItem[];
 };
 
 export type EvidenceRecord = {
@@ -840,6 +913,8 @@ export type DisclosureBundleRecord = {
   };
   download_url: string;
   signing?: Record<string, unknown>;
+  report_sections?: Record<string, boolean>;
+  review_history?: Array<Record<string, unknown>>;
   created_at?: string | null;
 };
 

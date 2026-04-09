@@ -14,7 +14,7 @@ from app.ingestion.connector import get_registered_connectors
 from app.ingestion.osv_client import OSVClient
 from app.ingestion.osv_connector import OSVConnector
 from app.models.cve import CVE
-from app.models.sheshnaag import AdvisoryRecord, PackageRecord, VersionRange
+from app.models.sheshnaag import AdvisoryPackageLink, AdvisoryRecord, PackageRecord, VersionRange
 
 
 SAMPLE_OSV_VULN = {
@@ -94,8 +94,10 @@ def test_parse_advisory_basic():
     assert parsed["osv_id"] == "GHSA-test-0001"
     assert parsed["summary"] == "Test vulnerability in example-pkg"
     assert parsed["cve_aliases"] == ["CVE-2024-99999"]
+    assert parsed["canonical_id"] == "CVE-2024-99999"
+    assert parsed["normalization_confidence"] > 0.5
     assert len(parsed["packages"]) == 1
-    assert parsed["packages"][0]["ecosystem"] == "PyPI"
+    assert parsed["packages"][0]["ecosystem"] == "pypi"
     assert parsed["packages"][0]["name"] == "example-pkg"
     assert len(parsed["version_ranges"]) == 1
     assert parsed["version_ranges"][0]["fixed_version"] == "1.2.3"
@@ -136,15 +138,20 @@ async def test_connector_fetch_creates_advisory_and_package():
     assert len(advisories) == 1
     assert advisories[0].external_id == "GHSA-test-0001"
     assert advisories[0].title == "Test vulnerability in example-pkg"
+    assert advisories[0].package_record_id is not None
 
     packages = session.query(PackageRecord).all()
     assert len(packages) == 1
-    assert packages[0].ecosystem == "PyPI"
+    assert packages[0].ecosystem == "pypi"
     assert packages[0].name == "example-pkg"
+
+    links = session.query(AdvisoryPackageLink).all()
+    assert len(links) == 1
 
     vrs = session.query(VersionRange).all()
     assert len(vrs) == 1
     assert vrs[0].fixed_version == "1.2.3"
+    assert vrs[0].package_record_id == packages[0].id
 
 
 @pytest.mark.unit
@@ -230,7 +237,7 @@ async def test_duplicate_package_not_created():
     session.flush()
 
     packages = session.query(PackageRecord).filter(
-        PackageRecord.ecosystem == "PyPI",
+        PackageRecord.ecosystem == "pypi",
         PackageRecord.name == "example-pkg",
     ).all()
     assert len(packages) == 1

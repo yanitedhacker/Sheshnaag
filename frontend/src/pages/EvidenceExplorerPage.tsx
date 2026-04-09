@@ -114,6 +114,49 @@ export function EvidenceExplorerPage() {
         </section>
       ) : null}
 
+      {detail ? (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Runtime telemetry</h2>
+            <span>{(detail.runtime_findings_summary.telemetry_slices ?? []).length} slices</span>
+          </div>
+          <div className="stack-list">
+            <article className="line-card">
+              <div>
+                <strong>Source tool counts</strong>
+                <p>
+                  {Object.entries(detail.runtime_findings_summary.per_tool_counts ?? {})
+                    .map(([tool, count]) => `${tool}: ${count}`)
+                    .join(" · ") || "No runtime tool telemetry yet."}
+                </p>
+              </div>
+            </article>
+            <article className="line-card">
+              <div>
+                <strong>Severity counts</strong>
+                <p>
+                  {Object.entries(detail.runtime_findings_summary.per_severity_counts ?? {})
+                    .map(([severity, count]) => `${severity}: ${count}`)
+                    .join(" · ") || "No severity counts yet."}
+                </p>
+              </div>
+            </article>
+            {(detail.runtime_findings_summary.telemetry_slices ?? []).slice(0, 5).map((slice, index) => (
+              <article className="line-card" key={`slice-${index}`}>
+                <div>
+                  <strong>{String(slice.collector_name ?? "collector")}</strong>
+                  <p>
+                    Process {Array.isArray(slice.process_slice) ? slice.process_slice.length : 0} ·
+                    File {Array.isArray(slice.file_slice) ? slice.file_slice.length : 0} ·
+                    Network {Array.isArray(slice.network_slice) ? slice.network_slice.length : 0}
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="panel">
         <div className="panel-header">
           <h2>Evidence detail panes</h2>

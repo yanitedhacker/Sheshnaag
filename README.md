@@ -41,12 +41,14 @@ Reliable after this gap-fill pass:
 - targeted Sheshnaag integration suites pass with `RUN_INTEGRATION_TESTS=1`
 - route-level provenance, artifact review, and disclosure export flows are stable
 - execute-mode smoke scripts exist for the baseline live path and the osquery path
+- secure-mode Lima plans now record lifecycle, template, execute, and snapshot/revert audit metadata
+- the operator console now includes a dedicated review queue across runs, evidence, artifacts, and bundles
+- candidate score recalculation/backfill remains in-process and now persists execution summaries
 
 Still deferred:
 
-- Lima / VM-grade secure mode
-- broader telemetry maturity for Tracee, Falco, Tetragon, and PCAP beyond graceful capability reporting
-- deeper disclosure/report packaging and richer team workflow analytics beyond the current v1.0 workstation story
+- long-running observability pipelines or external telemetry backends for Falco, Tetragon, Tracee, and PCAP
+- deeper disclosure/report packaging and richer team workflow analytics beyond the current operator review queue
 
 ## Safety Posture
 
@@ -117,13 +119,16 @@ npm --prefix frontend run build
 
 ```bash
 python scripts/sheshnaag_api_smoke.py
+python scripts/sheshnaag_migration_rehearsal.py
 python scripts/sheshnaag_execute_smoke.py
 bash scripts/build_sheshnaag_osquery_image.sh
 python scripts/sheshnaag_osquery_smoke.py
 bash scripts/build_sheshnaag_tracee_image.sh
 python scripts/sheshnaag_tracee_smoke.py
+python scripts/sheshnaag_secure_mode_smoke.py
 npm --prefix frontend run smoke:routes
 bash scripts/sheshnaag_release_rehearsal.sh
+bash scripts/sheshnaag_secure_host_rehearsal.sh
 ```
 
 - `scripts/sheshnaag_api_smoke.py` spins up an in-memory FastAPI test surface and exercises intel, candidates, recipes, runs, evidence, artifacts, provenance, ledger, templates, and disclosure export.
@@ -132,14 +137,21 @@ bash scripts/sheshnaag_release_rehearsal.sh
 - `scripts/sheshnaag_osquery_smoke.py` verifies live `osquery_snapshot` capture when Docker is available and the osquery-capable image is present.
 - `scripts/build_sheshnaag_tracee_image.sh` builds the trusted Tracee-capable lab image tag.
 - `scripts/sheshnaag_tracee_smoke.py` verifies the supported Tracee runtime collector path when Docker is available and the Tracee image is present.
+- `scripts/sheshnaag_secure_mode_smoke.py` verifies Lima-backed secure-mode execution, PCAP packaging, lifecycle audit metadata, and teardown cleanup when `limactl` is available.
+- `scripts/sheshnaag_migration_rehearsal.py` builds a representative persisted SQLite baseline, runs Alembic upgrade/downgrade, and validates the new schema additions.
 - `npm --prefix frontend run smoke:routes` verifies that every operator page is still wired into the route map and top-level nav.
 - `scripts/sheshnaag_release_rehearsal.sh` runs backend smoke, route smoke, targeted unit/integration pytest, the execute-mode smoke scripts, and the frontend build in one repeatable pass. Docker-backed smoke steps self-skip when Docker is unavailable.
+- `scripts/sheshnaag_secure_host_rehearsal.sh` is the dedicated release lane for a `limactl`-capable host and archives release metadata, migration rehearsal output, smoke logs, and secure-mode evidence summaries.
 
 ## Implementation Notes
 
 - Simulated mode remains available for non-Docker development, but execute mode is the live validation path for Sheshnaag acceptance.
 - The dedicated osquery image is an explicit opt-in path for `osquery_snapshot`; the default lab image remains the baseline constrained Kali image.
 - The trusted image catalog now distinguishes baseline, osquery-capable, Tracee-capable, and secure Lima guest profiles.
+- Advanced runtime collectors now emit one standardized telemetry/session envelope with bounded capture metadata, even when they degrade or skip.
+- PCAP remains secure-mode-only and is exported as a bounded preview path with explicit sensitivity and export-gating metadata.
+- The operator console `Review` page aggregates review blockers across runs, evidence, artifacts, and disclosure bundles.
+- Candidate scoring recalculation stays in the monolith and is available through the candidates API as a persisted dry-run/apply workflow.
 - Writes for Sheshnaag APIs should use a writable tenant; demo tenant reads are still useful for seeded exploration.
 - The knowledge layer is intended to pair raw source preservation with an LLM-maintained wiki and MemPalace memory continuity.
 

@@ -13,7 +13,14 @@ from app.core.config import settings
 from app.core.time import utc_now
 from app.ingestion.connector import FeedConnector
 from app.models.cve import CVE
-from app.models.sheshnaag import AdvisoryRecord, PackageRecord
+from app.models.sheshnaag import AdvisoryPackageLink, AdvisoryRecord, PackageRecord, VersionRange
+from app.services.advisory_normalization import (
+    advisory_normalization_confidence,
+    build_canonical_package,
+    canonical_advisory_id,
+    dedupe_references,
+    parse_version_range_expression,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,23 +126,38 @@ class GHSAClient:
         severity = (raw.get("severity") or "").lower()
 
         packages: List[Dict[str, str]] = []
-        version_ranges: List[str] = []
+        version_ranges: List[Dict[str, Any]] = []
         for vuln in raw.get("vulnerabilities") or []:
             pkg = vuln.get("package") or {}
-            ecosystem = pkg.get("ecosystem", "")
-            name = pkg.get("name", "")
-            if ecosystem and name:
-                packages.append({"ecosystem": ecosystem, "name": name})
+            canonical_package = build_canonical_package(pkg)
+            if canonical_package["ecosystem"] and canonical_package["name"]:
+                packages.append(canonical_package)
             vr = vuln.get("vulnerable_version_range")
             if vr:
-                version_ranges.append(vr)
+                parsed_range = parse_version_range_expression(vr)
+                version_ranges.append(
+                    {
+                        **canonical_package,
+                        "range_type": "ghsa_expression",
+                        "version_start": parsed_range.get("version_start") or "",
+                        "version_end": parsed_range.get("version_end") or "",
+                        "fixed_version": parsed_range.get("fixed_version") or "",
+                        "normalized_bounds": parsed_range,
+                        "raw_expression": vr,
+                    }
+                )
 
-        references: List[str] = [
-            ref.get("url", "") for ref in (raw.get("references") or []) if ref.get("url")
-        ]
+        references = dedupe_references(raw.get("references") or [])
+        normalization_confidence = advisory_normalization_confidence(
+            aliases=[ghsa_id, cve_id] if cve_id else [ghsa_id],
+            packages=packages,
+            version_ranges=version_ranges,
+            references=references,
+        )
 
         return {
             "ghsa_id": ghsa_id,
+            "canonical_id": canonical_advisory_id(external_id=ghsa_id, aliases=[cve_id] if cve_id else []),
             "cve_id": cve_id,
             "summary": raw.get("summary", ""),
             "description": raw.get("description", ""),
@@ -146,6 +168,7 @@ class GHSAClient:
             "published_at": raw.get("published_at"),
             "updated_at": raw.get("updated_at"),
             "raw": raw,
+            "normalization_confidence": normalization_confidence,
             "payload_hash": FeedConnector.hash_payload(raw),
         }
 
@@ -173,7 +196,18 @@ class GHSAClient:
         if existing:
             existing.title = parsed["summary"] or existing.title
             existing.summary = parsed["description"]
-            existing.raw_data = parsed["raw"]
+            existing.canonical_id = parsed.get("canonical_id")
+            existing.advisory_type = "ghsa"
+            existing.severity = parsed.get("severity")
+            existing.normalization_confidence = parsed.get("normalization_confidence") or 0.5
+            existing.aliases = [parsed["ghsa_id"], parsed.get("cve_id")] if parsed.get("cve_id") else [parsed["ghsa_id"]]
+            existing.references = parsed.get("references") or []
+            existing.raw_data = {
+                **parsed["raw"],
+                "normalized_packages": parsed.get("packages") or [],
+                "normalized_version_ranges": parsed.get("version_ranges") or [],
+            }
+            self._sync_package_links(session, existing, parsed)
             return False, existing
 
         cve_fk: Optional[int] = None
@@ -188,18 +222,26 @@ class GHSAClient:
 
         advisory = AdvisoryRecord(
             external_id=ghsa_id,
+            canonical_id=parsed.get("canonical_id"),
+            advisory_type="ghsa",
+            severity=parsed.get("severity"),
             title=parsed["summary"] or ghsa_id,
             summary=parsed["description"],
             source_url=f"https://github.com/advisories/{ghsa_id}",
             published_at=self._parse_dt(parsed.get("published_at")),
-            raw_data=parsed["raw"],
+            normalization_confidence=parsed.get("normalization_confidence") or 0.5,
+            aliases=[parsed["ghsa_id"], parsed.get("cve_id")] if parsed.get("cve_id") else [parsed["ghsa_id"]],
+            references=parsed.get("references") or [],
+            raw_data={
+                **parsed["raw"],
+                "normalized_packages": parsed.get("packages") or [],
+                "normalized_version_ranges": parsed.get("version_ranges") or [],
+            },
             cve_id=cve_fk,
         )
         session.add(advisory)
         session.flush()
-
-        for pkg_info in parsed["packages"]:
-            self._ensure_package(session, pkg_info["ecosystem"], pkg_info["name"])
+        self._sync_package_links(session, advisory, parsed)
 
         return True, advisory
 
@@ -220,6 +262,67 @@ class GHSAClient:
         session.add(pkg)
         session.flush()
         return pkg
+
+    def _sync_package_links(self, session: Session, advisory: AdvisoryRecord, parsed: Dict[str, Any]) -> None:
+        package_rows: Dict[tuple[str, str], PackageRecord] = {}
+        for pkg_info in parsed["packages"]:
+            row = self._ensure_package(session, pkg_info["ecosystem"], pkg_info["name"])
+            package_rows[(pkg_info["ecosystem"], pkg_info["name"])] = row
+            if advisory.package_record_id is None:
+                advisory.package_record_id = row.id
+            existing_link = (
+                session.query(AdvisoryPackageLink)
+                .filter(
+                    AdvisoryPackageLink.advisory_record_id == advisory.id,
+                    AdvisoryPackageLink.package_record_id == row.id,
+                )
+                .first()
+            )
+            if existing_link is None:
+                session.add(
+                    AdvisoryPackageLink(
+                        advisory_record_id=advisory.id,
+                        package_record_id=row.id,
+                        package_role="affected",
+                        purl=pkg_info.get("purl"),
+                        meta={"source": "ghsa"},
+                    )
+                )
+                session.flush()
+
+        for vr_info in parsed.get("version_ranges") or []:
+            pkg_key = (vr_info.get("ecosystem"), vr_info.get("name"))
+            pkg_row = package_rows.get(pkg_key)
+            if pkg_row is None:
+                continue
+            existing_range = (
+                session.query(VersionRange)
+                .filter(
+                    VersionRange.advisory_record_id == advisory.id,
+                    VersionRange.package_record_id == pkg_row.id,
+                    VersionRange.range_type == vr_info.get("range_type"),
+                    VersionRange.version_start == (vr_info.get("version_start") or None),
+                    VersionRange.version_end == (vr_info.get("version_end") or None),
+                    VersionRange.fixed_version == (vr_info.get("fixed_version") or None),
+                )
+                .first()
+            )
+            if existing_range is None:
+                session.add(
+                    VersionRange(
+                        advisory_record_id=advisory.id,
+                        package_record_id=pkg_row.id,
+                        cve_id=advisory.cve_id,
+                        range_type=vr_info.get("range_type"),
+                        source_label="ghsa",
+                        version_start=vr_info.get("version_start") or None,
+                        version_end=vr_info.get("version_end") or None,
+                        fixed_version=vr_info.get("fixed_version") or None,
+                        is_inclusive_start=bool((vr_info.get("normalized_bounds") or {}).get("inclusive_start", True)),
+                        is_inclusive_end=bool((vr_info.get("normalized_bounds") or {}).get("inclusive_end", False)),
+                        normalized_bounds=vr_info.get("normalized_bounds") or {},
+                    )
+                )
 
     @staticmethod
     def _parse_dt(value: Optional[str]) -> Optional[datetime]:

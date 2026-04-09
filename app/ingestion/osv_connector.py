@@ -12,7 +12,7 @@ from app.core.time import utc_now
 from app.ingestion.connector import ConnectorResult, FeedConnector, register_connector
 from app.ingestion.osv_client import OSVClient
 from app.models.cve import CVE
-from app.models.sheshnaag import AdvisoryRecord, PackageRecord, VersionRange
+from app.models.sheshnaag import AdvisoryPackageLink, AdvisoryRecord, PackageRecord, VersionRange
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,16 @@ class OSVConnector(FeedConnector):
 
         if existing is not None:
             existing.summary = parsed["details"] or parsed["summary"]
-            existing.raw_data = parsed["raw"]
+            existing.canonical_id = parsed.get("canonical_id")
+            existing.aliases = parsed.get("aliases") or []
+            existing.references = parsed.get("references") or []
+            existing.normalization_confidence = parsed.get("normalization_confidence") or 0.5
+            existing.raw_data = {
+                **(existing.raw_data or {}),
+                **parsed["raw"],
+                "normalized_packages": parsed.get("packages") or [],
+                "normalized_version_ranges": parsed.get("version_ranges") or [],
+            }
             existing.updated_at = utc_now()
             result.items_updated += 1
             advisory = existing
@@ -108,11 +117,20 @@ class OSVConnector(FeedConnector):
 
             advisory = AdvisoryRecord(
                 external_id=osv_id,
+                canonical_id=parsed.get("canonical_id"),
+                advisory_type="osv",
                 title=parsed["summary"] or osv_id,
                 summary=parsed["details"] or parsed["summary"],
                 source_url=f"https://osv.dev/vulnerability/{osv_id}",
                 published_at=_parse_iso(parsed["published"]),
-                raw_data=parsed["raw"],
+                normalization_confidence=parsed.get("normalization_confidence") or 0.5,
+                aliases=parsed.get("aliases") or [],
+                references=parsed.get("references") or [],
+                raw_data={
+                    **parsed["raw"],
+                    "normalized_packages": parsed.get("packages") or [],
+                    "normalized_version_ranges": parsed.get("version_ranges") or [],
+                },
                 cve_id=cve_fk,
             )
             session.add(advisory)
@@ -126,8 +144,22 @@ class OSVConnector(FeedConnector):
                 name=pkg_info["name"],
                 purl=pkg_info.get("purl", ""),
             )
-            if advisory.product_id is None:
-                advisory.product_id = pkg.id
+            if advisory.package_record_id is None:
+                advisory.package_record_id = pkg.id
+            if not session.query(AdvisoryPackageLink).filter(
+                AdvisoryPackageLink.advisory_record_id == advisory.id,
+                AdvisoryPackageLink.package_record_id == pkg.id,
+            ).first():
+                session.add(
+                    AdvisoryPackageLink(
+                        advisory_record_id=advisory.id,
+                        package_record_id=pkg.id,
+                        package_role="affected",
+                        purl=pkg_info.get("purl"),
+                        meta={"source": "osv"},
+                    )
+                )
+                session.flush()
 
         for vr_info in parsed["version_ranges"]:
             if not vr_info.get("ecosystem") or not vr_info.get("name"):
@@ -137,14 +169,31 @@ class OSVConnector(FeedConnector):
                 ecosystem=vr_info["ecosystem"],
                 name=vr_info["name"],
             )
-            vr = VersionRange(
-                product_id=pkg.id,
-                cve_id=advisory.cve_id,
-                version_start=vr_info.get("version_start") or None,
-                version_end=vr_info.get("version_end") or None,
-                fixed_version=vr_info.get("fixed_version") or None,
+            existing_range = (
+                session.query(VersionRange)
+                .filter(
+                    VersionRange.advisory_record_id == advisory.id,
+                    VersionRange.package_record_id == pkg.id,
+                    VersionRange.range_type == vr_info.get("range_type"),
+                    VersionRange.version_start == (vr_info.get("version_start") or None),
+                    VersionRange.version_end == (vr_info.get("version_end") or None),
+                    VersionRange.fixed_version == (vr_info.get("fixed_version") or None),
+                )
+                .first()
             )
-            session.add(vr)
+            if existing_range is None:
+                vr = VersionRange(
+                    advisory_record_id=advisory.id,
+                    package_record_id=pkg.id,
+                    cve_id=advisory.cve_id,
+                    range_type=vr_info.get("range_type"),
+                    source_label="osv",
+                    version_start=vr_info.get("version_start") or None,
+                    version_end=vr_info.get("version_end") or None,
+                    fixed_version=vr_info.get("fixed_version") or None,
+                    normalized_bounds=vr_info.get("normalized_bounds") or {},
+                )
+                session.add(vr)
 
     @staticmethod
     def _resolve_cve_fk(session: Session, cve_aliases: list[str]) -> Optional[int]:

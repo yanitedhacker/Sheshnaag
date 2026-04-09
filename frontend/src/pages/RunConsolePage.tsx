@@ -236,6 +236,40 @@ export function RunConsolePage() {
                 </div>
               </div>
               <div className="panel-subsection">
+                <h3>Telemetry slices</h3>
+                <div className="stack-list">
+                  <article className="line-card">
+                    <div>
+                      <strong>By source tool</strong>
+                      <p>
+                        {Object.entries(detail.runtime_findings_summary.per_tool_counts ?? {})
+                          .map(([tool, count]) => `${tool}: ${count}`)
+                          .join(" · ") || "No runtime tool counts yet."}
+                      </p>
+                    </div>
+                  </article>
+                  <article className="line-card">
+                    <div>
+                      <strong>By severity</strong>
+                      <p>
+                        {Object.entries(detail.runtime_findings_summary.per_severity_counts ?? {})
+                          .map(([severity, count]) => `${severity}: ${count}`)
+                          .join(" · ") || "No severity distribution yet."}
+                      </p>
+                    </div>
+                  </article>
+                  {(detail.runtime_findings_summary.top_findings ?? []).slice(0, 5).map((finding, index) => (
+                    <article className="line-card" key={`finding-${index}`}>
+                      <div>
+                        <strong>{String(finding.title ?? "Runtime finding")}</strong>
+                        <p>{String(finding.summary ?? finding.source_tool ?? "No summary available.")}</p>
+                      </div>
+                      <span>{String(finding.severity ?? "info")}</span>
+                    </article>
+                  ))}
+                </div>
+              </div>
+              <div className="panel-subsection">
                 <h3>Event timeline</h3>
                 <div className="stack-list">
                   {detail.timeline.map((event, index) => (
