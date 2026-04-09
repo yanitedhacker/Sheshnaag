@@ -17,6 +17,7 @@ from app.models.v2 import (
     KEVEntry,
     KnowledgeDocument,
 )
+from app.services.knowledge_service import KnowledgeRetrievalService
 
 
 class ThreatIntelService:
@@ -24,6 +25,7 @@ class ThreatIntelService:
 
     def __init__(self, session: Session):
         self.session = session
+        self.knowledge = KnowledgeRetrievalService(session)
 
     def get_latest_epss_map(self, cve_ids: Iterable[str]) -> Dict[str, EPSSSnapshot]:
         """Return latest EPSS snapshot keyed by CVE id."""
@@ -73,6 +75,7 @@ class ThreatIntelService:
 
     def get_knowledge_documents(self, *, cve_id: Optional[int] = None, limit: int = 10) -> List[KnowledgeDocument]:
         """Fetch knowledge documents for citations."""
+        self.knowledge.backfill_knowledge_layers()
         query = self.session.query(KnowledgeDocument)
         if cve_id is not None:
             query = query.filter(KnowledgeDocument.cve_id == cve_id)

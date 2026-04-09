@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     app_name: str = "Project Sheshnaag"
     app_version: str = "0.1.0"
     environment: str = "development"
+    deployment_profile: str = "local_dev"
+    deployment_name: str = "local"
     debug: bool = False  # Changed default to False for security
 
     # Security - Secret Key
@@ -58,8 +60,8 @@ class Settings(BaseSettings):
     rate_limit_burst: int = 20
 
     # Database (SQLite for local dev, PostgreSQL for production)
-    database_url: str = "sqlite:///./cve_threat_radar.db"
-    async_database_url: str = "sqlite+aiosqlite:///./cve_threat_radar.db"
+    database_url: str = "sqlite:///./sheshnaag.db"
+    async_database_url: str = "sqlite+aiosqlite:///./sheshnaag.db"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -69,6 +71,18 @@ class Settings(BaseSettings):
     default_embedding_model: str = "hash-bow-v1"
     knowledge_chunk_size: int = 420
     knowledge_chunk_overlap: int = 80
+    knowledge_backfill_enabled: bool = True
+
+    # Candidate intelligence
+    candidate_sync_lookback_days: int = 30
+    candidate_sync_limit: int = 500
+    candidate_sync_stale_seconds: int = 1800
+
+    # Provenance / signing
+    signing_key_dir: str = "/tmp/sheshnaag_signing_keys"
+    signing_key_backend: str = "local-file"
+    signing_key_backup_dir: Optional[str] = None
+    release_metadata_dir: str = "./data/release_metadata"
 
     # External APIs
     nvd_api_key: Optional[str] = None
@@ -126,6 +140,12 @@ class Settings(BaseSettings):
 
             if "sqlite" in self.database_url.lower():
                 errors.append("SQLite should not be used in production")
+
+        if self.deployment_profile in {"shared_server", "release_verification"}:
+            if self.signing_key_dir.startswith("/tmp"):
+                errors.append("SIGNING_KEY_DIR must not use /tmp for shared_server or release_verification profiles")
+            if self.signing_key_backend not in {"local-file", "mounted-secret"}:
+                errors.append("SIGNING_KEY_BACKEND must be 'local-file' or 'mounted-secret'")
 
         return errors
 

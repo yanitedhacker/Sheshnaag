@@ -231,6 +231,39 @@ def test_invalid_workspace_retention_fails():
     assert any("workspace_retention" in e for e in result.errors)
 
 
+@pytest.mark.unit
+def test_lima_secure_mode_recipe_passes_schema():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            provider="lima",
+            image_profile="secure_lima",
+            execution_policy={"secure_mode_required": True, "preferred_provider": "lima"},
+        )
+    )
+    assert result.valid is True
+
+
+@pytest.mark.unit
+def test_secure_mode_policy_requires_lima_provider():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            provider="docker_kali",
+            execution_policy={"secure_mode_required": True, "preferred_provider": "docker_kali"},
+        )
+    )
+    assert result.valid is False
+    assert any("secure-mode-required" in e for e in result.errors)
+
+
+@pytest.mark.unit
+def test_pcap_requires_lima_provider():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(collectors=["process_tree", "pcap"])
+    )
+    assert result.valid is False
+    assert any("pcap" in e.lower() for e in result.errors)
+
+
 # ---------------------------------------------------------------------------
 # Lint
 # ---------------------------------------------------------------------------

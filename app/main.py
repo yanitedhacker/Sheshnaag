@@ -179,6 +179,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Environment: {settings.environment}")
+    logger.info(f"Deployment profile: {settings.deployment_profile}")
 
     # Validate settings
     try:
@@ -317,6 +318,7 @@ def root():
         "version": settings.app_version,
         "status": "healthy",
         "environment": settings.environment,
+        "deployment_profile": settings.deployment_profile,
         "docs": "/docs",
         "endpoints": {
             "intel": "/api/intel/overview",
@@ -351,6 +353,7 @@ def health_check():
     return {
         "status": status,
         "environment": settings.environment,
+        "deployment_profile": settings.deployment_profile,
         "version": settings.app_version,
         "auth_enabled": settings.auth_enabled,
         "rate_limit_enabled": settings.rate_limit_enabled,

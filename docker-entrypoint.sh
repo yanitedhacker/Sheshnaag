@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "Starting CVE Threat Radar..."
+echo "Starting Project Sheshnaag..."
 
 # Run database migrations if alembic is configured
 if [ -f "alembic.ini" ]; then

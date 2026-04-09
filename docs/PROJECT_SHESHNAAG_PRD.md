@@ -4,6 +4,26 @@ Version: 0.1
 Status: Draft  
 Last updated: 2026-04-08
 
+## Implementation Status Overlay
+
+This PRD remains the product vision, not a statement that every capability below is already shipped.
+
+Current shipped / working areas as of 2026-04-09:
+
+- Sheshnaag control-plane APIs and operator UI for intel, candidates, recipes, runs, evidence, artifacts, provenance, ledger, and disclosures
+- signed run and bundle attestations
+- real disclosure archive export
+- constrained Docker-backed execute mode for the baseline live collectors
+- explicit osquery-capable image support for `osquery_snapshot`
+
+Still deferred relative to the full PRD:
+
+- Lima / VM-grade secure mode
+- broader telemetry maturity across the full runtime-observability stack
+- later roadmap/team-scale workflow expansions beyond the current v1.0 workstation story
+
+Read the rest of this document as the target product and design intent. Use `README.md` and `docs/PROJECT_SHESHNAAG_ARCHITECTURE.md` as the current operational truth.
+
 ## 1. Executive Summary
 
 Project Sheshnaag is a local-first defensive vulnerability research lab for enterprise software CVEs. It ingests live vulnerability intelligence, identifies research-worthy enterprise software issues, provisions isolated Linux validation environments, captures evidence safely, generates defensive detections and mitigations, and preserves signed provenance plus an analyst credit ledger.
@@ -527,7 +547,7 @@ This roadmap is intentionally versioned like a product delivery plan rather than
 
 Goal:
 
-- rename the product and repo-facing story from CVE Threat Radar into Project Sheshnaag
+- keep product, repo, and operator-facing language consistently aligned to Project Sheshnaag
 - establish the defensive vulnerability research lab identity
 
 Deliverables:

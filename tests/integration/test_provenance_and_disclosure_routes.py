@@ -98,6 +98,7 @@ def seed_database():
             launch_mode="simulated",
             acknowledge_sensitive=False,
         )
+        session.commit()
         globals()["SEEDED_RUN_ID"] = run["id"]
     finally:
         session.close()
@@ -163,12 +164,15 @@ def test_disclosure_route_exports_downloadable_archive():
             "bundle_type": "vendor_disclosure",
             "title": "Integration bundle",
             "signed_by": "Routes Owner",
+            "attachment_policy": {"include_raw_logs": False},
             "confirm_external_export": True,
         },
     )
     assert create.status_code == 200
     bundle = create.json()
     assert Path(bundle["archive"]["path"]).exists()
+    assert bundle["manifest"]["export_audit"]["verification_status"] == "verified"
+    assert bundle["manifest"]["attachment_policy"]["include_raw_logs"] is False
 
     download = client.get(
         f"/api/disclosures/{bundle['id']}/download",

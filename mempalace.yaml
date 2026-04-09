@@ -1,4 +1,4 @@
-wing: cve_radar
+wing: sheshnaag
 rooms:
 - name: app
   description: Files from app/

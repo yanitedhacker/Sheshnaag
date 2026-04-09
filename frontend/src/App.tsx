@@ -9,7 +9,6 @@ import { IntelDashboardPage } from "./pages/IntelDashboardPage";
 import { ProvenanceCenterPage } from "./pages/ProvenanceCenterPage";
 import { RecipeBuilderPage } from "./pages/RecipeBuilderPage";
 import { RunConsolePage } from "./pages/RunConsolePage";
-import { SupplyChainStoryPage } from "./pages/SupplyChainStoryPage";
 
 export default function App() {
   return (
@@ -25,7 +24,6 @@ export default function App() {
         <Route path="provenance" element={<ProvenanceCenterPage />} />
         <Route path="ledger" element={<AnalystLedgerPage />} />
         <Route path="disclosures" element={<DisclosureBundlesPage />} />
-        <Route path="story" element={<SupplyChainStoryPage />} />
         <Route path="*" element={<IntelDashboardPage />} />
       </Route>
     </Routes>

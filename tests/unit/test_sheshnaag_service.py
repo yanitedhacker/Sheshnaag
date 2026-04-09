@@ -208,7 +208,7 @@ def test_disclosure_bundle_download_metadata_and_provenance_are_linked():
     bundle = service.create_disclosure_bundle(
         tenant,
         run_id=run["id"],
-        bundle_type="research_bounty",
+        bundle_type="research_submission",
         title="Research bounty package",
         signed_by="Bundle Owner",
         confirm_external_export=True,
@@ -243,6 +243,45 @@ def test_create_recipe_rejects_unsafe_mounts():
                 "mounts": [{"source": "/Users/demo/Documents", "target": "/workspace/input", "read_only": True}],
             },
         )
+
+
+@pytest.mark.unit
+def test_create_lima_recipe_records_secure_mode_provider_contract():
+    session = make_session()
+    DemoSeedService(session).seed()
+    tenant = get_or_create_demo_tenant(session)
+    service = SheshnaagService(session)
+    candidate = service.list_candidates(tenant, limit=1)["items"][0]
+
+    recipe = service.create_recipe(
+        tenant,
+        candidate_id=candidate["id"],
+        name="Secure mode recipe",
+        objective="Exercise Lima provider metadata.",
+        created_by="Demo Analyst",
+        content={
+            "provider": "lima",
+            "image_profile": "secure_lima",
+            "execution_policy": {"secure_mode_required": True},
+            "command": ["bash", "-lc", "echo secure"],
+            "network_policy": {"allow_egress_hosts": []},
+        },
+    )
+    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    run = service.launch_run(
+        tenant,
+        recipe_id=recipe["id"],
+        revision_number=1,
+        analyst_name="Demo Analyst",
+        workstation={"hostname": "secure-host", "os_family": "macOS", "architecture": "arm64", "fingerprint": "secure-fp"},
+        launch_mode="simulated",
+        acknowledge_sensitive=False,
+    )
+
+    assert recipe["provider"] == "lima"
+    assert run["provider"] == "lima"
+    assert run["execution_policy"]["secure_mode_required"] is True
+    assert run["provider_contract"]["provider"] == "lima"
 
 
 @pytest.mark.unit
@@ -312,4 +351,5 @@ def test_launch_run_transfers_artifact_inputs_into_workspace():
     transfer = (run["manifest"] or {}).get("artifact_transfer") or {}
     assert transfer["status"] == "completed"
     assert transfer["transfers"][0]["status"] == "transferred"
-    assert Path(transfer["transfers"][0]["destination"]).exists()
+    assert transfer["transfers"][0]["destination"] == "/workspace/inputs/fixture.bin"
+    assert Path(transfer["transfers"][0]["host_path"]).exists()

@@ -21,7 +21,6 @@ EXPECTED_ROUTES = {
     "provenance": "ProvenanceCenterPage",
     "ledger": "AnalystLedgerPage",
     "disclosures": "DisclosureBundlesPage",
-    "story": "SupplyChainStoryPage",
 }
 
 EXPECTED_PAGE_FILES = {
@@ -34,7 +33,6 @@ EXPECTED_PAGE_FILES = {
     "ProvenanceCenterPage": ROOT / "frontend" / "src" / "pages" / "ProvenanceCenterPage.tsx",
     "AnalystLedgerPage": ROOT / "frontend" / "src" / "pages" / "AnalystLedgerPage.tsx",
     "DisclosureBundlesPage": ROOT / "frontend" / "src" / "pages" / "DisclosureBundlesPage.tsx",
-    "SupplyChainStoryPage": ROOT / "frontend" / "src" / "pages" / "SupplyChainStoryPage.tsx",
 }
 
 

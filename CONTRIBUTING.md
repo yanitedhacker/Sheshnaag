@@ -1,6 +1,6 @@
-# Contributing to CVE Threat Radar
+# Contributing to Project Sheshnaag
 
-First off, thank you for considering contributing to CVE Threat Radar! It's people like you that make this project better for everyone.
+First off, thank you for considering contributing to Project Sheshnaag. The project is a defensive validation platform, and contributions should strengthen that mission rather than broaden it into offensive or unrelated workflows.
 
 ## Code of Conduct
 
@@ -40,8 +40,8 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/cve-threat-radar.git
-cd cve-threat-radar
+git clone https://github.com/YOUR_USERNAME/sheshnaag.git
+cd sheshnaag
 
 # Create virtual environment
 python -m venv .venv
@@ -95,10 +95,9 @@ app/
 ├── api/routes/      # API endpoint handlers
 ├── core/            # Core utilities (config, db, security)
 ├── ingestion/       # Feed ingestion clients
-├── ml/              # Machine learning models
+├── lab/             # Validation providers, collectors, attestation
+├── ml/              # Supporting risk and trust models
 ├── models/          # Database models
-├── patch_optimizer/ # Patch prioritization
-├── patch_scheduler/ # Scheduling logic
 └── services/        # Business logic
 ```
 

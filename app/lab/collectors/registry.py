@@ -62,6 +62,5 @@ def default_collectors() -> List[Collector]:
         "file_diff",
         "network_metadata",
         "service_logs",
-        "tracee_events",
     ]
     return instantiate_collectors(default_names)

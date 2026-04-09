@@ -84,6 +84,23 @@ export function ProvenanceCenterPage() {
 
       <section className="panel">
         <div className="panel-header">
+          <h2>Attestation chain</h2>
+        </div>
+        <div className="stack-list">
+          {(provenance?.items ?? []).map((item) => (
+            <article className="line-card" key={item.id}>
+              <div>
+                <strong>{item.subject_type}</strong>
+                <p>{item.signer} · {String(item.signing?.algorithm ?? "unknown")} · {String(item.signing?.fingerprint ?? "").slice(0, 16)}</p>
+              </div>
+              <span>{item.created_at ? new Date(item.created_at).toLocaleString() : "n/a"}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
           <h2>Review and export history</h2>
         </div>
         <div className="stack-list">

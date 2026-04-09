@@ -318,7 +318,8 @@ def test_artifact_transfer_checksum_manifest_assertion():
         transfer = manifest.get("artifact_transfer") or {}
         assert transfer["status"] == "completed"
         assert transfer["transfers"][0]["sha256"] == expected_sha256
-        assert Path(transfer["transfers"][0]["destination"]).exists()
+        assert transfer["transfers"][0]["destination"] == "/workspace/inputs/fixture.bin"
+        assert Path(transfer["transfers"][0]["host_path"]).exists()
         assert any(event["event_type"] == "artifact_transfer" for event in run.get("timeline", []))
     finally:
         session.close()
@@ -342,22 +343,53 @@ def test_template_catalog_listing():
 
 
 @pytest.mark.integration
-def test_lima_provider_is_discoverable_but_not_active():
-    assert LimaProvider.is_active is False
+def test_lima_provider_is_discoverable_and_supports_simulated_secure_mode():
+    assert LimaProvider.is_active is True
     assert LimaProvider.provider_name == "lima"
 
     lima = LimaProvider()
     plan = lima.build_plan(
-        revision_content={"vm": {"cpu": 2}},
+        revision_content={"provider": "lima", "image_profile": "secure_lima", "vm": {"cpu": 2}},
         run_context={"tenant_slug": "t", "analyst_name": "a", "run_id": 1},
     )
     assert plan.get("provider") == "lima"
+    assert plan.get("execution_policy", {}).get("secure_mode_required") is True
 
     session, tenant = _bootstrap_private_lab_session()
     try:
         service = SheshnaagService(session)
-        service.provider = LimaProvider()
-        run = _launch_prepared_run(service, tenant, launch_mode="simulated", recipe_content=_recipe_content())
-        assert run["state"] == "blocked"
+        run = _launch_prepared_run(
+            service,
+            tenant,
+            launch_mode="simulated",
+            recipe_content={**_recipe_content(), "provider": "lima", "image_profile": "secure_lima", "execution_policy": {"secure_mode_required": True}},
+        )
+        assert run["provider"] == "lima"
+        assert run["state"] == "completed"
+        assert run["manifest"]["provider_contract"]["provider"] == "lima"
+    finally:
+        session.close()
+
+
+@pytest.mark.integration
+def test_secure_mode_policy_rejects_docker_recipe():
+    session, tenant = _bootstrap_private_lab_session()
+    try:
+        service = SheshnaagService(session)
+        service.sync_candidates(tenant)
+        candidate = service.list_candidates(tenant, limit=1)["items"][0]
+        with pytest.raises(ValueError, match="secure-mode-required"):
+            service.create_recipe(
+                tenant,
+                candidate_id=candidate["id"],
+                name="Invalid secure recipe",
+                objective="Should fail.",
+                created_by="Lab Owner",
+                content={
+                    **_recipe_content(),
+                    "provider": "docker_kali",
+                    "execution_policy": {"secure_mode_required": True},
+                },
+            )
     finally:
         session.close()

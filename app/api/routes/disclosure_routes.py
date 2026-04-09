@@ -23,6 +23,7 @@ class DisclosureBundleRequest(BaseModel):
     signed_by: str
     evidence_ids: list[int] = Field(default_factory=list)
     redaction_notes: list[dict] = Field(default_factory=list)
+    attachment_policy: dict = Field(default_factory=dict)
     confirm_external_export: bool = False
 
 
@@ -50,6 +51,7 @@ def create_disclosure_bundle(request: DisclosureBundleRequest, session: Session 
             signed_by=request.signed_by,
             evidence_ids=request.evidence_ids,
             redaction_notes=request.redaction_notes,
+            attachment_policy=request.attachment_policy,
             confirm_external_export=request.confirm_external_export,
         )
     except ValueError as exc:

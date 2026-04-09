@@ -19,7 +19,6 @@ DEFAULT_RECIPE_COLLECTORS: Final[List[str]] = [
     "file_diff",
     "network_metadata",
     "service_logs",
-    "tracee_events",
 ]
 
 # Manifest keys (plan dict persisted on LabRun.manifest)

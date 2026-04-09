@@ -1,12 +1,12 @@
 #!/bin/bash
 # ===========================================
-# CVE Threat Radar - Setup Script
+# Project Sheshnaag - Setup Script
 # ===========================================
 
 set -e
 
-echo "🚀 CVE Threat Radar - Setup"
-echo "==========================="
+echo "🚀 Project Sheshnaag - Setup"
+echo "============================"
 
 # Colors for output
 RED='\033[0;31m'
@@ -31,18 +31,18 @@ echo -e "${GREEN}✓ Found Python $PYTHON_VERSION${NC}"
 # Create virtual environment
 echo ""
 echo "📦 Creating virtual environment..."
-if [ -d "venv" ]; then
+if [ -d ".venv" ]; then
     echo -e "${YELLOW}  Virtual environment already exists. Recreating...${NC}"
-    rm -rf venv
+    rm -rf .venv
 fi
 
-$PYTHON_CMD -m venv venv
+$PYTHON_CMD -m venv .venv
 echo -e "${GREEN}✓ Virtual environment created${NC}"
 
 # Activate virtual environment
 echo ""
 echo "🔌 Activating virtual environment..."
-source venv/bin/activate
+source .venv/bin/activate
 echo -e "${GREEN}✓ Virtual environment activated${NC}"
 
 # Upgrade pip
@@ -89,14 +89,14 @@ echo ""
 echo "To run the application:"
 echo ""
 echo "  1. Activate the virtual environment:"
-echo "     source venv/bin/activate"
+echo "     source .venv/bin/activate"
 echo ""
 echo "  2. Start the server:"
 echo "     python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
 echo ""
 echo "  3. Open in browser:"
 echo "     - API Docs: http://127.0.0.1:8000/docs"
-echo "     - Dashboard: Open frontend/index.html"
+echo "     - Operator UI: run npm --prefix frontend run dev"
 echo ""
 echo "Or use the run script:"
 echo "     ./run.sh"

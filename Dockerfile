@@ -1,4 +1,4 @@
-# CVE Threat Radar - Production Dockerfile
+# Project Sheshnaag - Production Dockerfile
 FROM python:3.11-slim
 
 # Set environment variables

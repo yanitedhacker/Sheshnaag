@@ -75,8 +75,10 @@ class TestScoringWeights:
     def test_expected_factor_keys_present(self):
         expected = {
             "risk_score", "epss", "kev", "package_match_confidence",
+            "product_match_quality",
             "attack_surface", "observability", "linux_reproducibility",
-            "patch_availability", "exploit_maturity",
+            "patch_availability", "exploit_maturity", "vendor_advisory_presence",
+            "patch_note_linkage", "source_freshness", "evidence_readiness",
         }
         assert set(CANDIDATE_SCORING_WEIGHTS.keys()) == expected
 

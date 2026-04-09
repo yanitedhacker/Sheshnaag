@@ -3,11 +3,12 @@
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.tenancy import require_writable_tenant, resolve_tenant
+from app.lab.interfaces import normalize_launch_mode
 from app.services.sheshnaag_service import SheshnaagService
 
 router = APIRouter(prefix="/api/runs", tags=["Sheshnaag Runs"])
@@ -22,6 +23,11 @@ class RunLaunchRequest(BaseModel):
     launch_mode: str = "simulated"
     acknowledge_sensitive: bool = False
     workstation: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("launch_mode", mode="before")
+    @classmethod
+    def normalize_mode(cls, value: Optional[str]) -> str:
+        return normalize_launch_mode(value)
 
 
 class RunPlanRequest(RunLaunchRequest):

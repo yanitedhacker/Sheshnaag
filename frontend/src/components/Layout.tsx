@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { api, getActiveTenantSlug, storeWorkspaceSlug } from "../api";
+import type { TenantWorkspace } from "../types";
 
 const operatorNavItems = [
   { to: "/intel", label: "Intel" },
@@ -13,6 +16,27 @@ const operatorNavItems = [
 ];
 
 export function Layout() {
+  const [workspaces, setWorkspaces] = useState<TenantWorkspace[]>([]);
+  const [activeSlug, setActiveSlug] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.getTenants(), getActiveTenantSlug()])
+      .then(([tenants, slug]) => {
+        if (cancelled) {
+          return;
+        }
+        setWorkspaces(tenants.items);
+        setActiveSlug(slug);
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const activeWorkspace = workspaces.find((item) => item.tenant_slug === activeSlug) ?? null;
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -37,13 +61,35 @@ export function Layout() {
         </nav>
 
         <div className="marketing-actions">
-          <NavLink className="ghost-button" to="/story">
-            Story
-          </NavLink>
+          <label className="checkbox-row" style={{ gap: "0.5rem" }}>
+            <span>Workspace</span>
+            <select
+              value={activeSlug}
+              onChange={(event) => {
+                const nextSlug = event.target.value;
+                storeWorkspaceSlug(nextSlug);
+                setActiveSlug(nextSlug);
+                window.location.reload();
+              }}
+            >
+              {workspaces.map((workspace) => (
+                <option key={workspace.tenant_slug} value={workspace.tenant_slug}>
+                  {workspace.tenant_name}
+                  {workspace.is_demo ? " (demo)" : ""}
+                  {workspace.is_read_only ? " [read-only]" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          {activeWorkspace ? (
+            <span className={`status-pill${activeWorkspace.is_read_only ? " status-danger" : ""}`}>
+              {activeWorkspace.tenant_slug}
+            </span>
+          ) : null}
           <a className="ghost-button" href="/docs" target="_blank" rel="noreferrer">
             API Docs
           </a>
-          <a className="primary-button" href="/api/intel/overview" target="_blank" rel="noreferrer">
+          <a className="primary-button" href={activeSlug ? `/api/intel/overview?tenant_slug=${activeSlug}` : "/api/intel/overview"} target="_blank" rel="noreferrer">
             Live Intel
           </a>
         </div>

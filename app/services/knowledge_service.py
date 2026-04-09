@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from collections import Counter
@@ -11,6 +13,8 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.time import utc_now
+from app.models.sheshnaag import KnowledgeWikiPage, RawKnowledgeSource
 from app.models.v2 import KnowledgeChunk, KnowledgeDocument, Tenant
 
 
@@ -27,6 +31,7 @@ class KnowledgeRetrievalService:
 
     def reindex_documents(self, *, document_ids: Optional[Sequence[int]] = None) -> int:
         """Chunk and index all or selected knowledge documents."""
+        self.backfill_knowledge_layers()
         query = self.session.query(KnowledgeDocument)
         if document_ids:
             query = query.filter(KnowledgeDocument.id.in_(document_ids))
@@ -71,6 +76,7 @@ class KnowledgeRetrievalService:
         limit: int = 6,
     ) -> List[dict]:
         """Retrieve the most relevant indexed chunks for a grounded prompt."""
+        self.backfill_knowledge_layers()
         normalized_query = self._normalize_text(query)
         if not normalized_query:
             return []
@@ -105,6 +111,197 @@ class KnowledgeRetrievalService:
 
         ranked.sort(key=lambda item: item["score"], reverse=True)
         return ranked[:limit]
+
+    def create_raw_source(
+        self,
+        *,
+        source_kind: str,
+        source_key: str,
+        source_label: Optional[str] = None,
+        source_url: Optional[str] = None,
+        raw_body: Optional[str] = None,
+        raw_payload: Optional[dict] = None,
+        tenant: Optional[Tenant] = None,
+        cve_id: Optional[int] = None,
+        provenance: Optional[dict] = None,
+    ) -> RawKnowledgeSource:
+        raw_payload = raw_payload or {}
+        digest_input = raw_body if raw_body else json.dumps(raw_payload, sort_keys=True, default=str)
+        sha256 = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+        record = (
+            self.session.query(RawKnowledgeSource)
+            .filter(
+                RawKnowledgeSource.tenant_id == (tenant.id if tenant else None),
+                RawKnowledgeSource.source_kind == source_kind,
+                RawKnowledgeSource.source_key == source_key,
+            )
+            .first()
+        )
+        payload = {
+            "tenant_id": tenant.id if tenant else None,
+            "cve_id": cve_id,
+            "source_kind": source_kind,
+            "source_key": source_key,
+            "source_label": source_label,
+            "source_url": source_url,
+            "raw_body": raw_body,
+            "raw_payload": raw_payload,
+            "sha256": sha256,
+            "collected_at": utc_now(),
+            "provenance": provenance or {},
+        }
+        if record is None:
+            record = RawKnowledgeSource(**payload)
+            self.session.add(record)
+            self.session.flush()
+        else:
+            for key, value in payload.items():
+                setattr(record, key, value)
+        self._upsert_retrieval_document_for_raw_source(record)
+        return record
+
+    def create_wiki_page(
+        self,
+        *,
+        page_type: str,
+        title: str,
+        summary: str,
+        source_ref_ids: Optional[List[int]] = None,
+        tenant: Optional[Tenant] = None,
+        cve_id: Optional[int] = None,
+        meta: Optional[dict] = None,
+    ) -> KnowledgeWikiPage:
+        record = (
+            self.session.query(KnowledgeWikiPage)
+            .filter(
+                KnowledgeWikiPage.tenant_id == (tenant.id if tenant else None),
+                KnowledgeWikiPage.page_type == page_type,
+                KnowledgeWikiPage.title == title,
+                KnowledgeWikiPage.cve_id == cve_id,
+            )
+            .first()
+        )
+        payload = {
+            "tenant_id": tenant.id if tenant else None,
+            "cve_id": cve_id,
+            "page_type": page_type,
+            "title": title,
+            "summary": summary,
+            "source_ref_ids": source_ref_ids or [],
+            "meta": meta or {},
+        }
+        if record is None:
+            record = KnowledgeWikiPage(**payload)
+            self.session.add(record)
+            self.session.flush()
+        else:
+            for key, value in payload.items():
+                setattr(record, key, value)
+        self._upsert_retrieval_document_for_wiki_page(record)
+        return record
+
+    def backfill_knowledge_layers(self) -> None:
+        if not settings.knowledge_backfill_enabled:
+            return
+        docs = self.session.query(KnowledgeDocument).all()
+        for document in docs:
+            meta = document.meta or {}
+            source_url = document.source_url or ""
+            if meta.get("raw_source_id") or meta.get("wiki_page_id"):
+                continue
+            tenant = None
+            if document.tenant_id is not None:
+                tenant = self.session.query(Tenant).filter(Tenant.id == document.tenant_id).first()
+            if document.document_type in {"advisory", "sbom-note"}:
+                raw = self.create_raw_source(
+                    source_kind=document.document_type,
+                    source_key=source_url or f"{document.document_type}:{document.title}",
+                    source_label=document.source_label or document.document_type,
+                    source_url=document.source_url,
+                    raw_body=document.content,
+                    tenant=tenant,
+                    cve_id=document.cve_id,
+                    provenance={"backfilled_from_document_id": document.id},
+                )
+                document.meta = {**meta, "raw_source_id": raw.id}
+            else:
+                wiki = self.create_wiki_page(
+                    page_type=document.document_type,
+                    title=document.title,
+                    summary=document.content,
+                    tenant=tenant,
+                    cve_id=document.cve_id,
+                    meta={"backfilled_from_document_id": document.id, **meta},
+                )
+                document.meta = {**meta, "wiki_page_id": wiki.id}
+        self.session.flush()
+
+    def _upsert_retrieval_document_for_raw_source(self, source: RawKnowledgeSource) -> KnowledgeDocument:
+        title = source.source_label or source.source_kind
+        content = source.raw_body or json.dumps(source.raw_payload or {}, indent=2, sort_keys=True, default=str)
+        meta = {
+            "raw_source_id": source.id,
+            "source_kind": source.source_kind,
+            "sha256": source.sha256,
+            **(source.provenance or {}),
+        }
+        record = (
+            self.session.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.document_type == "raw-source",
+                KnowledgeDocument.title == title,
+                KnowledgeDocument.source_url == source.source_url,
+                KnowledgeDocument.cve_id == source.cve_id,
+            )
+            .first()
+        )
+        payload = {
+            "tenant_id": source.tenant_id,
+            "cve_id": source.cve_id,
+            "document_type": "raw-source",
+            "title": title,
+            "content": content,
+            "source_label": source.source_label or source.source_kind,
+            "source_url": source.source_url,
+            "meta": meta,
+        }
+        if record is None:
+            record = KnowledgeDocument(**payload)
+            self.session.add(record)
+            self.session.flush()
+        else:
+            for key, value in payload.items():
+                setattr(record, key, value)
+        return record
+
+    def _upsert_retrieval_document_for_wiki_page(self, page: KnowledgeWikiPage) -> KnowledgeDocument:
+        record = (
+            self.session.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.document_type == "wiki",
+                KnowledgeDocument.title == page.title,
+                KnowledgeDocument.cve_id == page.cve_id,
+            )
+            .first()
+        )
+        payload = {
+            "tenant_id": page.tenant_id,
+            "cve_id": page.cve_id,
+            "document_type": "wiki",
+            "title": page.title,
+            "content": page.summary,
+            "source_label": "Sheshnaag Wiki",
+            "source_url": None,
+            "meta": {"wiki_page_id": page.id, "source_ref_ids": page.source_ref_ids or [], **(page.meta or {})},
+        }
+        if record is None:
+            record = KnowledgeDocument(**payload)
+            self.session.add(record)
+            self.session.flush()
+        else:
+            for key, value in payload.items():
+                setattr(record, key, value)
+        return record
 
     @staticmethod
     def _normalize_text(value: str) -> str:

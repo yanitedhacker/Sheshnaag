@@ -3,11 +3,11 @@ version: '3.8'
 services:
   db:
     image: postgres:15-alpine
-    container_name: cve-radar-lab-db
+    container_name: sheshnaag-lab-db
     environment:
       POSTGRES_USER: ${LAB_POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${LAB_POSTGRES_PASSWORD:?LAB_POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${LAB_POSTGRES_DB:-cve_threat_radar_lab}
+      POSTGRES_DB: ${LAB_POSTGRES_DB:-sheshnaag_lab}
     volumes:
       - lab_postgres_data:/var/lib/postgresql/data
     ports:
@@ -18,11 +18,11 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - cve-lab-network
+      - sheshnaag-lab-network
 
   redis:
     image: redis:7-alpine
-    container_name: cve-radar-lab-redis
+    container_name: sheshnaag-lab-redis
     ports:
       - "16379:6379"
     healthcheck:
@@ -31,16 +31,16 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - cve-lab-network
+      - sheshnaag-lab-network
 
   api:
     build:
       context: ..
       dockerfile: Dockerfile
-    container_name: cve-radar-lab-api
+    container_name: sheshnaag-lab-api
     environment:
-      DATABASE_URL: postgresql://${LAB_POSTGRES_USER:-postgres}:${LAB_POSTGRES_PASSWORD}@db:5432/${LAB_POSTGRES_DB:-cve_threat_radar_lab}
-      ASYNC_DATABASE_URL: postgresql+asyncpg://${LAB_POSTGRES_USER:-postgres}:${LAB_POSTGRES_PASSWORD}@db:5432/${LAB_POSTGRES_DB:-cve_threat_radar_lab}
+      DATABASE_URL: postgresql://${LAB_POSTGRES_USER:-postgres}:${LAB_POSTGRES_PASSWORD}@db:5432/${LAB_POSTGRES_DB:-sheshnaag_lab}
+      ASYNC_DATABASE_URL: postgresql+asyncpg://${LAB_POSTGRES_USER:-postgres}:${LAB_POSTGRES_PASSWORD}@db:5432/${LAB_POSTGRES_DB:-sheshnaag_lab}
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: test
       DEBUG: "false"
@@ -54,13 +54,13 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - cve-lab-network
+      - sheshnaag-lab-network
 
   pytest:
     build:
       context: ..
       dockerfile: Dockerfile
-    container_name: cve-radar-lab-pytest
+    container_name: sheshnaag-lab-pytest
     environment:
       LAB_API_BASE: http://api:8000
       LAB_WAIT_TIMEOUT_SECONDS: "90"
@@ -72,11 +72,11 @@ services:
       python scripts/init_db.py &&
       pytest -m "not load"
     networks:
-      - cve-lab-network
+      - sheshnaag-lab-network
 
   locust:
     image: locustio/locust:2.32.4
-    container_name: cve-radar-lab-locust
+    container_name: sheshnaag-lab-locust
     environment:
       LOCUST_HOST: http://api:8000
     volumes:
@@ -92,11 +92,11 @@ services:
       -t 1m
       --csv /mnt/results/smoke
     networks:
-      - cve-lab-network
+      - sheshnaag-lab-network
 
 volumes:
   lab_postgres_data:
 
 networks:
-  cve-lab-network:
+  sheshnaag-lab-network:
     driver: bridge

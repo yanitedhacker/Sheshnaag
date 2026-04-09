@@ -5,8 +5,30 @@
 Project Sheshnaag is split into three planes:
 
 - Control plane: FastAPI services for intel, candidate scoring, recipes, runs, provenance, and disclosure exports.
-- Validation plane: constrained Kali-backed provider abstraction with evidence collectors and teardown policy.
+- Validation plane: constrained Docker-backed provider abstraction with execute-mode evidence collectors, workspace transfer, and teardown policy.
 - Knowledge plane: raw source preservation, LLM wiki patterns, and durable project memory.
+
+## Implementation Status
+
+As of 2026-04-09, the operational shape is:
+
+- real control-plane APIs and operator UI for the Sheshnaag workflow
+- signed run and bundle attestations
+- real disclosure archive export
+- reliable targeted integration coverage for run lifecycle, evidence, provenance, artifact review, and disclosure export
+- execute-mode baseline collector support for:
+  - `process_tree`
+  - `package_inventory`
+  - `file_diff`
+  - `network_metadata`
+  - `service_logs`
+- an explicit osquery-capable image path for `osquery_snapshot`
+
+Deferred from this architecture:
+
+- Lima / VM-grade secure mode
+- production-ready Tracee/Falco/Tetragon/PCAP maturity
+- broader team/workflow expansions beyond the current v1.0 workstation story
 
 ## Current Runtime Shape
 
@@ -31,9 +53,11 @@ Project Sheshnaag is split into three planes:
 - `docker_kali` provider in `app/lab/docker_kali_provider.py`
 - provider plan includes:
   - version-pinned Kali image
+  - dedicated osquery-capable image path for `osquery_snapshot`
   - read-only root filesystem
   - explicit capability drops
   - security opts
+  - host workspace mount into the guest workdir for artifact transfer and file-diff collection
   - ephemeral workspace and teardown policy
   - network policy representation
 - default collectors via `app/lab/collectors/registry.py` and `app/lab/collector_contract.py`
@@ -93,6 +117,6 @@ Project Sheshnaag is split into three planes:
 ## Near-Term Evolution
 
 - deepen package/advisory normalization
-- replace synthetic evidence with richer local collectors
+- broaden telemetry maturity beyond the baseline collectors and `osquery_snapshot`
 - add richer disclosure packaging and review workflows
 - add future secure-mode VM provider without changing the public recipe/run contract

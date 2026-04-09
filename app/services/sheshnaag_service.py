@@ -8,7 +8,7 @@ import os
 import time
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from app.core.time import utc_now
 from typing import Any, Dict, Iterable, List, Optional
@@ -20,15 +20,19 @@ from app.core.tenancy import resolve_tenant
 from app.ingestion.connector import get_registered_connectors
 from app.models.ops import FeedSyncRun, FeedSyncState
 from app.lab.artifact_generator import DefensiveArtifactGenerator
-from app.lab.attestation import HashAttestationSigner
+from app.core.config import settings
+from app.lab.attestation import Ed25519AttestationSigner, HashAttestationSigner
 from app.lab.collector_contract import (
+    DEFAULT_RECIPE_COLLECTORS,
     build_provider_result_dict,
     recipe_collector_names,
 )
 from app.lab.collectors import instantiate_collectors
 from app.lab.collectors.common import collector_error_evidence
-from app.lab.docker_kali_provider import DEFAULT_KALI_IMAGE, DockerKaliProvider
-from app.lab.interfaces import HealthStatus, ProviderResult, RunState, validate_transition
+from app.lab.docker_kali_provider import DEFAULT_KALI_IMAGE, DEFAULT_OSQUERY_IMAGE, DEFAULT_TRACEE_IMAGE
+from app.lab.image_catalog import list_image_catalog, resolve_catalog_entry
+from app.lab.interfaces import HealthStatus, ProviderResult, RunState, normalize_launch_mode, validate_transition
+from app.lab.provider_registry import SUPPORTED_PROVIDER_NAMES, build_default_provider_registry
 from app.models.asset import Asset, AssetVulnerability
 from app.models.cve import AffectedProduct, CVE
 from app.models.risk_score import RiskScore
@@ -47,28 +51,36 @@ from app.models.sheshnaag import (
     MitigationArtifact,
     PackageRecord,
     ProductRecord,
+    RawKnowledgeSource,
     RecipeRevision,
     ResearchCandidate,
     ReviewDecision,
     RunEvent,
     SourceFeed,
+    TenantSigningKey,
     VersionRange,
     WorkstationFingerprint,
 )
 from app.models.v2 import AssetSoftware, EPSSSnapshot, KEVEntry, KnowledgeDocument, SoftwareComponent, Tenant, VexStatement
 from app.services.intel_service import ThreatIntelService
+from app.services.knowledge_service import KnowledgeRetrievalService
 
 
 CANDIDATE_SCORING_WEIGHTS: Dict[str, float] = {
-    "risk_score": 0.20,
-    "epss": 0.18,
-    "kev": 0.14,
-    "package_match_confidence": 0.12,
-    "attack_surface": 0.10,
-    "observability": 0.08,
-    "linux_reproducibility": 0.08,
-    "patch_availability": 0.06,
+    "risk_score": 0.17,
+    "epss": 0.14,
+    "kev": 0.12,
+    "package_match_confidence": 0.10,
+    "product_match_quality": 0.08,
+    "attack_surface": 0.08,
+    "observability": 0.07,
+    "linux_reproducibility": 0.07,
+    "patch_availability": 0.05,
     "exploit_maturity": 0.04,
+    "vendor_advisory_presence": 0.03,
+    "patch_note_linkage": 0.02,
+    "source_freshness": 0.02,
+    "evidence_readiness": 0.01,
 }
 """Named weights for candidate scoring.  All weights must sum to 1.0.
 Each key corresponds to a `ScoringFactor.key`.  Changing a weight here
@@ -120,10 +132,61 @@ class SheshnaagService:
     def __init__(self, session: Session):
         self.session = session
         self.intel = ThreatIntelService(session)
-        self.provider = DockerKaliProvider()
+        self.knowledge = KnowledgeRetrievalService(session)
+        self.provider_registry = build_default_provider_registry()
+        self.providers = {name: self.provider_registry.create(name) for name in self.provider_registry.supported()}
+        self.provider = self.providers["docker_kali"]
         self.artifact_generator = DefensiveArtifactGenerator()
-        self.attestation_signer = HashAttestationSigner()
+        self.default_attestation_signer = HashAttestationSigner()
         self.export_root = Path(os.getenv("SHESHNAAG_EXPORT_ROOT", "/tmp/sheshnaag_exports"))
+        self._backfill_live_launch_modes()
+
+    def _backfill_live_launch_modes(self) -> None:
+        self.session.query(LabRun).filter(LabRun.launch_mode == "live").update(
+            {LabRun.launch_mode: "execute"},
+            synchronize_session=False,
+        )
+
+    def _tenant_signing_key_path(self, tenant: Tenant, *, key_name: str = "default") -> str:
+        safe_slug = (tenant.slug or f"tenant-{tenant.id}").replace("/", "-")
+        return str(Path(settings.signing_key_dir) / f"{safe_slug}-{key_name}.ed25519")
+
+    def _ensure_tenant_signing_key(self, tenant: Tenant, *, key_name: str = "default") -> TenantSigningKey:
+        record = (
+            self.session.query(TenantSigningKey)
+            .filter(TenantSigningKey.tenant_id == tenant.id, TenantSigningKey.key_name == key_name)
+            .first()
+        )
+        key_path = self._tenant_signing_key_path(tenant, key_name=key_name)
+        material = Ed25519AttestationSigner.ensure_key_material(key_path)
+        if record is None:
+            record = TenantSigningKey(
+                tenant_id=tenant.id,
+                key_name=key_name,
+                algorithm="ed25519",
+                public_key=material["public_key"],
+                fingerprint=material["fingerprint"],
+                storage_backend="local-file",
+                key_path=material["key_path"],
+            )
+            self.session.add(record)
+            self.session.flush()
+            return record
+
+        record.algorithm = "ed25519"
+        record.public_key = material["public_key"]
+        record.fingerprint = material["fingerprint"]
+        record.storage_backend = "local-file"
+        record.key_path = material["key_path"]
+        return record
+
+    def _attestation_signer_for_tenant(self, tenant: Tenant) -> Ed25519AttestationSigner:
+        key = self._ensure_tenant_signing_key(tenant)
+        return Ed25519AttestationSigner(
+            private_key_path=key.key_path or self._tenant_signing_key_path(tenant),
+            public_key=key.public_key,
+            fingerprint=key.fingerprint,
+        )
 
     def _assert_transition(self, run: LabRun, target: RunState) -> None:
         current = RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
@@ -131,6 +194,38 @@ class SheshnaagService:
             raise ValueError(
                 f"Invalid run state transition from '{current.value}' to '{target.value}'."
             )
+
+    def _provider_for_name(self, provider_name: Optional[str]) -> Any:
+        normalized = (provider_name or "docker_kali").strip().lower()
+        provider = self.providers.get(normalized)
+        if provider is None:
+            raise ValueError(f"Unsupported provider '{provider_name}'. Expected one of {sorted(self.providers)}.")
+        return provider
+
+    def _provider_for_revision(self, recipe: LabRecipe, revision: RecipeRevision) -> Any:
+        content = dict(revision.content or {})
+        provider_name = str(content.get("provider") or recipe.provider or "docker_kali")
+        return self._provider_for_name(provider_name)
+
+    def _enforce_execution_policy(
+        self,
+        *,
+        recipe: LabRecipe,
+        revision: RecipeRevision,
+        launch_mode: str,
+    ) -> str:
+        content = dict(revision.content or {})
+        provider_name = str(content.get("provider") or recipe.provider or "docker_kali")
+        if provider_name not in SUPPORTED_PROVIDER_NAMES:
+            raise ValueError(f"Unsupported provider '{provider_name}'.")
+        execution_policy = content.get("execution_policy") or {}
+        secure_mode_required = bool(execution_policy.get("secure_mode_required"))
+        if secure_mode_required and provider_name != "lima":
+            raise ValueError("This recipe requires secure mode and must use the Lima provider.")
+        allowed_modes = execution_policy.get("allowed_modes") or ["dry_run", "simulated", "execute"]
+        if launch_mode not in allowed_modes:
+            raise ValueError(f"Launch mode '{launch_mode}' is not allowed for this recipe.")
+        return provider_name
 
     def _add_run_event(
         self,
@@ -173,6 +268,7 @@ class SheshnaagService:
             "run_id": run.id,
             "tenant_slug": tenant.slug,
             "analyst_name": analyst_name,
+            "provider": run.provider,
             "launch_mode": run.launch_mode,
             "candidate": self._candidate_payload(candidate) if candidate else {},
             "cve_id": candidate.cve.cve_id if candidate and candidate.cve else None,
@@ -264,10 +360,16 @@ class SheshnaagService:
             },
         }
 
-    def sync_candidates(self, tenant: Tenant) -> None:
+    def sync_candidates(self, tenant: Tenant, *, force: bool = False) -> None:
         """Populate research candidates from current CVE/intel context."""
         self._ensure_source_feeds()
-        cves = self.session.query(CVE).order_by(desc(CVE.published_date), desc(CVE.id)).limit(20).all()
+        self.knowledge.backfill_knowledge_layers()
+        if not force and not self._candidate_cache_is_stale(tenant):
+            self._ensure_lab_template()
+            self._ensure_analyst_identity(tenant)
+            return
+
+        cves = self._candidate_sync_cves()
         if not cves:
             return
 
@@ -322,6 +424,71 @@ class SheshnaagService:
         self.session.flush()
         self._ensure_lab_template()
         self._ensure_analyst_identity(tenant)
+
+    def _candidate_cache_is_stale(self, tenant: Tenant) -> bool:
+        latest_candidate = (
+            self.session.query(ResearchCandidate)
+            .filter(ResearchCandidate.tenant_id == tenant.id)
+            .order_by(desc(ResearchCandidate.updated_at), desc(ResearchCandidate.id))
+            .first()
+        )
+        if latest_candidate is None:
+            return True
+
+        newest_source_sync = self.session.query(func.max(SourceFeed.last_synced_at)).scalar()
+        latest_candidate_ts = latest_candidate.updated_at or latest_candidate.created_at
+        if newest_source_sync and latest_candidate_ts and newest_source_sync > latest_candidate_ts:
+            return True
+        if not latest_candidate_ts:
+            return True
+        age_seconds = (utc_now().replace(tzinfo=None) - latest_candidate_ts.replace(tzinfo=None)).total_seconds()
+        return age_seconds > settings.candidate_sync_stale_seconds
+
+    def _candidate_sync_cves(self) -> List[CVE]:
+        lookback_start = utc_now() - timedelta(days=settings.candidate_sync_lookback_days)
+        limit = settings.candidate_sync_limit
+        selected: Dict[int, CVE] = {}
+
+        recent_rows = (
+            self.session.query(CVE)
+            .filter(CVE.published_date.isnot(None), CVE.published_date >= lookback_start)
+            .order_by(desc(CVE.published_date), desc(CVE.id))
+            .limit(limit)
+            .all()
+        )
+        for row in recent_rows:
+            selected[row.id] = row
+
+        kev_ids = [row.cve_id for row in self.session.query(KEVEntry.cve_id).all()]
+        if kev_ids:
+            for row in self.session.query(CVE).filter(CVE.cve_id.in_(kev_ids)).all():
+                selected[row.id] = row
+
+        for row in self.session.query(CVE).filter(CVE.exploit_available.is_(True)).limit(limit).all():
+            selected[row.id] = row
+
+        advisory_rows = (
+            self.session.query(AdvisoryRecord)
+            .filter(AdvisoryRecord.cve_id.isnot(None))
+            .order_by(desc(AdvisoryRecord.published_at), desc(AdvisoryRecord.id))
+            .all()
+        )
+        advisory_cve_ids = {int(row.cve_id) for row in advisory_rows if row.cve_id}
+        if advisory_cve_ids:
+            for row in self.session.query(CVE).filter(CVE.id.in_(advisory_cve_ids)).all():
+                selected[row.id] = row
+
+        ranked = sorted(
+            selected.values(),
+            key=lambda row: (
+                1 if row.cve_id in set(kev_ids) else 0,
+                1 if row.exploit_available else 0,
+                row.published_date or datetime.min,
+                row.id,
+            ),
+            reverse=True,
+        )
+        return ranked[:limit]
 
     def list_candidates(
         self,
@@ -545,28 +712,32 @@ class SheshnaagService:
     ) -> Dict[str, Any]:
         """Create recipe root plus first revision."""
         candidate = self._get_candidate(tenant, candidate_id)
-        template = self._ensure_lab_template()
-        normalized_content = self._prepare_recipe_content(content, template.base_image)
+        normalized_content = self._prepare_recipe_content(content, None)
+        template = self._ensure_lab_template(
+            provider_name=str(normalized_content.get("provider") or "docker_kali"),
+            image_profile=str(normalized_content.get("image_profile") or "baseline"),
+        )
         recipe = LabRecipe(
             tenant_id=tenant.id,
             candidate_id=candidate.id,
             template_id=template.id,
             name=name,
             objective=objective,
-            provider="docker_kali",
+            provider=str(normalized_content.get("provider") or "docker_kali"),
             status="draft",
             created_by=created_by,
             current_revision_number=1,
         )
         self.session.add(recipe)
         self.session.flush()
+        signer = self._attestation_signer_for_tenant(tenant)
         revision = RecipeRevision(
             recipe_id=recipe.id,
             revision_number=1,
             approval_state="draft",
             risk_level=normalized_content.get("risk_level", "standard"),
             requires_acknowledgement=bool(normalized_content.get("requires_acknowledgement", False)),
-            signed_digest=self.attestation_signer.sign(payload=normalized_content, signer=created_by)["sha256"],
+            signed_digest=signer.sign(payload=normalized_content, signer=created_by)["sha256"],
             content=normalized_content,
         )
         self.session.add(revision)
@@ -585,18 +756,18 @@ class SheshnaagService:
         """Create a new immutable revision."""
         recipe = self._get_recipe(tenant, recipe_id)
         next_revision = (recipe.current_revision_number or 0) + 1
-        normalized_content = self._prepare_recipe_content(
-            content, self._ensure_lab_template().base_image
-        )
+        normalized_content = self._prepare_recipe_content(content, None)
+        signer = self._attestation_signer_for_tenant(tenant)
         revision = RecipeRevision(
             recipe_id=recipe.id,
             revision_number=next_revision,
             approval_state="draft",
             risk_level=normalized_content.get("risk_level", "standard"),
             requires_acknowledgement=bool(normalized_content.get("requires_acknowledgement", False)),
-            signed_digest=self.attestation_signer.sign(payload=normalized_content, signer=updated_by)["sha256"],
+            signed_digest=signer.sign(payload=normalized_content, signer=updated_by)["sha256"],
             content=normalized_content,
         )
+        recipe.provider = str(normalized_content.get("provider") or recipe.provider or "docker_kali")
         recipe.current_revision_number = next_revision
         recipe.status = "draft"
         self.session.add(revision)
@@ -618,8 +789,16 @@ class SheshnaagService:
                 target_type="recipe_revision",
                 target_id=str(revision.id),
                 decision="approved",
-                rationale="Approved for constrained Kali validation.",
-                payload={"recipe_id": recipe.id, "revision_number": revision_number},
+                rationale=(
+                    "Approved for secure-mode Lima validation."
+                    if recipe.provider == "lima"
+                    else "Approved for trusted-image constrained validation."
+                ),
+                payload={
+                    "recipe_id": recipe.id,
+                    "revision_number": revision_number,
+                    "provider": recipe.provider,
+                },
             )
         )
         self._ledger(tenant.id, None, "recipe_approved", "recipe_revision", str(revision.id), 2.0, {"reviewer": reviewer})
@@ -669,12 +848,15 @@ class SheshnaagService:
         acknowledge_sensitive: bool = False,
     ) -> Dict[str, Any]:
         """Launch or simulate a validation run."""
+        launch_mode = normalize_launch_mode(launch_mode)
         recipe = self._get_recipe(tenant, recipe_id)
         revision = self._get_recipe_revision(recipe.id, revision_number or recipe.current_revision_number)
         if revision.approval_state != "approved":
             raise ValueError("Recipe revision must be approved before launch.")
         if revision.requires_acknowledgement and not acknowledge_sensitive:
             raise ValueError("Sensitive recipe revisions require analyst acknowledgement before launch.")
+        provider_name = self._enforce_execution_policy(recipe=recipe, revision=revision, launch_mode=launch_mode)
+        provider = self._provider_for_name(provider_name)
 
         analyst = self._ensure_analyst_identity(tenant, analyst_name)
         workstation_record = self._ensure_workstation(tenant, workstation)
@@ -686,13 +868,13 @@ class SheshnaagService:
             candidate_id=recipe.candidate_id,
             analyst_id=analyst.id,
             workstation_fingerprint_id=workstation_record.id,
-            provider="docker_kali",
+            provider=provider_name,
             launch_mode=launch_mode,
             state="planned",
             requires_acknowledgement=revision.requires_acknowledgement,
             acknowledged_by=analyst_name if acknowledge_sensitive else None,
             acknowledged_at=utc_now() if acknowledge_sensitive else None,
-            workspace_path=f"/tmp/sheshnaag/run-{recipe.id}-{revision.revision_number}",
+            workspace_path=f"/tmp/sheshnaag/{provider_name}/run-{recipe.id}-{revision.revision_number}",
         )
         self.session.add(run)
         self.session.flush()
@@ -700,7 +882,7 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=analyst_name, candidate=candidate
         )
-        provider_result = self.provider.launch(revision_content=revision.content, run_context=run_context)
+        provider_result = provider.launch(revision_content=revision.content, run_context=run_context)
         self._apply_provider_result(run, provider_result)
         self._annotate_run_manifest(
             run=run,
@@ -723,8 +905,9 @@ class SheshnaagService:
 
         self._add_run_event(run, "provider_launch", provider_result)
 
-        artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
-        self._persist_run_artifacts(run=run, artifacts=artifacts)
+        if self._should_collect_after_provider_launch(run):
+            artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
+            self._persist_run_artifacts(run=run, artifacts=artifacts)
         self._ledger(tenant.id, analyst.id, "run_launched", "run", str(run.id), 5.0, {"state": run.state})
         self.session.flush()
         return self.get_run(tenant, run.id)
@@ -741,12 +924,14 @@ class SheshnaagService:
         acknowledge_sensitive: bool = False,
     ) -> Dict[str, Any]:
         """Persist a planned run using provider.build_plan (staged lifecycle, WS4-T3)."""
+        launch_mode = normalize_launch_mode(launch_mode)
         recipe = self._get_recipe(tenant, recipe_id)
         revision = self._get_recipe_revision(recipe.id, revision_number or recipe.current_revision_number)
         if revision.approval_state != "approved":
             raise ValueError("Recipe revision must be approved before plan.")
         if revision.requires_acknowledgement and not acknowledge_sensitive:
             raise ValueError("Sensitive recipe revisions require analyst acknowledgement before plan.")
+        provider_name = self._enforce_execution_policy(recipe=recipe, revision=revision, launch_mode=launch_mode)
 
         analyst = self._ensure_analyst_identity(tenant, analyst_name)
         workstation_record = self._ensure_workstation(tenant, workstation)
@@ -758,13 +943,13 @@ class SheshnaagService:
             candidate_id=recipe.candidate_id,
             analyst_id=analyst.id,
             workstation_fingerprint_id=workstation_record.id,
-            provider="docker_kali",
+            provider=provider_name,
             launch_mode=launch_mode,
             state=RunState.PLANNED.value,
             requires_acknowledgement=revision.requires_acknowledgement,
             acknowledged_by=analyst_name if acknowledge_sensitive else None,
             acknowledged_at=utc_now() if acknowledge_sensitive else None,
-            workspace_path=f"/tmp/sheshnaag/run-{recipe.id}-{revision.revision_number}",
+            workspace_path=f"/tmp/sheshnaag/{provider_name}/run-{recipe.id}-{revision.revision_number}",
         )
         self.session.add(run)
         self.session.flush()
@@ -772,7 +957,7 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=analyst_name, candidate=candidate
         )
-        built_plan = self.provider.build_plan(revision_content=revision.content, run_context=run_context)
+        built_plan = self._provider_for_name(provider_name).build_plan(revision_content=revision.content, run_context=run_context)
         placeholder = ProviderResult(
             state=RunState.PLANNED,
             provider_run_ref="",
@@ -814,7 +999,8 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=self._analyst_display_name(run), candidate=candidate
         )
-        result = self.provider.create(plan=run.manifest, run_context=run_context)
+        provider = self._provider_for_name(run.provider)
+        result = provider.create(plan=run.manifest, run_context=run_context)
         self._apply_provider_result(run, result)
         revision = (
             self.session.query(RecipeRevision)
@@ -843,7 +1029,8 @@ class SheshnaagService:
         if current != RunState.PLANNED:
             raise ValueError(f"Boot requires planned state after allocation; current={run.state}.")
 
-        result = self.provider.boot(provider_run_ref=run.provider_run_ref)
+        provider = self._provider_for_name(run.provider)
+        result = provider.boot(provider_run_ref=run.provider_run_ref)
         self._apply_provider_result(run, result)
         self._add_run_event(run, "run_booted", result)
         run.started_at = run.started_at or utc_now()
@@ -853,7 +1040,7 @@ class SheshnaagService:
 
         candidate = self._get_candidate(tenant, run.candidate_id) if run.candidate_id else None
         analyst_name = self._analyst_display_name(run)
-        if not self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run.id).count():
+        if self._should_collect_after_provider_launch(run) and not self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run.id).count():
             artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
             self._persist_run_artifacts(run=run, artifacts=artifacts)
 
@@ -885,13 +1072,15 @@ class SheshnaagService:
             ],
             "evidence_timeline": self._evidence_timeline_payload(run.id),
             "runtime_findings_summary": self._runtime_findings_summary(run.id),
+            "evidence_summary": self._evidence_summary(run.id),
         }
 
     def stop_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
         """Stop a running validation run."""
         run = self._get_run(tenant, run_id)
         self._assert_transition(run, RunState.STOPPING)
-        result = self.provider.stop(provider_run_ref=run.provider_run_ref)
+        provider = self._provider_for_name(run.provider)
+        result = provider.stop(provider_run_ref=run.provider_run_ref)
         self._apply_provider_result(run, result)
         self._add_run_event(run, "run_stopped", result)
         self.session.flush()
@@ -903,7 +1092,8 @@ class SheshnaagService:
         self._assert_transition(run, RunState.TEARING_DOWN)
         retention = (run.manifest or {}).get("workspace_retention", "destroy_immediately")
         retain = retention in ("retain_exports_only", "retain_workspace_until_review")
-        result = self.provider.teardown(provider_run_ref=run.provider_run_ref, retain_workspace=retain)
+        provider = self._provider_for_name(run.provider)
+        result = provider.teardown(provider_run_ref=run.provider_run_ref, retain_workspace=retain)
         self._apply_provider_result(run, result)
         run.ended_at = run.ended_at or utc_now()
         self._add_run_event(run, "run_teardown", result)
@@ -915,7 +1105,8 @@ class SheshnaagService:
         run = self._get_run(tenant, run_id)
         current = RunState(run.state) if run.state in [s.value for s in RunState] else RunState.ERRORED
         if current not in (RunState.DESTROYED,):
-            result = self.provider.destroy(provider_run_ref=run.provider_run_ref)
+            provider = self._provider_for_name(run.provider)
+            result = provider.destroy(provider_run_ref=run.provider_run_ref)
             self._apply_provider_result(run, result)
             run.ended_at = run.ended_at or utc_now()
             self._add_run_event(run, "run_destroyed", result)
@@ -925,7 +1116,8 @@ class SheshnaagService:
     def run_health(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
         """Check the health of a running validation run."""
         run = self._get_run(tenant, run_id)
-        result = self.provider.health(provider_run_ref=run.provider_run_ref)
+        provider = self._provider_for_name(run.provider)
+        result = provider.health(provider_run_ref=run.provider_run_ref)
         prev_state = run.state
         if result.state.value != prev_state:
             self._apply_provider_result(run, result)
@@ -950,6 +1142,7 @@ class SheshnaagService:
                 }
                 for e in events
             ],
+            "evidence_summary": self._evidence_summary(run.id),
         }
 
     def _runtime_findings_summary(self, run_id: int) -> Dict[str, Any]:
@@ -973,6 +1166,35 @@ class SheshnaagService:
                         }
                     )
         return {"count": len(items), "items": items[:500]}
+
+    def _evidence_summary(self, run_id: int) -> Dict[str, Any]:
+        rows = self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run_id).all()
+        by_kind: Dict[str, int] = {}
+        by_collector: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            by_kind[row.artifact_kind] = by_kind.get(row.artifact_kind, 0) + 1
+            collector_key = row.collector_name or row.artifact_kind
+            payload = row.payload or {}
+            health = payload.get("collector_health") if isinstance(payload, dict) else {}
+            entry = by_collector.setdefault(
+                collector_key,
+                {
+                    "collector_name": collector_key,
+                    "status": "unknown",
+                    "count": 0,
+                    "latest_title": row.title,
+                },
+            )
+            entry["count"] += 1
+            entry["latest_title"] = row.title
+            if isinstance(health, dict) and health.get("status"):
+                status = str(health["status"]).strip().lower()
+                entry["status"] = "live" if status == "ok" else status
+        return {
+            "count": len(rows),
+            "by_kind": by_kind,
+            "collectors": list(by_collector.values()),
+        }
 
     def _evidence_timeline_payload(self, run_id: int) -> Dict[str, Any]:
         rows = (
@@ -1063,10 +1285,12 @@ class SheshnaagService:
         decision: str,
         reviewer: str,
         rationale: Optional[str] = None,
+        correction_note: Optional[str] = None,
+        supersedes_artifact_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Advance an artifact through the review state machine."""
         artifact = self._get_artifact_entity(tenant, artifact_family, artifact_id)
-        valid_states = {"under_review", "approved", "rejected", "superseded"}
+        valid_states = {"draft", "under_review", "approved", "rejected", "superseded", "deprecated"}
         if decision not in valid_states:
             raise ValueError(f"Invalid artifact review state '{decision}'.")
         artifact.status = decision
@@ -1078,7 +1302,12 @@ class SheshnaagService:
                 target_id=str(artifact.id),
                 decision=decision,
                 rationale=rationale,
-                payload={"run_id": artifact.run_id, "artifact_family": artifact_family},
+                payload={
+                    "run_id": artifact.run_id,
+                    "artifact_family": artifact_family,
+                    "correction_note": correction_note,
+                    "supersedes_artifact_id": supersedes_artifact_id,
+                },
             )
         )
         analyst_id = self._run_analyst_id(artifact.run_id)
@@ -1151,6 +1380,7 @@ class SheshnaagService:
                     "signature": row.signature,
                     "signer": row.signer,
                     "payload": row.payload,
+                    "signing": (row.payload or {}).get("signing") if isinstance(row.payload, dict) else {},
                     "created_at": row.created_at.isoformat() if row.created_at else None,
                 }
                 for row in rows
@@ -1188,9 +1418,19 @@ class SheshnaagService:
                         "workstation_fingerprint": workstation.fingerprint if workstation else None,
                         "acknowledgement": (run.manifest or {}).get("acknowledgement"),
                         "artifact_transfer": (run.manifest or {}).get("artifact_transfer"),
+                        "provider_contract": (run.manifest or {}).get("provider_contract"),
+                        "trusted_image": (run.manifest or {}).get("image_catalog"),
                         "signing_backends": sorted(
                             {
                                 (item.payload or {}).get("signing", {}).get("backend")
+                                for item in rows
+                                if isinstance(item.payload, dict)
+                            }
+                            - {None}
+                        ),
+                        "signing_fingerprints": sorted(
+                            {
+                                (item.payload or {}).get("signing", {}).get("fingerprint")
                                 for item in rows
                                 if isinstance(item.payload, dict)
                             }
@@ -1276,6 +1516,7 @@ class SheshnaagService:
         signed_by: str,
         evidence_ids: Optional[List[int]] = None,
         redaction_notes: Optional[List[Dict[str, Any]]] = None,
+        attachment_policy: Optional[Dict[str, Any]] = None,
         confirm_external_export: bool = False,
     ) -> Dict[str, Any]:
         """Create a disclosure/export bundle from a run."""
@@ -1309,6 +1550,7 @@ class SheshnaagService:
             evidence_rows=evidence_rows,
             artifacts=selected_artifacts,
             redaction_notes=redaction_notes or [],
+            attachment_policy=attachment_policy or {},
             warnings=warnings,
         )
         archive = self._write_bundle_archive(
@@ -1318,7 +1560,15 @@ class SheshnaagService:
             mitigation_rows=[row for row in selected_artifacts if isinstance(row, MitigationArtifact)],
         )
         manifest["archive"] = archive
-        signed = self.attestation_signer.sign(payload=manifest, signer=signed_by)
+        signer = self._attestation_signer_for_tenant(tenant)
+        signed = signer.sign(payload=manifest, signer=signed_by)
+        manifest["signing"] = {
+            "backend": signed.get("backend"),
+            "algorithm": signed.get("algorithm"),
+            "fingerprint": signed.get("fingerprint"),
+            "public_key": signed.get("public_key"),
+            "verification_status": "verified",
+        }
         bundle = DisclosureBundle(
             tenant_id=tenant.id,
             run_id=run.id,
@@ -1341,7 +1591,16 @@ class SheshnaagService:
                 sha256=signed["sha256"],
                 signature=signed["signature"],
                 signer=signed["signer"],
-                payload={**manifest, "signing": {"backend": signed.get("backend"), "algorithm": signed.get("algorithm")}},
+                payload={
+                    **manifest,
+                    "signing": {
+                        "backend": signed.get("backend"),
+                        "algorithm": signed.get("algorithm"),
+                        "fingerprint": signed.get("fingerprint"),
+                        "public_key": signed.get("public_key"),
+                        "verification_status": "verified",
+                    },
+                },
             )
         )
         self._ledger(
@@ -1444,11 +1703,25 @@ class SheshnaagService:
     ) -> List[ScoringFactor]:
         """Build the ordered list of scoring factors with named weights."""
         w = CANDIDATE_SCORING_WEIGHTS
+        advisory_rows = self.session.query(AdvisoryRecord).filter(AdvisoryRecord.cve_id == cve.id).all()
+        vendor_advisory_rows = [
+            row for row in advisory_rows
+            if (row.raw_data or {}).get("_advisory_type") != "patch_note"
+        ]
+        patch_note_rows = [
+            row for row in advisory_rows
+            if (row.raw_data or {}).get("_advisory_type") == "patch_note"
+        ]
 
         risk_val = float(risk.overall_score / 100.0) if risk and risk.overall_score is not None else 0.35
         epss_val = float(epss.score) if epss else 0.0
         kev_val = 1.0 if kev else 0.0
         pkg_val = min(1.0, asset_matches / 3.0)
+        product_match_quality = 1.0 if affected and asset_matches > 0 else (0.72 if affected else 0.35)
+        vendor_advisory_presence = min(1.0, max(0, len(vendor_advisory_rows)))
+        patch_note_linkage = min(1.0, len(patch_note_rows) / 2.0)
+        source_freshness = self._source_freshness_score(["nvd", "kev", "epss", "vendor_advisory", "patch_notes"])
+        evidence_readiness = self._evidence_readiness_score()
 
         # Attack surface: network-reachable CVEs score higher
         attack_surface = 0.9 if cve.attack_vector == "NETWORK" else (0.7 if cve.attack_vector == "ADJACENT" else 0.4)
@@ -1465,17 +1738,45 @@ class SheshnaagService:
             "epss": (epss_val, f"EPSS probability {epss_val:.3f}" if epss else "No EPSS data available"),
             "kev": (kev_val, "In CISA KEV catalog" if kev else "Not in KEV catalog"),
             "package_match_confidence": (pkg_val, f"{asset_matches} tenant asset(s) match affected package"),
+            "product_match_quality": (product_match_quality, "Affected product metadata aligns with tenant package/product context" if affected else "No strong product mapping available"),
             "attack_surface": (attack_surface, f"Attack vector: {cve.attack_vector or 'UNKNOWN'}"),
             "observability": (observability, "Network vector aids monitoring" if observability > 0.7 else "Local vector limits telemetry"),
             "linux_reproducibility": (reproducibility, "Affected product data present" if affected else "No affected product mapping"),
             "patch_availability": (patch_factor, "Patch available — lower research urgency" if patch_available else "No patch — higher research urgency"),
             "exploit_maturity": (exploit_maturity, "Composite of KEV, EPSS, and known exploit signals"),
+            "vendor_advisory_presence": (vendor_advisory_presence, "Vendor advisory context linked to this CVE" if vendor_advisory_rows else "No vendor advisory captured yet"),
+            "patch_note_linkage": (patch_note_linkage, "Patch-note linkage increases operational follow-up value" if patch_note_rows else "No patch-note linkage captured yet"),
+            "source_freshness": (source_freshness, "Upstream source feeds are fresh enough for candidate materialization"),
+            "evidence_readiness": (evidence_readiness, "Local Docker validation path and baseline collectors are ready" if evidence_readiness >= 0.8 else "Live evidence path is currently degraded"),
         }
 
         return [
             ScoringFactor(key=key, raw_value=val, weight=w[key], weighted_value=val * w[key], reason=reason)
             for key, (val, reason) in raw.items()
         ]
+
+    def _source_freshness_score(self, feed_keys: List[str]) -> float:
+        now = utc_now().replace(tzinfo=None)
+        relevant = self.session.query(SourceFeed).filter(SourceFeed.feed_key.in_(feed_keys)).all()
+        if not relevant:
+            return 0.5
+        fresh = 0
+        for feed in relevant:
+            threshold = int(feed.freshness_seconds or 21600)
+            if feed.last_synced_at is None:
+                continue
+            synced = feed.last_synced_at.replace(tzinfo=None) if feed.last_synced_at.tzinfo else feed.last_synced_at
+            if (now - synced).total_seconds() <= threshold:
+                fresh += 1
+        return round(fresh / max(1, len(relevant)), 3)
+
+    def _evidence_readiness_score(self) -> float:
+        plan = self.provider.build_plan(
+            revision_content={"base_image": DEFAULT_KALI_IMAGE, "collectors": list(DEFAULT_RECIPE_COLLECTORS)},
+            run_context={"tenant_slug": "workspace", "analyst_name": "system", "run_id": 0},
+        )
+        status = ((plan.get("provider_readiness") or {}).get("status") or "degraded").lower()
+        return {"ready": 1.0, "degraded": 0.65, "unavailable": 0.2}.get(status, 0.5)
 
     def _build_citations(
         self,
@@ -1518,6 +1819,23 @@ class SheshnaagService:
                 "url": doc.source_url,
                 "detail": (doc.content[:200] + "...") if doc.content and len(doc.content) > 200 else doc.content,
             })
+
+        raw_sources = (
+            self.session.query(RawKnowledgeSource)
+            .filter(RawKnowledgeSource.cve_id == cve.id)
+            .order_by(desc(RawKnowledgeSource.collected_at), desc(RawKnowledgeSource.id))
+            .limit(5)
+            .all()
+        )
+        for source in raw_sources:
+            citations.append(
+                {
+                    "type": f"raw_{source.source_kind}",
+                    "label": source.source_label or source.source_kind,
+                    "url": source.source_url,
+                    "detail": f"Raw source sha256 {source.sha256[:12]}...",
+                }
+            )
 
         # VEX citations
         vex_stmts = (
@@ -1645,6 +1963,18 @@ class SheshnaagService:
             analyst_name=analyst_name,
             include_actor=acknowledgement_recorded,
         )
+        manifest.setdefault("provider_contract", {})
+        manifest["provider_contract"].update(
+            {
+                "provider": run.provider,
+                "launch_mode": run.launch_mode,
+                "recipe_revision_id": run.recipe_revision_id,
+                "trusted_image": manifest.get("image_catalog") or {},
+                "execution_policy": (revision.content or {}).get("execution_policy") or {},
+                "workspace_sync": manifest.get("workspace_sync") or {},
+                "snapshot_policy": manifest.get("snapshot_policy") or {},
+            }
+        )
         if acknowledgement:
             manifest["acknowledgement"] = acknowledgement
         run.manifest = manifest
@@ -1723,7 +2053,8 @@ class SheshnaagService:
             run.manifest = manifest
             return
 
-        transfer_result = self.provider.transfer_artifacts(
+        provider = self._provider_for_name(run.provider)
+        transfer_result = provider.transfer_artifacts(
             provider_run_ref=run.provider_run_ref or f"run-{run.id}",
             artifacts=artifact_inputs,
             workspace_path=workspace_path,
@@ -1830,7 +2161,9 @@ class SheshnaagService:
                     )
                 )
         generated = self.artifact_generator.generate(run_context=run_context, evidence=evidence)
-        attestation = self.attestation_signer.sign(payload=run.manifest or {}, signer=analyst_name)
+        tenant = self.session.query(Tenant).filter(Tenant.id == run.tenant_id).first()
+        signer = self._attestation_signer_for_tenant(tenant) if tenant else self.default_attestation_signer
+        attestation = signer.sign(payload=run.manifest or {}, signer=analyst_name)
         return RunArtifacts(
             evidence=evidence,
             detections=generated["detection_artifacts"],
@@ -1903,7 +2236,9 @@ class SheshnaagService:
             detection_records=detection_records,
             mitigation_records=mitigation_records,
         )
-        signed = self.attestation_signer.sign(payload=attestation_payload, signer=artifacts.attestation["signer"])
+        tenant = self.session.query(Tenant).filter(Tenant.id == run.tenant_id).first()
+        signer = self._attestation_signer_for_tenant(tenant) if tenant else self.default_attestation_signer
+        signed = signer.sign(payload=attestation_payload, signer=artifacts.attestation["signer"])
         self.session.add(
             AttestationRecord(
                 tenant_id=run.tenant_id,
@@ -1913,7 +2248,16 @@ class SheshnaagService:
                 sha256=signed["sha256"],
                 signature=signed["signature"],
                 signer=signed["signer"],
-                payload=attestation_payload,
+                payload={
+                    **attestation_payload,
+                    "signing": {
+                        "backend": signed.get("backend"),
+                        "algorithm": signed.get("algorithm"),
+                        "fingerprint": signed.get("fingerprint"),
+                        "public_key": signed.get("public_key"),
+                        "verification_status": "verified",
+                    },
+                },
             )
         )
 
@@ -1960,6 +2304,7 @@ class SheshnaagService:
         }
 
     def _run_summary(self, run: LabRun) -> Dict[str, Any]:
+        manifest = run.manifest or {}
         return {
             "id": run.id,
             "recipe_revision_id": run.recipe_revision_id,
@@ -1977,8 +2322,13 @@ class SheshnaagService:
             "acknowledged_at": run.acknowledged_at.isoformat() if run.acknowledged_at else None,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "ended_at": run.ended_at.isoformat() if run.ended_at else None,
-            "manifest": run.manifest,
+            "manifest": manifest,
             "run_transcript": run.run_transcript,
+            "provider_readiness": manifest.get("provider_readiness") or {},
+            "collector_capabilities": manifest.get("collector_capabilities") or [],
+            "image_catalog": manifest.get("image_catalog") or {},
+            "execution_policy": manifest.get("execution_policy") or {},
+            "provider_contract": manifest.get("provider_contract") or {},
         }
 
     def _apply_provider_result(self, run: LabRun, result: ProviderResult) -> None:
@@ -1996,6 +2346,12 @@ class SheshnaagService:
         run.workspace_path = plan.get("host_workspace") or run.workspace_path
         run.manifest = plan
         run.run_transcript = result.transcript
+
+    def _should_collect_after_provider_launch(self, run: LabRun) -> bool:
+        if run.launch_mode in {"dry_run", "simulated"}:
+            return True
+        manifest = run.manifest or {}
+        return run.launch_mode == "execute" and bool(run.provider_run_ref and manifest.get("container_id"))
 
     def _get_candidate(self, tenant: Tenant, candidate_id: int) -> ResearchCandidate:
         candidate = (
@@ -2033,7 +2389,7 @@ class SheshnaagService:
             raise ValueError("Run not found.")
         return run
 
-    def _prepare_recipe_content(self, content: Dict[str, Any], image: str) -> Dict[str, Any]:
+    def _prepare_recipe_content(self, content: Dict[str, Any], image: Optional[str]) -> Dict[str, Any]:
         normalized = self._normalize_recipe_content(content, image)
         validation = self.validate_recipe_content(normalized)
         if not validation["valid"]:
@@ -2073,6 +2429,7 @@ class SheshnaagService:
                     "name": t.name,
                     "distro": t.distro,
                     "base_image": t.base_image,
+                    "image_digest": t.image_digest,
                     "is_hardened": t.is_hardened,
                     "network_mode": t.network_mode,
                     "meta": t.meta,
@@ -2082,19 +2439,33 @@ class SheshnaagService:
             "count": len(rows),
         }
 
-    def _normalize_recipe_content(self, content: Dict[str, Any], image: str) -> Dict[str, Any]:
+    def _normalize_recipe_content(self, content: Dict[str, Any], image: Optional[str]) -> Dict[str, Any]:
         normalized = dict(content)
         if "artifact_inputs" not in normalized and "input_artifacts" in normalized:
             normalized["artifact_inputs"] = normalized["input_artifacts"]
-        normalized.setdefault("base_image", image)
+        normalized.setdefault("provider", "docker_kali")
         normalized.setdefault("command", ["sleep", "1"])
         normalized.setdefault("network_policy", {"allow_egress_hosts": []})
-        from app.lab.collector_contract import DEFAULT_RECIPE_COLLECTORS
-
         normalized.setdefault("collectors", list(DEFAULT_RECIPE_COLLECTORS))
         normalized.setdefault("teardown_policy", {"mode": "destroy_immediately", "ephemeral_workspace": True})
         normalized.setdefault("risk_level", "standard")
         normalized.setdefault("workspace_retention", "destroy_immediately")
+        execution_policy = dict(normalized.get("execution_policy") or {})
+        if normalized["provider"] == "lima":
+            execution_policy.setdefault("secure_mode_required", True)
+        else:
+            execution_policy.setdefault("secure_mode_required", False)
+        execution_policy.setdefault("preferred_provider", normalized["provider"])
+        execution_policy.setdefault("allowed_modes", ["dry_run", "simulated", "execute"])
+        normalized["execution_policy"] = execution_policy
+        catalog_entry = resolve_catalog_entry(
+            provider=str(normalized["provider"]),
+            image_profile=normalized.get("image_profile"),
+            requested_image=normalized.get("base_image") or image,
+            collectors=normalized.get("collectors") or [],
+        )
+        normalized["base_image"] = catalog_entry.image
+        normalized["image_profile"] = catalog_entry.profile
         return normalized
 
     def _ensure_source_feeds(self) -> None:
@@ -2142,33 +2513,51 @@ class SheshnaagService:
                 )
         self.session.flush()
 
-    def _ensure_lab_template(self) -> LabTemplate:
+    def _ensure_lab_template(self, *, provider_name: str = "docker_kali", image_profile: str = "baseline") -> LabTemplate:
+        self._ensure_template_catalog()
+        entry = resolve_catalog_entry(provider=provider_name, image_profile=image_profile)
         template = (
             self.session.query(LabTemplate)
-            .filter(LabTemplate.provider == "docker_kali", LabTemplate.name == "Constrained Kali Validation")
+            .filter(LabTemplate.provider == provider_name, LabTemplate.base_image == entry.image)
             .first()
         )
         if template is None:
             template = LabTemplate(
-                provider="docker_kali",
-                name="Constrained Kali Validation",
-                distro="kali",
-                base_image=DEFAULT_KALI_IMAGE,
-                image_digest=self.attestation_signer.sign(payload={"image": DEFAULT_KALI_IMAGE}, signer="system")["sha256"],
+                provider=provider_name,
+                name=f"{provider_name}:{entry.profile}",
+                distro="ubuntu" if provider_name == "lima" else "kali",
+                base_image=entry.image,
+                image_digest=entry.digest,
                 is_hardened=True,
                 network_mode="isolated",
-                meta={
-                    "read_only_rootfs": True,
-                    "default_cap_drop": ["ALL"],
-                    "egress_policy": "default-deny",
-                },
+                meta=entry.to_manifest(),
             )
             self.session.add(template)
             self.session.flush()
         return template
 
     def _ensure_template_catalog(self) -> None:
-        """Seed the full template catalog including Ubuntu, Debian, and Rocky."""
+        """Seed trusted image-backed templates plus compatibility templates."""
+        for entry in list_image_catalog():
+            existing = (
+                self.session.query(LabTemplate)
+                .filter(LabTemplate.provider == entry.provider, LabTemplate.base_image == entry.image)
+                .first()
+            )
+            if existing is None:
+                distro = "ubuntu" if entry.provider == "lima" else "kali"
+                self.session.add(
+                    LabTemplate(
+                        provider=entry.provider,
+                        name=f"{entry.provider}:{entry.profile}",
+                        distro=distro,
+                        base_image=entry.image,
+                        image_digest=entry.digest,
+                        is_hardened=True,
+                        network_mode="isolated",
+                        meta=entry.to_manifest(),
+                    )
+                )
         catalog = [
             {
                 "provider": "docker_kali",
@@ -2181,7 +2570,22 @@ class SheshnaagService:
                     "read_only_rootfs": True,
                     "default_cap_drop": ["ALL"],
                     "egress_policy": "default-deny",
-                    "description": "Default Kali-on-Docker for offensive validation.",
+                    "description": "Default Kali-on-Docker image for constrained defensive validation.",
+                },
+            },
+            {
+                "provider": "docker_kali",
+                "name": "Constrained Kali Validation + osquery",
+                "distro": "kali",
+                "base_image": DEFAULT_OSQUERY_IMAGE,
+                "is_hardened": True,
+                "network_mode": "isolated",
+                "meta": {
+                    "read_only_rootfs": True,
+                    "default_cap_drop": ["ALL"],
+                    "egress_policy": "default-deny",
+                    "description": "Dedicated Kali-derived lab image for execute-mode osquery snapshot collection.",
+                    "tooling_profile": "osquery",
                 },
             },
             {
@@ -2243,7 +2647,7 @@ class SheshnaagService:
                         name=entry["name"],
                         distro=entry["distro"],
                         base_image=entry["base_image"],
-                        image_digest=self.attestation_signer.sign(
+                        image_digest=self.default_attestation_signer.sign(
                             payload={"image": entry["base_image"]}, signer="system"
                         )["sha256"],
                         is_hardened=entry["is_hardened"],
@@ -2263,6 +2667,7 @@ class SheshnaagService:
 
     def _detection_artifact_payload(self, item: DetectionArtifact) -> Dict[str, Any]:
         reviews = self._artifact_review_entries("detection_artifact", item.id)
+        latest_review = reviews[0] if reviews else None
         return {
             "id": item.id,
             "run_id": item.run_id,
@@ -2272,6 +2677,12 @@ class SheshnaagService:
             "sha256": item.sha256,
             "evidence_artifact_id": item.evidence_artifact_id,
             "rule_body": item.rule_body,
+            "lineage": {
+                "supersedes_artifact_id": (latest_review.payload or {}).get("supersedes_artifact_id") if latest_review else None,
+                "correction_note": (latest_review.payload or {}).get("correction_note") if latest_review else None,
+                "latest_decision": latest_review.decision if latest_review else item.status,
+                "latest_reviewed_at": latest_review.created_at.isoformat() if latest_review and latest_review.created_at else None,
+            },
             "review_history": [
                 {
                     "decision": row.decision,
@@ -2296,6 +2707,7 @@ class SheshnaagService:
 
     def _mitigation_artifact_payload(self, item: MitigationArtifact) -> Dict[str, Any]:
         reviews = self._artifact_review_entries("mitigation_artifact", item.id)
+        latest_review = reviews[0] if reviews else None
         return {
             "id": item.id,
             "run_id": item.run_id,
@@ -2303,6 +2715,12 @@ class SheshnaagService:
             "title": item.title,
             "status": item.status,
             "body": item.body,
+            "lineage": {
+                "supersedes_artifact_id": (latest_review.payload or {}).get("supersedes_artifact_id") if latest_review else None,
+                "correction_note": (latest_review.payload or {}).get("correction_note") if latest_review else None,
+                "latest_decision": latest_review.decision if latest_review else item.status,
+                "latest_reviewed_at": latest_review.created_at.isoformat() if latest_review and latest_review.created_at else None,
+            },
             "review_history": [
                 {
                     "decision": row.decision,
@@ -2397,8 +2815,16 @@ class SheshnaagService:
                 ],
             },
         }
-        signed = self.attestation_signer.sign(payload=payload, signer=signer)
-        payload["signing"] = {"backend": signed.get("backend"), "algorithm": signed.get("algorithm")}
+        tenant = self.session.query(Tenant).filter(Tenant.id == run.tenant_id).first()
+        attestation_signer = self._attestation_signer_for_tenant(tenant) if tenant else self.default_attestation_signer
+        signed = attestation_signer.sign(payload=payload, signer=signer)
+        payload["signing"] = {
+            "backend": signed.get("backend"),
+            "algorithm": signed.get("algorithm"),
+            "fingerprint": signed.get("fingerprint"),
+            "public_key": signed.get("public_key"),
+            "verification_status": "verified",
+        }
         return payload
 
     def _build_reproduction_steps(self, *, run: LabRun, evidence_rows: List[EvidenceArtifact]) -> List[str]:
@@ -2426,6 +2852,12 @@ class SheshnaagService:
         warnings: List[str],
         reproduction_steps: List[str],
     ) -> str:
+        bundle_labels = {
+            "vendor_disclosure": "Vendor disclosure",
+            "bug_bounty": "Bug bounty submission",
+            "research_submission": "Research submission",
+            "internal_remediation": "Internal remediation package",
+        }
         artifact_lines = []
         for row in artifacts:
             if isinstance(row, DetectionArtifact):
@@ -2437,16 +2869,20 @@ class SheshnaagService:
             [
                 f"# {title}",
                 "",
-                f"Bundle type: `{bundle_type}`",
+                f"Bundle type: `{bundle_labels.get(bundle_type, bundle_type)}`",
                 f"Run ID: `{run.id}`",
                 f"Launch mode: `{run.launch_mode}`",
                 "",
                 "## Summary",
                 f"- Evidence included: {len(evidence_rows)}",
                 f"- Artifacts included: {len(artifacts)}",
+                f"- Provider: {run.provider}",
                 "",
                 "## Export warnings",
                 *warning_lines,
+                "",
+                "## Intended use",
+                f"- {bundle_labels.get(bundle_type, bundle_type)} workflow",
                 "",
                 "## Artifacts",
                 *(artifact_lines or ["- No reviewed artifacts were available; draft artifacts were exported for internal review only."]),
@@ -2466,9 +2902,20 @@ class SheshnaagService:
         evidence_rows: List[EvidenceArtifact],
         artifacts: List[Any],
         redaction_notes: List[Dict[str, Any]],
+        attachment_policy: List[Dict[str, Any]] | Dict[str, Any],
         warnings: List[str],
     ) -> Dict[str, Any]:
         reproduction_steps = self._build_reproduction_steps(run=run, evidence_rows=evidence_rows)
+        attachment_defaults = {
+            "vendor_disclosure": {"include_raw_logs": False, "include_pcap": False, "include_screenshots": False},
+            "bug_bounty": {"include_raw_logs": False, "include_pcap": False, "include_screenshots": True},
+            "research_submission": {"include_raw_logs": True, "include_pcap": False, "include_screenshots": True},
+            "internal_remediation": {"include_raw_logs": True, "include_pcap": False, "include_screenshots": True},
+        }
+        effective_attachment_policy = {
+            **attachment_defaults.get(bundle_type, attachment_defaults["vendor_disclosure"]),
+            **(attachment_policy if isinstance(attachment_policy, dict) else {}),
+        }
         return {
             "title": title,
             "bundle_type": bundle_type,
@@ -2476,11 +2923,19 @@ class SheshnaagService:
             "signed_by": signed_by,
             "exported_at": utc_now().isoformat(),
             "warnings": warnings,
+            "attachment_policy": effective_attachment_policy,
             "safety_checklist": {
                 "requires_external_confirmation": bool(warnings),
                 "contains_raw_pcap": any(row.artifact_kind == "pcap" for row in evidence_rows),
                 "contains_service_logs": any(row.artifact_kind == "service_logs" for row in evidence_rows),
                 "approved_artifact_count": sum(1 for row in artifacts if getattr(row, "status", None) == "approved"),
+            },
+            "export_audit": {
+                "exported_by": signed_by,
+                "bundle_type": bundle_type,
+                "provider": run.provider,
+                "image_profile": (run.manifest or {}).get("image_profile"),
+                "verification_status": "verified",
             },
             "redaction_notes": redaction_notes,
             "reproduction_steps": reproduction_steps,
@@ -2556,6 +3011,8 @@ class SheshnaagService:
 
     def _disclosure_bundle_payload(self, row: DisclosureBundle) -> Dict[str, Any]:
         archive = (row.manifest or {}).get("archive") or {}
+        tenant = self.session.query(Tenant).filter(Tenant.id == row.tenant_id).first()
+        tenant_slug = tenant.slug if tenant else "demo-public"
         return {
             "id": row.id,
             "run_id": row.run_id,
@@ -2566,12 +3023,14 @@ class SheshnaagService:
             "signed_by": row.signed_by,
             "manifest": row.manifest,
             "archive": archive,
-            "download_url": f"/api/disclosures/{row.id}/download?tenant_slug=demo-public",
+            "download_url": f"/api/disclosures/{row.id}/download?tenant_slug={tenant_slug}",
+            "signing": (row.manifest or {}).get("signing") or {},
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }
 
     def _ensure_analyst_identity(self, tenant: Tenant, analyst_name: Optional[str] = None) -> AnalystIdentity:
         email = f"{(analyst_name or 'demo.analyst').lower().replace(' ', '.')}@sheshnaag.local"
+        signing_key = self._ensure_tenant_signing_key(tenant)
         record = (
             self.session.query(AnalystIdentity)
             .filter(AnalystIdentity.tenant_id == tenant.id, AnalystIdentity.email == email)
@@ -2584,10 +3043,12 @@ class SheshnaagService:
                 email=email,
                 handle=(analyst_name or "demo-analyst").lower().replace(" ", "-"),
                 role="researcher",
-                public_key_fingerprint="local-dev-fingerprint",
+                public_key_fingerprint=signing_key.fingerprint,
             )
             self.session.add(record)
             self.session.flush()
+        else:
+            record.public_key_fingerprint = signing_key.fingerprint
         return record
 
     def _ensure_workstation(self, tenant: Tenant, workstation: Dict[str, Any]) -> WorkstationFingerprint:

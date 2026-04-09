@@ -44,8 +44,17 @@ def test_collector_failure_does_not_block_other_evidence(monkeypatch):
     real_instantiate = sns.instantiate_collectors
 
     def mixed(names):
-        out = real_instantiate([n for n in names if n != "exploding"])
-        if "exploding" in names:
+        out = real_instantiate(names)
+        if any(getattr(item, "collector_name", "") == "process_tree" for item in out):
+            rewritten = []
+            inserted = False
+            for item in out:
+                if getattr(item, "collector_name", "") == "process_tree" and not inserted:
+                    rewritten.append(ExplodingCollector())
+                    inserted = True
+                rewritten.append(item)
+            return rewritten
+        if names:
             out.insert(0, ExplodingCollector())
         return out
 
@@ -64,7 +73,7 @@ def test_collector_failure_does_not_block_other_evidence(monkeypatch):
             "command": ["sleep", "1"],
             "risk_level": "standard",
             "network_policy": {"allow_egress_hosts": []},
-            "collectors": ["exploding", "process_tree"],
+            "collectors": ["process_tree"],
         },
     )
     service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead")

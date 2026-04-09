@@ -356,8 +356,8 @@ class DemoSeedService:
 
     def _seed_network_exposures(self, tenant_id: int, assets: dict[str, Asset], services: dict[str, Service]) -> None:
         definitions = [
-            (assets["edge"].id, services["gateway"].id, "api.demo.cve-radar.local", 443),
-            (assets["admin"].id, services["admin_portal"].id, "admin.demo.cve-radar.local", 8443),
+            (assets["edge"].id, services["gateway"].id, "api.demo.sheshnaag.local", 443),
+            (assets["admin"].id, services["admin_portal"].id, "admin.demo.sheshnaag.local", 8443),
         ]
         for asset_id, service_id, hostname, port in definitions:
             existing = (
@@ -591,7 +591,7 @@ class DemoSeedService:
                         document_type="recommendation-note",
                         title=title,
                         content=content,
-                        source_label="Threat Radar",
+                        source_label="Sheshnaag",
                         source_url=f"action://{action['action_id']}",
                         meta={"action_id": action["action_id"]},
                     )

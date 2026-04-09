@@ -243,7 +243,7 @@ class ExposureGraphService:
         limit: int = 5,
     ) -> Dict[str, object]:
         """Return graph snapshot and top attack paths for the tenant."""
-        cache_key = f"cve-radar:v2:graph:{tenant.id}:{asset_id or 'all'}:{cve_id or 'all'}:{limit}"
+        cache_key = f"sheshnaag:v2:graph:{tenant.id}:{asset_id or 'all'}:{cve_id or 'all'}:{limit}"
         cached = cache_get_json(cache_key)
         if cached is not None:
             return {**cached, "cached": True}

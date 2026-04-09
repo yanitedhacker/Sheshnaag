@@ -145,6 +145,26 @@ class AnalystIdentity(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class TenantSigningKey(Base):
+    """Tenant-scoped signing key metadata for attestations."""
+
+    __tablename__ = "tenant_signing_keys"
+    __table_args__ = (UniqueConstraint("tenant_id", "key_name", name="uq_signing_key_tenant_name"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    key_name = Column(String(120), nullable=False, default="default")
+    algorithm = Column(String(50), nullable=False, default="ed25519")
+    public_key = Column(Text, nullable=False)
+    fingerprint = Column(String(255), nullable=False, index=True)
+    storage_backend = Column(String(80), nullable=False, default="local-file")
+    key_path = Column(String(500))
+    rotated_at = Column(DateTime)
+    meta = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
 class WorkstationFingerprint(Base):
     """Host workstation fingerprints for chain-of-custody."""
 
@@ -157,6 +177,45 @@ class WorkstationFingerprint(Base):
     os_family = Column(String(120))
     architecture = Column(String(80))
     fingerprint = Column(String(255), nullable=False, index=True)
+    meta = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class RawKnowledgeSource(Base):
+    """Raw source preservation layer for advisories, notes, and feed payloads."""
+
+    __tablename__ = "raw_knowledge_sources"
+    __table_args__ = (UniqueConstraint("tenant_id", "source_kind", "source_key", name="uq_raw_source_tenant_kind_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
+    source_kind = Column(String(80), nullable=False, index=True)
+    source_key = Column(String(255), nullable=False, index=True)
+    source_label = Column(String(120))
+    source_url = Column(Text)
+    raw_payload = Column(JSON, default=dict)
+    raw_body = Column(Text)
+    sha256 = Column(String(128), nullable=False, index=True)
+    collected_at = Column(DateTime, default=utc_now, nullable=False)
+    provenance = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class KnowledgeWikiPage(Base):
+    """Curated wiki layer linked back to raw-source records."""
+
+    __tablename__ = "knowledge_wiki_pages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
+    page_type = Column(String(80), nullable=False, default="wiki")
+    title = Column(String(255), nullable=False)
+    summary = Column(Text, nullable=False)
+    source_ref_ids = Column(JSON, default=list)
     meta = Column("metadata", JSON, default=dict)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

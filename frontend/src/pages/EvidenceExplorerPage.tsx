@@ -93,6 +93,57 @@ export function EvidenceExplorerPage() {
           </div>
         </section>
       </div>
+
+      {detail ? (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Collector readiness and findings</h2>
+            <span>{detail.collector_capabilities.length} collectors</span>
+          </div>
+          <div className="stack-list">
+            {detail.collector_capabilities.map((collector) => (
+              <article className="line-card" key={collector.collector_name}>
+                <div>
+                  <strong>{collector.collector_name}</strong>
+                  <p>{collector.reason ?? collector.tier}</p>
+                </div>
+                <span>{collector.status}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Evidence detail panes</h2>
+          <span>{evidence?.items.length ?? 0} loaded</span>
+        </div>
+        <div className="stack-list">
+          {(evidence?.items ?? []).map((item) => {
+            const payload = item.payload ?? {};
+            const findings = Array.isArray(payload.findings) ? payload.findings : [];
+            const processes = Array.isArray(payload.processes) ? payload.processes : [];
+            const sources = Array.isArray(payload.sources) ? payload.sources : [];
+            const queryResults = Array.isArray(payload.query_results) ? payload.query_results : [];
+            return (
+              <article className="line-card" key={`detail-${item.id}`}>
+                <div>
+                  <strong>{item.artifact_kind}</strong>
+                  <p>{item.title}</p>
+                  {processes.length ? <p>Process tree rows: {processes.length}</p> : null}
+                  {sources.length ? <p>Service log sources: {sources.length}</p> : null}
+                  {queryResults.length ? <p>osquery result sets: {queryResults.length}</p> : null}
+                  {findings.length ? <p>Runtime findings: {findings.length}</p> : null}
+                  {"raw_socket_summary" in payload ? <p>Network summary captured.</p> : null}
+                  {"pcap_base64_preview" in payload ? <p>PCAP preview captured.</p> : null}
+                </div>
+                <span>{item.reviewed_state}</span>
+              </article>
+            );
+          })}
+        </div>
+      </section>
     </section>
   );
 }

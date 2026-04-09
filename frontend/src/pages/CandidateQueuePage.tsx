@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { CandidateItem, CandidateWorkloadResponse, IntelOverviewResponse } from "../types";
 
 export function CandidateQueuePage() {
+  const navigate = useNavigate();
   const [items, setItems] = useState<CandidateItem[]>([]);
   const [selected, setSelected] = useState<CandidateItem | null>(null);
   const [overview, setOverview] = useState<IntelOverviewResponse | null>(null);
@@ -147,6 +149,23 @@ export function CandidateQueuePage() {
               <div className="toolbar">
                 <input value={assignee} onChange={(event) => setAssignee(event.target.value)} placeholder="Reviewer / analyst" />
                 <button className="ghost-button" disabled={busy} onClick={() => runAction("assign")}>Assign</button>
+                <button
+                  className="primary-button"
+                  disabled={!selected}
+                  onClick={() => {
+                    if (!selected) {
+                      return;
+                    }
+                    const params = new URLSearchParams({
+                      candidateId: String(selected.id),
+                      recipeName: selected.cve_id ? `${selected.cve_id} validation recipe` : selected.title ?? "Validation recipe",
+                      objective: selected.summary ?? "Validate exploit conditions in a constrained environment.",
+                    });
+                    navigate(`/recipes?${params.toString()}`);
+                  }}
+                >
+                  Create recipe
+                </button>
               </div>
               <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} placeholder="Reason for status change" />
               <div className="button-row">

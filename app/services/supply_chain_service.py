@@ -45,7 +45,7 @@ class SupplyChainService:
             "mission": {
                 "headline": "Understand and predict AI-era software supply-chain attacks before they become operational damage.",
                 "summary": (
-                    "CVE Threat Radar now frames modern attacks as source-fused, graph-aware supply-chain campaigns: "
+                    "Project Sheshnaag frames modern attacks as source-fused, graph-aware supply-chain campaigns: "
                     "vulnerability disclosure, package exposure, adversary technique mapping, blast-radius reasoning, "
                     "and remediation planning."
                 ),

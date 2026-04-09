@@ -186,11 +186,54 @@ export function RunConsolePage() {
                 <article><span>Mode</span><strong>{detail.launch_mode}</strong></article>
                 <article><span>Image</span><strong>{detail.guest_image ?? "n/a"}</strong></article>
                 <article><span>Findings</span><strong>{detail.runtime_findings_summary.count}</strong></article>
+                <article><span>Provider</span><strong>{detail.provider_readiness.status ?? "unknown"}</strong></article>
               </div>
               <div className="button-row">
                 <button className="ghost-button" onClick={() => act("stop")}>Stop</button>
                 <button className="ghost-button" onClick={() => act("teardown")}>Teardown</button>
                 <button className="primary-button" onClick={() => act("destroy")}>Destroy</button>
+              </div>
+              <div className="panel-subsection">
+                <h3>Provider readiness</h3>
+                <div className="stack-list">
+                  {(detail.provider_readiness.checks ?? []).map((check) => (
+                    <article className="line-card" key={check.name}>
+                      <div>
+                        <strong>{check.name}</strong>
+                        <p>{check.detail}</p>
+                      </div>
+                      <span>{check.status}</span>
+                    </article>
+                  ))}
+                </div>
+              </div>
+              <div className="panel-subsection">
+                <h3>Collector capability map</h3>
+                <div className="stack-list">
+                  {detail.collector_capabilities.map((collector) => (
+                    <article className="line-card" key={collector.collector_name}>
+                      <div>
+                        <strong>{collector.collector_name}</strong>
+                        <p>{collector.reason ?? collector.tier}</p>
+                      </div>
+                      <span>{collector.status}</span>
+                    </article>
+                  ))}
+                </div>
+              </div>
+              <div className="panel-subsection">
+                <h3>Evidence summary</h3>
+                <div className="stack-list">
+                  {detail.evidence_summary.collectors.map((collector) => (
+                    <article className="line-card" key={collector.collector_name}>
+                      <div>
+                        <strong>{collector.collector_name}</strong>
+                        <p>{collector.latest_title}</p>
+                      </div>
+                      <span>{collector.status} · {collector.count}</span>
+                    </article>
+                  ))}
+                </div>
               </div>
               <div className="panel-subsection">
                 <h3>Event timeline</h3>

@@ -1,26 +1,22 @@
 version: '3.8'
 
 # ===========================================
-# CVE Threat Radar - Docker Compose Configuration
+# Project Sheshnaag - Small-Team Server Topology
 # ===========================================
-# Security Enhancement: Externalized secrets and credentials
-#
-# IMPORTANT: Before running in production:
-# 1. Create a .env file with the required secrets
-# 2. Never commit .env to version control
-# 3. Use strong, randomly generated passwords
+# Supported v2 deployment shape:
+#   frontend + api + postgres + redis + prometheus
 # ===========================================
 
 services:
   # PostgreSQL Database
   db:
     image: postgres:15-alpine
-    container_name: cve-radar-db
+    container_name: sheshnaag-db
     environment:
       # Use environment variables for credentials
-      POSTGRES_USER: ${POSTGRES_USER:-cve_radar}
+      POSTGRES_USER: ${POSTGRES_USER:-sheshnaag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${POSTGRES_DB:-cve_threat_radar}
+      POSTGRES_DB: ${POSTGRES_DB:-sheshnaag}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     # Port not exposed to host - access via internal network only
@@ -30,13 +26,13 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - cve-network
+      - sheshnaag-network
     restart: unless-stopped
 
   # Redis for caching and queues
   redis:
     image: redis:7-alpine
-    container_name: cve-radar-redis
+    container_name: sheshnaag-redis
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
     # Port not exposed to host - access via internal network only
     volumes:
@@ -47,7 +43,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - cve-network
+      - sheshnaag-network
     restart: unless-stopped
 
   # FastAPI Backend
@@ -55,23 +51,27 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: cve-radar-api
+    container_name: sheshnaag-api
     environment:
       # Database configuration
-      DATABASE_URL: postgresql://${POSTGRES_USER:-cve_radar}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cve_threat_radar}
-      ASYNC_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-cve_radar}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cve_threat_radar}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sheshnaag}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sheshnaag}
+      ASYNC_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sheshnaag}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sheshnaag}
 
       # Redis configuration (password required)
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
 
       # Application settings
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEPLOYMENT_PROFILE: ${DEPLOYMENT_PROFILE:-shared_server}
+      DEPLOYMENT_NAME: ${DEPLOYMENT_NAME:-sheshnaag-server}
       DEBUG: ${DEBUG:-false}
 
       # Security settings - MUST be set in production
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      SIGNING_KEY_DIR: ${SIGNING_KEY_DIR:?SIGNING_KEY_DIR is required}
+      SIGNING_KEY_BACKEND: ${SIGNING_KEY_BACKEND:-mounted-secret}
 
       # Rate limiting
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
@@ -89,13 +89,14 @@ services:
     volumes:
       - model_data:/app/models
       - ./data:/app/data
+      - ${SIGNING_KEY_DIR}:${SIGNING_KEY_DIR}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     networks:
-      - cve-network
+      - sheshnaag-network
     restart: unless-stopped
 
   # Frontend (Nginx serving static files)
@@ -103,19 +104,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    container_name: cve-radar-frontend
+    container_name: sheshnaag-frontend
     ports:
       - "127.0.0.1:3000:80"
     depends_on:
       - api
     networks:
-      - cve-network
+      - sheshnaag-network
     restart: unless-stopped
 
   # Prometheus for monitoring
   prometheus:
     image: prom/prometheus:v2.54.1
-    container_name: cve-radar-prometheus
+    container_name: sheshnaag-prometheus
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
@@ -125,7 +126,7 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
     networks:
-      - cve-network
+      - sheshnaag-network
     restart: unless-stopped
 
 volumes:
@@ -135,5 +136,5 @@ volumes:
   prometheus_data:
 
 networks:
-  cve-network:
+  sheshnaag-network:
     driver: bridge

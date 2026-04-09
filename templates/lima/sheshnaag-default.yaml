@@ -1,0 +1,19 @@
+# Minimal Lima guest template for Sheshnaag secure-mode validation.
+
+arch: x86_64
+images:
+  - location: "https://cloud-images.ubuntu.com/minimal/releases/24.04/release-20260331/ubuntu-24.04-minimal-cloudimg-amd64.img"
+    arch: "x86_64"
+cpus: 2
+memory: "4GiB"
+disk: "20GiB"
+mounts:
+  - location: "~"
+    writable: false
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      set -eu
+      apt-get update
+      apt-get install -y ca-certificates curl jq procps

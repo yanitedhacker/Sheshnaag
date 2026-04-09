@@ -4,10 +4,10 @@ import type {
   AssetDetail,
   AssetListResponse,
   AssetVulnerability,
+  AuditResponse,
   CandidateItem,
   CandidateListResponse,
   CandidateWorkloadResponse,
-  AuditResponse,
   CopilotResponse,
   CveDetail,
   DashboardResponse,
@@ -30,15 +30,15 @@ import type {
   RunHealthResponse,
   RunListResponse,
   SimulationResponse,
+  SupplyChainOverviewResponse,
   TemplateListResponse,
   TenantListResponse,
   TenantOnboardResponse,
-  SupplyChainOverviewResponse,
   WorkbenchSummary,
 } from "./types";
 
 const API_BASE = "";
-const WORKSPACE_SLUG_KEY = "sheshnaag.workspace.slug";
+export const WORKSPACE_SLUG_KEY = "sheshnaag.workspace.slug";
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -57,20 +57,40 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function getWritableTenantSlug(): Promise<string> {
+export function readStoredWorkspaceSlug(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.localStorage.getItem(WORKSPACE_SLUG_KEY);
+}
+
+export function storeWorkspaceSlug(slug: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(WORKSPACE_SLUG_KEY, slug);
+}
+
+export async function getTenants(): Promise<TenantListResponse> {
+  return fetchJson<TenantListResponse>("/api/tenants");
+}
+
+export async function getActiveTenantSlug(): Promise<string> {
   if (typeof window === "undefined") {
     return "demo-public";
   }
-  const existing = window.localStorage.getItem(WORKSPACE_SLUG_KEY);
+  const existing = readStoredWorkspaceSlug();
   if (existing) {
     return existing;
   }
-  const tenants = await fetchJson<TenantListResponse>("/api/tenants");
-  const writable = tenants.items.find((item) => !item.is_read_only);
-  if (writable?.tenant_slug) {
-    window.localStorage.setItem(WORKSPACE_SLUG_KEY, writable.tenant_slug);
-    return writable.tenant_slug;
+
+  const tenants = await getTenants();
+  const preferred = tenants.items.find((item) => !item.is_read_only) ?? tenants.items[0];
+  if (preferred?.tenant_slug) {
+    storeWorkspaceSlug(preferred.tenant_slug);
+    return preferred.tenant_slug;
   }
+
   const slug = `codex-${Date.now()}`;
   const onboarded = await fetchJson<TenantOnboardResponse>("/api/tenants/onboard", {
     method: "POST",
@@ -83,145 +103,135 @@ async function getWritableTenantSlug(): Promise<string> {
       description: "Auto-provisioned local workspace for the operator UI.",
     }),
   });
-  window.localStorage.setItem(WORKSPACE_SLUG_KEY, onboarded.tenant.slug);
+  storeWorkspaceSlug(onboarded.tenant.slug);
   return onboarded.tenant.slug;
 }
 
-async function withWritableTenant(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function withActiveTenant(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload.tenant_slug || payload.tenant_id) {
     return payload;
   }
-  return { ...payload, tenant_slug: await getWritableTenantSlug() };
+  return { ...payload, tenant_slug: await getActiveTenantSlug() };
+}
+
+async function tenantPath(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<string> {
+  const tenantSlug = await getActiveTenantSlug();
+  const search = new URLSearchParams({ tenant_slug: tenantSlug });
+  Object.entries(params ?? {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") {
+      search.set(key, String(value));
+    }
+  });
+  return `${path}?${search.toString()}`;
+}
+
+async function fetchTenantJson<T>(
+  path: string,
+  params?: Record<string, string | number | boolean | undefined>,
+): Promise<T> {
+  return fetchJson<T>(await tenantPath(path, params));
 }
 
 export const api = {
   getDashboard: () => fetchJson<DashboardResponse>("/api/dashboard"),
-  getWorkbench: () => fetchJson<WorkbenchSummary>("/api/workbench/summary?tenant_slug=demo-public&limit=20"),
-  getGraph: (assetId?: number, cveId?: string) => {
-    const params = new URLSearchParams({ tenant_slug: "demo-public", limit: "8" });
-    if (assetId) params.set("asset_id", String(assetId));
-    if (cveId) params.set("cve_id", cveId);
-    return fetchJson<GraphResponse>(`/api/graph/attack-paths?${params.toString()}`);
+  getWorkbench: () => fetchTenantJson<WorkbenchSummary>("/api/workbench/summary", { limit: 20 }),
+  getGraph: async (assetId?: number, cveId?: string) => {
+    const params: Record<string, string | number | boolean | undefined> = { limit: 8 };
+    if (assetId) params.asset_id = assetId;
+    if (cveId) params.cve_id = cveId;
+    return fetchTenantJson<GraphResponse>("/api/graph/attack-paths", params);
   },
-  getAssets: () => fetchJson<AssetListResponse>("/api/assets?tenant_slug=demo-public&page_size=50"),
+  getAssets: () => fetchTenantJson<AssetListResponse>("/api/assets", { page_size: 50 }),
   getAsset: (assetId: number) => fetchJson<AssetDetail>(`/api/assets/${assetId}`),
   getAssetVulnerabilities: (assetId: number) => fetchJson<AssetVulnerability[]>(`/api/assets/${assetId}/vulnerabilities`),
   getCve: (cveId: string) => fetchJson<CveDetail>(`/api/cves/${cveId}`),
   getPatch: (patchId: string) => fetchJson<PatchDetail>(`/api/patches/${patchId}`),
-  runSimulation: (payload: Record<string, unknown>) =>
-    fetchJson<SimulationResponse>("/api/simulations/risk", { method: "POST", body: JSON.stringify(payload) }),
-  queryCopilot: (query: string) =>
+  runSimulation: async (payload: Record<string, unknown>) =>
+    fetchJson<SimulationResponse>("/api/simulations/risk", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  queryCopilot: async (query: string) =>
     fetchJson<CopilotResponse>("/api/copilot/query", {
       method: "POST",
-      body: JSON.stringify({ query, tenant_slug: "demo-public" }),
+      body: JSON.stringify({ query, tenant_slug: await getActiveTenantSlug() }),
     }),
   getModelTrust: () => fetchJson<ModelTrustResponse>("/api/model/trust"),
-  getSupplyChainOverview: () =>
-    fetchJson<SupplyChainOverviewResponse>("/api/supply-chain/overview?tenant_slug=demo-public"),
-  getApprovals: () => fetchJson<ApprovalResponse>("/api/governance/approvals?tenant_slug=demo-public"),
-  getAudit: () => fetchJson<AuditResponse>("/api/governance/audit?tenant_slug=demo-public"),
-  getFeedback: () => fetchJson<FeedbackResponse>("/api/model/feedback?tenant_slug=demo-public"),
-  getTenants: () => fetchJson<TenantListResponse>("/api/tenants"),
+  getSupplyChainOverview: () => fetchTenantJson<SupplyChainOverviewResponse>("/api/supply-chain/overview"),
+  getApprovals: () => fetchTenantJson<ApprovalResponse>("/api/governance/approvals"),
+  getAudit: () => fetchTenantJson<AuditResponse>("/api/governance/audit"),
+  getFeedback: () => fetchTenantJson<FeedbackResponse>("/api/model/feedback"),
+  getTenants,
   onboardTenant: (payload: Record<string, unknown>) =>
     fetchJson<TenantOnboardResponse>("/api/tenants/onboard", { method: "POST", body: JSON.stringify(payload) }),
-  importSbom: (payload: Record<string, unknown>) =>
-    fetchJson<ImportResponse>("/api/imports/sbom", { method: "POST", body: JSON.stringify(payload) }),
-  importVex: (payload: Record<string, unknown>) =>
-    fetchJson<ImportResponse>("/api/imports/vex", { method: "POST", body: JSON.stringify(payload) }),
+  importSbom: async (payload: Record<string, unknown>) =>
+    fetchJson<ImportResponse>("/api/imports/sbom", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  importVex: async (payload: Record<string, unknown>) =>
+    fetchJson<ImportResponse>("/api/imports/vex", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
 
-  // Intel + candidates
-  getIntelOverview: () => fetchJson<IntelOverviewResponse>("/api/intel/overview?tenant_slug=demo-public"),
-  getCandidates: (params?: Record<string, string | number | boolean | undefined>) => {
-    const search = new URLSearchParams({ tenant_slug: "demo-public" });
-    Object.entries(params ?? {}).forEach(([key, value]) => {
-      if (value !== undefined && value !== "") {
-        search.set(key, String(value));
-      }
-    });
-    return fetchJson<CandidateListResponse>(`/api/candidates?${search.toString()}`);
-  },
-  getCandidate: (candidateId: number) => fetchJson<CandidateItem>(`/api/candidates/${candidateId}?tenant_slug=demo-public`),
-  getCandidateWorkload: () => fetchJson<CandidateWorkloadResponse>("/api/candidates/workload/summary?tenant_slug=demo-public"),
-  assignCandidate: (candidateId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/assign`, { method: "POST", body: JSON.stringify(body) })),
-  deferCandidate: (candidateId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/defer`, { method: "POST", body: JSON.stringify(body) })),
-  rejectCandidate: (candidateId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/reject`, { method: "POST", body: JSON.stringify(body) })),
-  restoreCandidate: (candidateId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify(body) })),
-  archiveCandidate: (candidateId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<CandidateItem>(`/api/candidates/${candidateId}/archive`, { method: "POST", body: JSON.stringify(body) })),
-  mergeCandidateDuplicate: (candidateId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<{ merged: CandidateItem; target: CandidateItem }>(
-        `/api/candidates/${candidateId}/merge`,
-        { method: "POST", body: JSON.stringify(body) },
-      )),
+  getIntelOverview: () => fetchTenantJson<IntelOverviewResponse>("/api/intel/overview"),
+  getCandidates: (params?: Record<string, string | number | boolean | undefined>) =>
+    fetchTenantJson<CandidateListResponse>("/api/candidates", params),
+  getCandidate: async (candidateId: number) => fetchJson<CandidateItem>(await tenantPath(`/api/candidates/${candidateId}`)),
+  getCandidateWorkload: () => fetchTenantJson<CandidateWorkloadResponse>("/api/candidates/workload/summary"),
+  assignCandidate: async (candidateId: number, payload: Record<string, unknown>) =>
+    fetchJson<CandidateItem>(`/api/candidates/${candidateId}/assign`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  deferCandidate: async (candidateId: number, payload: Record<string, unknown>) =>
+    fetchJson<CandidateItem>(`/api/candidates/${candidateId}/defer`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  rejectCandidate: async (candidateId: number, payload: Record<string, unknown>) =>
+    fetchJson<CandidateItem>(`/api/candidates/${candidateId}/reject`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  restoreCandidate: async (candidateId: number, payload: Record<string, unknown>) =>
+    fetchJson<CandidateItem>(`/api/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  archiveCandidate: async (candidateId: number, payload: Record<string, unknown>) =>
+    fetchJson<CandidateItem>(`/api/candidates/${candidateId}/archive`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  mergeCandidateDuplicate: async (candidateId: number, payload: Record<string, unknown>) =>
+    fetchJson<{ merged: CandidateItem; target: CandidateItem }>(`/api/candidates/${candidateId}/merge`, {
+      method: "POST",
+      body: JSON.stringify(await withActiveTenant(payload)),
+    }),
 
-  // Recipe APIs
-  listRecipes: () => fetchJson<RecipeListResponse>("/api/recipes?tenant_slug=demo-public"),
-  getRecipe: (recipeId: number) => fetchJson<Recipe>(`/api/recipes/${recipeId}?tenant_slug=demo-public`),
-  createRecipe: (payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<Recipe>("/api/recipes", { method: "POST", body: JSON.stringify(body) })),
-  addRecipeRevision: (recipeId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<Recipe>(`/api/recipes/${recipeId}/revisions`, { method: "POST", body: JSON.stringify(body) })),
-  approveRecipeRevision: (recipeId: number, revisionNumber: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<Recipe>(
-        `/api/recipes/${recipeId}/revisions/${revisionNumber}/approve`,
-        { method: "POST", body: JSON.stringify(body) },
-      )),
+  listRecipes: () => fetchTenantJson<RecipeListResponse>("/api/recipes"),
+  getRecipe: async (recipeId: number) => fetchJson<Recipe>(await tenantPath(`/api/recipes/${recipeId}`)),
+  createRecipe: async (payload: Record<string, unknown>) =>
+    fetchJson<Recipe>("/api/recipes", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  addRecipeRevision: async (recipeId: number, payload: Record<string, unknown>) =>
+    fetchJson<Recipe>(`/api/recipes/${recipeId}/revisions`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  approveRecipeRevision: async (recipeId: number, revisionNumber: number, payload: Record<string, unknown>) =>
+    fetchJson<Recipe>(`/api/recipes/${recipeId}/revisions/${revisionNumber}/approve`, {
+      method: "POST",
+      body: JSON.stringify(await withActiveTenant(payload)),
+    }),
   lintRecipe: (payload: Record<string, unknown>) =>
     fetchJson<RecipeLintResult>("/api/recipes/lint", { method: "POST", body: JSON.stringify(payload) }),
-  diffRecipeRevisions: (recipeId: number, oldRev: number, newRev: number) =>
-    fetchJson<RecipeDiffResult>(
-      `/api/recipes/${recipeId}/diff?old_revision=${oldRev}&new_revision=${newRev}&tenant_slug=demo-public`,
-    ),
+  diffRecipeRevisions: async (recipeId: number, oldRev: number, newRev: number) =>
+    fetchJson<RecipeDiffResult>(await tenantPath(`/api/recipes/${recipeId}/diff`, { old_revision: oldRev, new_revision: newRev })),
 
-  // Run APIs
-  listRuns: () => fetchJson<RunListResponse>("/api/runs?tenant_slug=demo-public"),
-  getRun: (runId: number) => fetchJson<RunDetailResponse>(`/api/runs/${runId}?tenant_slug=demo-public`),
-  getRunHealth: (runId: number) => fetchJson<RunHealthResponse>(`/api/runs/${runId}/health?tenant_slug=demo-public`),
-  stopRun: (runId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<RunDetailResponse>(`/api/runs/${runId}/stop`, { method: "POST", body: JSON.stringify(body) })),
-  teardownRun: (runId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<RunDetailResponse>(`/api/runs/${runId}/teardown`, { method: "POST", body: JSON.stringify(body) })),
-  destroyRun: (runId: number, payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<RunDetailResponse>(`/api/runs/${runId}/destroy`, { method: "POST", body: JSON.stringify(body) })),
-  launchRun: (payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<RunDetailResponse>("/api/runs", { method: "POST", body: JSON.stringify(body) })),
+  listRuns: () => fetchTenantJson<RunListResponse>("/api/runs"),
+  getRun: async (runId: number) => fetchJson<RunDetailResponse>(await tenantPath(`/api/runs/${runId}`)),
+  getRunHealth: async (runId: number) => fetchJson<RunHealthResponse>(await tenantPath(`/api/runs/${runId}/health`)),
+  planRun: async (payload: Record<string, unknown>) =>
+    fetchJson<RunDetailResponse>("/api/runs/plan", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  allocateRunResources: async (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunDetailResponse>(`/api/runs/${runId}/allocate`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  bootRun: async (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunDetailResponse>(`/api/runs/${runId}/boot`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  stopRun: async (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunDetailResponse>(`/api/runs/${runId}/stop`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  teardownRun: async (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunDetailResponse>(`/api/runs/${runId}/teardown`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  destroyRun: async (runId: number, payload: Record<string, unknown>) =>
+    fetchJson<RunDetailResponse>(`/api/runs/${runId}/destroy`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  launchRun: async (payload: Record<string, unknown>) =>
+    fetchJson<RunDetailResponse>("/api/runs", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
 
-  // Template APIs
-  listTemplates: () => fetchJson<TemplateListResponse>("/api/templates?tenant_slug=demo-public"),
+  listTemplates: () => fetchTenantJson<TemplateListResponse>("/api/templates"),
 
-  // Evidence, artifacts, provenance, ledger, bundles
-  listEvidence: (runId?: number) =>
-    fetchJson<EvidenceListResponse>(`/api/evidence?tenant_slug=demo-public${runId ? `&run_id=${runId}` : ""}`),
-  listArtifacts: (runId?: number) =>
-    fetchJson<ArtifactListResponse>(`/api/artifacts?tenant_slug=demo-public${runId ? `&run_id=${runId}` : ""}`),
-  reviewArtifact: (payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<Record<string, unknown>>("/api/artifacts/review", { method: "POST", body: JSON.stringify(body) })),
-  addArtifactFeedback: (payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<Record<string, unknown>>("/api/artifacts/feedback", { method: "POST", body: JSON.stringify(body) })),
-  getProvenance: (runId?: number) =>
-    fetchJson<ProvenanceResponse>(`/api/provenance?tenant_slug=demo-public${runId ? `&run_id=${runId}` : ""}`),
-  getLedger: () => fetchJson<LedgerResponse>("/api/ledger?tenant_slug=demo-public"),
-  listDisclosures: () => fetchJson<DisclosureListResponse>("/api/disclosures?tenant_slug=demo-public"),
-  createDisclosureBundle: (payload: Record<string, unknown>) =>
-    withWritableTenant(payload).then((body) =>
-      fetchJson<DisclosureBundleRecord>("/api/disclosures", { method: "POST", body: JSON.stringify(body) })),
+  listEvidence: (runId?: number) => fetchTenantJson<EvidenceListResponse>("/api/evidence", runId ? { run_id: runId } : undefined),
+  listArtifacts: (runId?: number) => fetchTenantJson<ArtifactListResponse>("/api/artifacts", runId ? { run_id: runId } : undefined),
+  reviewArtifact: async (payload: Record<string, unknown>) =>
+    fetchJson<Record<string, unknown>>("/api/artifacts/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  addArtifactFeedback: async (payload: Record<string, unknown>) =>
+    fetchJson<Record<string, unknown>>("/api/artifacts/feedback", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  getProvenance: (runId?: number) => fetchTenantJson<ProvenanceResponse>("/api/provenance", runId ? { run_id: runId } : undefined),
+  getLedger: () => fetchTenantJson<LedgerResponse>("/api/ledger"),
+  listDisclosures: () => fetchTenantJson<DisclosureListResponse>("/api/disclosures"),
+  createDisclosureBundle: async (payload: Record<string, unknown>) =>
+    fetchJson<DisclosureBundleRecord>("/api/disclosures", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
 };

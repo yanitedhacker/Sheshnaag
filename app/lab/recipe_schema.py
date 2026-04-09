@@ -31,6 +31,10 @@ KNOWN_COLLECTORS: FrozenSet[str] = frozenset(
     }
 )
 
+VALID_PROVIDERS: FrozenSet[str] = frozenset({"docker_kali", "lima"})
+VALID_IMAGE_PROFILES: FrozenSet[str] = frozenset({"baseline", "osquery_capable", "tracee_capable", "secure_lima"})
+VALID_LAUNCH_MODES: FrozenSet[str] = frozenset({"dry_run", "simulated", "execute"})
+
 VALID_TEARDOWN_MODES: FrozenSet[str] = frozenset(
     {
         "destroy_immediately",
@@ -68,6 +72,9 @@ RESTRICTED_CAPABILITIES_FOR_SIGNOFF: FrozenSet[str] = frozenset(
 )
 
 POLICY_RELEVANT_PREFIXES: Tuple[str, ...] = (
+    "provider",
+    "image_profile",
+    "execution_policy",
     "risk_level",
     "requires_acknowledgement",
     "network_policy",
@@ -257,6 +264,20 @@ class RecipeSchemaValidator:
         elif not bi.strip():
             errors.append("'base_image' must be a non-empty string")
 
+        provider = content.get("provider", "docker_kali")
+        if provider is not None:
+            if not isinstance(provider, str):
+                errors.append("'provider' must be a string when present")
+            elif provider not in VALID_PROVIDERS:
+                errors.append(f"Invalid provider {provider!r}; must be one of {sorted(VALID_PROVIDERS)}")
+
+        image_profile = content.get("image_profile")
+        if image_profile is not None:
+            if not isinstance(image_profile, str):
+                errors.append("'image_profile' must be a string when present")
+            elif image_profile not in VALID_IMAGE_PROFILES:
+                errors.append(f"Invalid image_profile {image_profile!r}; must be one of {sorted(VALID_IMAGE_PROFILES)}")
+
         # command
         cmd = content.get("command")
         if cmd is None:
@@ -311,6 +332,10 @@ class RecipeSchemaValidator:
                 if name in seen:
                     warnings.append(f"Duplicate collector entry {name!r} at index {i}")
                 seen.add(name)
+            if "pcap" in seen and provider != "lima":
+                errors.append("Collector 'pcap' is restricted to secure-mode Lima recipes.")
+            if "tracee_events" in seen and image_profile not in (None, "tracee_capable"):
+                warnings.append("tracee_events is most reliable with image_profile='tracee_capable'.")
 
         # teardown_policy
         tp = content.get("teardown_policy")
@@ -346,6 +371,36 @@ class RecipeSchemaValidator:
                 errors.append(
                     f"risk_level {rl!r} requires 'requires_acknowledgement' to be True"
                 )
+
+        execution_policy = content.get("execution_policy")
+        secure_mode_required = False
+        if execution_policy is not None:
+            if not isinstance(execution_policy, dict):
+                errors.append("'execution_policy' must be an object when present")
+            else:
+                secure_mode_required = bool(execution_policy.get("secure_mode_required"))
+                preferred_provider = execution_policy.get("preferred_provider")
+                if preferred_provider is not None and preferred_provider not in VALID_PROVIDERS:
+                    errors.append(
+                        f"Invalid execution_policy.preferred_provider {preferred_provider!r}; must be one of {sorted(VALID_PROVIDERS)}"
+                    )
+                allowed_modes = execution_policy.get("allowed_modes")
+                if allowed_modes is not None:
+                    if not isinstance(allowed_modes, list):
+                        errors.append("'execution_policy.allowed_modes' must be a list when present")
+                    else:
+                        for i, mode in enumerate(allowed_modes):
+                            if mode not in VALID_LAUNCH_MODES:
+                                errors.append(
+                                    f"'execution_policy.allowed_modes[{i}]' must be one of {sorted(VALID_LAUNCH_MODES)}"
+                                )
+                if "secure_mode_required" in execution_policy and not isinstance(
+                    execution_policy.get("secure_mode_required"), bool
+                ):
+                    errors.append("'execution_policy.secure_mode_required' must be a boolean when present")
+
+        if secure_mode_required and provider != "lima":
+            errors.append("secure-mode-required recipes must use provider 'lima'")
 
         # mounts
         if "mounts" in content:
@@ -532,6 +587,10 @@ class RecipeLinter:
                 warnings.append(
                     "Collector combination: 'network_metadata' without 'file_diff' limits filesystem drift correlation"
                 )
+            if "tracee_events" in name_set and content.get("image_profile") not in (None, "tracee_capable"):
+                warnings.append("Tracee support should use image_profile='tracee_capable'.")
+            if "pcap" in name_set and content.get("provider", "docker_kali") != "lima":
+                errors.append("PCAP is restricted to secure-mode Lima recipes.")
 
         # Distro / template vs image
         if self.expected_distro and isinstance(bi, str) and bi.strip():
@@ -579,6 +638,11 @@ class RecipeLinter:
                             f"High risk_level: mounts[{i}] is not read_only=True — host write exposure"
                         )
 
+        execution_policy = content.get("execution_policy")
+        if isinstance(execution_policy, dict):
+            if execution_policy.get("secure_mode_required") is True and content.get("provider", "docker_kali") != "lima":
+                errors.append("Secure-mode-required execution policy conflicts with a non-Lima provider.")
+
         has_blocking_errors = len(errors) > 0
         return LintResult(errors=errors, warnings=warnings, has_blocking_errors=has_blocking_errors)
 
@@ -593,6 +657,9 @@ class RecipeDiffEngine:
 
     _TOP_KEYS: Tuple[str, ...] = (
         "base_image",
+        "provider",
+        "image_profile",
+        "execution_policy",
         "command",
         "network_policy",
         "collectors",

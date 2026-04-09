@@ -1,5 +1,5 @@
 # ===========================================
-# CVE Threat Radar - Requirements
+# Project Sheshnaag - Requirements
 # ===========================================
 
 # Core Framework

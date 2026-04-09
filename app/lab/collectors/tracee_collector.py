@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from app.lab.interfaces import Collector
 
 from app.lab.collectors.common import build_evidence_dict, collector_health_meta, synthetic_from_plan, utc_iso
-from app.lab.collectors.runtime import env_flag_enabled, is_executable_guest_context, resolve_container_id, run_in_container
+from app.lab.collectors.runtime import is_executable_guest_context, resolve_container_id, run_in_container
 from app.lab.telemetry_envelope import normalize_tracee_line, validate_runtime_event
 from app.lab.telemetry_translation import translate_with_enterprise_pack
 
@@ -17,12 +17,14 @@ class TraceeEventsCollector(Collector):
     collector_version = "1.0.0"
 
     def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        if not env_flag_enabled("SHESHNAAG_ENABLE_TRACEE", default=False):
+        plan = provider_result.get("plan") or {}
+        tooling_profile = plan.get("tooling_profile") if isinstance(plan.get("tooling_profile"), dict) else {}
+        if not bool(tooling_profile.get("tracee_available")):
             return [
                 synthetic_from_plan(
                     collector_name=self.collector_name,
                     title="Tracee runtime events",
-                    summary="Tracee disabled (SHESHNAAG_ENABLE_TRACEE).",
+                    summary="Tracee requested but the selected trusted image is not Tracee-capable.",
                     run_context=run_context,
                     provider_result=provider_result,
                     collector_version=self.collector_version,

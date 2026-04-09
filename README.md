@@ -2,7 +2,7 @@
 
 Project Sheshnaag is a local-first defensive vulnerability research lab for enterprise software CVEs. It ingests live vulnerability intelligence, scores research candidates, creates constrained Kali-backed validation plans, captures evidence, generates defensive artifacts, and preserves signed provenance plus analyst credit.
 
-This repo is a hard pivot from CVE Threat Radar into the first Sheshnaag release. The frontend now exposes the operator console routes for intel, candidates, recipes, runs, evidence, artifacts, provenance, ledger, and disclosure bundles on top of the Sheshnaag backend APIs.
+This repo contains Project Sheshnaag, a defensive validation platform with operator workflows for intel, candidates, recipes, runs, evidence, artifacts, provenance, ledger, and disclosure bundles.
 
 ## What Exists Now
 
@@ -21,6 +21,33 @@ This repo is a hard pivot from CVE Threat Radar into the first Sheshnaag release
 - React operator console for the core Sheshnaag workflows plus the product narrative and safety posture pages.
 - Existing CVE, tenant, SBOM, VEX, asset, and graph foundations retained as applicability context.
 
+## Current State
+
+Sheshnaag now has a real control plane and operator surface:
+
+- live intel, candidate triage, recipe management, run orchestration, evidence listing, artifact review, provenance, ledger, and disclosure routes
+- signed run and bundle attestations using tenant-scoped Ed25519 keys
+- real archive export for disclosure bundles
+- a constrained Docker-backed execute path for the baseline collectors:
+  - `process_tree`
+  - `package_inventory`
+  - `file_diff`
+  - `network_metadata`
+  - `service_logs`
+- an explicit osquery-capable image path for `osquery_snapshot`
+
+Reliable after this gap-fill pass:
+
+- targeted Sheshnaag integration suites pass with `RUN_INTEGRATION_TESTS=1`
+- route-level provenance, artifact review, and disclosure export flows are stable
+- execute-mode smoke scripts exist for the baseline live path and the osquery path
+
+Still deferred:
+
+- Lima / VM-grade secure mode
+- broader telemetry maturity for Tracee, Falco, Tetragon, and PCAP beyond graceful capability reporting
+- deeper disclosure/report packaging and richer team workflow analytics beyond the current v1.0 workstation story
+
 ## Safety Posture
 
 Sheshnaag is defensive-only.
@@ -36,6 +63,8 @@ More detail:
 - [Architecture](docs/PROJECT_SHESHNAAG_ARCHITECTURE.md)
 - [Safety Policy](docs/SHESHNAAG_SAFETY_POLICY.md)
 - [Knowledge System](docs/SHESHNAAG_KNOWLEDGE_SYSTEM.md)
+- [v2 Deployment Guide](docs/SHESHNAAG_V2_DEPLOYMENT_GUIDE.md)
+- [v2 Operator Runbook](docs/SHESHNAAG_V2_OPERATOR_RUNBOOK.md)
 
 ## Architecture
 
@@ -45,7 +74,7 @@ app/
   core/                config, security, tenancy, database
   ingestion/           feed sync and schedulers
   lab/                 provider interfaces, docker_kali provider, collectors, artifact generation, attestation
-  models/              legacy CVE/intel models plus Sheshnaag domain models
+  models/              foundational CVE/intel models plus Sheshnaag domain models
   services/            Sheshnaag application logic and retained supporting services
 frontend/              marketing website
 tests/                 unit and integration coverage
@@ -54,7 +83,7 @@ tests/                 unit and integration coverage
 The system is split into three planes:
 
 - Control plane: ingestion, scoring, recipes, runs, provenance, export APIs.
-- Validation plane: constrained Kali-backed execution planning and evidence collection.
+- Validation plane: constrained Docker-backed execution planning, execute-mode evidence collection, and an explicit osquery-capable image path.
 - Knowledge plane: source preservation, project notes, MemPalace memory, and LLM-wiki style structured knowledge.
 
 ## Quick Start
@@ -80,6 +109,7 @@ npm --prefix frontend run dev
 
 ```bash
 PYTHONPATH=. pytest -q
+PYTHONPATH=. RUN_INTEGRATION_TESTS=1 pytest -q tests/integration/test_lab_lifecycle.py tests/integration/test_evidence_collectors.py tests/integration/test_provenance_and_disclosure_routes.py
 npm --prefix frontend run build
 ```
 
@@ -87,24 +117,35 @@ npm --prefix frontend run build
 
 ```bash
 python scripts/sheshnaag_api_smoke.py
+python scripts/sheshnaag_execute_smoke.py
+bash scripts/build_sheshnaag_osquery_image.sh
+python scripts/sheshnaag_osquery_smoke.py
+bash scripts/build_sheshnaag_tracee_image.sh
+python scripts/sheshnaag_tracee_smoke.py
 npm --prefix frontend run smoke:routes
 bash scripts/sheshnaag_release_rehearsal.sh
 ```
 
 - `scripts/sheshnaag_api_smoke.py` spins up an in-memory FastAPI test surface and exercises intel, candidates, recipes, runs, evidence, artifacts, provenance, ledger, templates, and disclosure export.
+- `scripts/sheshnaag_execute_smoke.py` verifies the baseline execute-mode Docker path when the Docker daemon is available.
+- `scripts/build_sheshnaag_osquery_image.sh` builds the dedicated osquery-capable lab image tag used by the advanced telemetry smoke.
+- `scripts/sheshnaag_osquery_smoke.py` verifies live `osquery_snapshot` capture when Docker is available and the osquery-capable image is present.
+- `scripts/build_sheshnaag_tracee_image.sh` builds the trusted Tracee-capable lab image tag.
+- `scripts/sheshnaag_tracee_smoke.py` verifies the supported Tracee runtime collector path when Docker is available and the Tracee image is present.
 - `npm --prefix frontend run smoke:routes` verifies that every operator page is still wired into the route map and top-level nav.
-- `scripts/sheshnaag_release_rehearsal.sh` runs the backend smoke, frontend route smoke, targeted Sheshnaag pytest suite, and frontend build in one repeatable pass.
+- `scripts/sheshnaag_release_rehearsal.sh` runs backend smoke, route smoke, targeted unit/integration pytest, the execute-mode smoke scripts, and the frontend build in one repeatable pass. Docker-backed smoke steps self-skip when Docker is unavailable.
 
 ## Implementation Notes
 
-- Existing patch/workbench flows remain in the repo for transition safety, but they are no longer the primary product story.
-- The first validation path is intentionally simulated/constrained rather than a full offensive execution framework.
+- Simulated mode remains available for non-Docker development, but execute mode is the live validation path for Sheshnaag acceptance.
+- The dedicated osquery image is an explicit opt-in path for `osquery_snapshot`; the default lab image remains the baseline constrained Kali image.
+- The trusted image catalog now distinguishes baseline, osquery-capable, Tracee-capable, and secure Lima guest profiles.
 - Writes for Sheshnaag APIs should use a writable tenant; demo tenant reads are still useful for seeded exploration.
 - The knowledge layer is intended to pair raw source preservation with an LLM-maintained wiki and MemPalace memory continuity.
 
 ## Next Steps
 
 - Expand candidate scoring with richer OSV and GitHub Advisory normalization.
-- Deepen the constrained run path into richer evidence collection and policy packs.
-- Add fuller disclosure templates and operator UX after the marketing-site phase.
-- Introduce a future VM-backed provider for stronger secure-mode isolation.
+- Deepen the constrained run path into richer telemetry slices beyond `osquery_snapshot`.
+- Add fuller disclosure/report packaging and richer operator review workflows.
+- Introduce a future VM-backed provider for stronger secure-mode isolation without changing the recipe/run contract.

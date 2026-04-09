@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional
 
+VALID_LAUNCH_MODES = {"dry_run", "simulated", "execute"}
+
 
 class RunState(str, Enum):
     """Canonical run lifecycle states."""
@@ -92,6 +94,16 @@ class ProviderResult:
 def validate_transition(current: RunState, target: RunState) -> bool:
     """Return True if the transition from *current* to *target* is legal."""
     return target in VALID_TRANSITIONS.get(current, [])
+
+
+def normalize_launch_mode(value: Optional[str]) -> str:
+    """Normalize launch-mode aliases to the canonical wire/storage contract."""
+    normalized = (value or "simulated").strip().lower().replace("-", "_")
+    if normalized == "live":
+        return "execute"
+    if normalized not in VALID_LAUNCH_MODES:
+        raise ValueError(f"Invalid launch mode '{value}'. Expected one of dry_run, simulated, execute.")
+    return normalized
 
 
 class LabProvider(ABC):

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import type { Recipe, RecipeDiffResult, RecipeLintResult, TemplateItem } from "../types";
+import type { Recipe, RecipeDiffResult, RecipeLintResult, RunDetailResponse, TemplateItem } from "../types";
 
 const DRAFT_KEY = "sheshnaag-recipe-builder-draft";
 
@@ -15,6 +16,13 @@ const COLLECTOR_IDS = [
   "pcap",
   "falco_events",
   "tetragon_events",
+] as const;
+const DEFAULT_COLLECTOR_SELECTION = [
+  "process_tree",
+  "package_inventory",
+  "file_diff",
+  "network_metadata",
+  "service_logs",
 ] as const;
 
 const DEFAULT_BASE_IMAGE = "kalilinux/kali-rolling:2026.1";
@@ -108,16 +116,12 @@ function recipeSafetyHighlights(content: Record<string, unknown>): string[] {
 }
 
 async function fetchCandidates(): Promise<CandidateRow[]> {
-  const response = await fetch("/api/candidates?tenant_slug=demo-public&limit=50");
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Candidates request failed: ${response.status}`);
-  }
-  const data = (await response.json()) as { items?: CandidateRow[] };
-  return data.items ?? [];
+  const data = await api.getCandidates({ limit: 50 });
+  return (data.items ?? []) as CandidateRow[];
 }
 
 export function RecipeBuilderPage() {
+  const [searchParams] = useSearchParams();
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [candidates, setCandidates] = useState<CandidateRow[]>([]);
@@ -132,7 +136,7 @@ export function RecipeBuilderPage() {
   const [createdBy, setCreatedBy] = useState("demo.analyst");
   const [updatedBy, setUpdatedBy] = useState("demo.analyst");
   const [commandText, setCommandText] = useState("sleep 1");
-  const [collectors, setCollectors] = useState<Set<string>>(() => new Set(COLLECTOR_IDS));
+  const [collectors, setCollectors] = useState<Set<string>>(() => new Set(DEFAULT_COLLECTOR_SELECTION));
   const [networkMode, setNetworkMode] = useState<"none" | "bridge">("none");
   const [egressHosts, setEgressHosts] = useState("");
   const [teardownMode, setTeardownMode] = useState<TeardownMode>("destroy_immediately");
@@ -148,7 +152,9 @@ export function RecipeBuilderPage() {
   const [approveOpen, setApproveOpen] = useState(false);
   const [reviewer, setReviewer] = useState("");
   const [analystName, setAnalystName] = useState("Demo Analyst");
-  const [launchMode, setLaunchMode] = useState<"simulated" | "live">("simulated");
+  const [launchMode, setLaunchMode] = useState<"dry_run" | "simulated" | "execute">("simulated");
+  const [currentRunId, setCurrentRunId] = useState<number | null>(null);
+  const [currentRun, setCurrentRun] = useState<RunDetailResponse | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
@@ -253,8 +259,19 @@ export function RecipeBuilderPage() {
         if (tList.items.length && templateId === null) {
           setTemplateId(tList.items[0].id);
         }
-        if (cand.length && candidateId === null) {
+        const candidateFromQuery = Number(searchParams.get("candidateId") ?? "");
+        if (candidateFromQuery) {
+          setCandidateId(candidateFromQuery);
+        } else if (cand.length && candidateId === null) {
           setCandidateId(cand[0].id);
+        }
+        const recipeName = searchParams.get("recipeName");
+        const objectiveParam = searchParams.get("objective");
+        if (recipeName) {
+          setName(recipeName);
+        }
+        if (objectiveParam) {
+          setObjective(objectiveParam);
         }
       } catch (e) {
         if (!cancelled) {
@@ -266,7 +283,7 @@ export function RecipeBuilderPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!loadedRecipe?.revisions?.length) {
@@ -335,6 +352,9 @@ export function RecipeBuilderPage() {
             /* recipe may have been deleted */
           }
         }
+        if (typeof d.currentRunId === "number") {
+          setCurrentRunId(d.currentRunId);
+        }
       } catch {
         /* ignore */
       }
@@ -343,6 +363,16 @@ export function RecipeBuilderPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentRunId) {
+      setCurrentRun(null);
+      return;
+    }
+    api.getRun(currentRunId)
+      .then(setCurrentRun)
+      .catch(() => setCurrentRun(null));
+  }, [currentRunId]);
 
   const handleRecipeSelect = async (idStr: string) => {
     setError(null);
@@ -390,6 +420,7 @@ export function RecipeBuilderPage() {
       teardownMode,
       riskLevel,
       distro,
+      currentRunId,
     };
     localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
     setBanner("Draft saved in this browser.");
@@ -400,7 +431,6 @@ export function RecipeBuilderPage() {
     setError(null);
     try {
       const result = await api.lintRecipe({
-        tenant_slug: "demo-public",
         content: buildContent(),
       });
       setLintResult(result);
@@ -438,14 +468,12 @@ export function RecipeBuilderPage() {
     setError(null);
     setBanner(null);
     const content = buildContent();
-    const tenant_slug = "demo-public";
     try {
       if (recipeId == null) {
         if (candidateId == null) {
           throw new Error("Select a research candidate before creating a recipe.");
         }
         const created = await api.createRecipe({
-          tenant_slug,
           candidate_id: candidateId,
           name: name.trim() || "Untitled recipe",
           objective: objective.trim() || "Validation objective",
@@ -457,7 +485,6 @@ export function RecipeBuilderPage() {
         setBanner(`Recipe created (revision ${created.current_revision_number}).`);
       } else {
         const updated = await api.addRecipeRevision(recipeId, {
-          tenant_slug,
           updated_by: updatedBy.trim() || "demo.analyst",
           content,
         });
@@ -490,10 +517,7 @@ export function RecipeBuilderPage() {
     setBusy(true);
     setError(null);
     try {
-      const updated = await api.approveRecipeRevision(recipeId, revNum, {
-        tenant_slug: "demo-public",
-        reviewer: r,
-      });
+      const updated = await api.approveRecipeRevision(recipeId, revNum, { reviewer: r });
       setLoadedRecipe(updated);
       setApproveOpen(false);
       setBanner(`Revision ${revNum} approved.`);
@@ -506,20 +530,19 @@ export function RecipeBuilderPage() {
 
   const launchBlocked = lintResult?.has_blocking_errors === true;
 
-  const launchRun = async () => {
+  const planRun = async () => {
     if (recipeId == null || launchBlocked) {
       return;
     }
     const rev = sortedRevisions[0]?.revision_number ?? loadedRecipe?.current_revision_number;
     if (rev == null) {
-      setError("No revision to launch.");
+      setError("No revision to plan.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await api.launchRun({
-        tenant_slug: "demo-public",
+      const planned = await api.planRun({
         recipe_id: recipeId,
         revision_number: rev,
         analyst_name: analystName.trim() || "Demo Analyst",
@@ -527,9 +550,66 @@ export function RecipeBuilderPage() {
         acknowledge_sensitive: riskLevel !== "standard",
         workstation: { fingerprint: "recipe-builder-ui", hostname: "browser", os_family: "web" },
       });
-      setBanner("Run launched. Check runs list in the API or ops tools.");
+      setCurrentRunId(planned.id);
+      setCurrentRun(planned);
+      setBanner(`Run #${planned.id} planned.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Launch failed.");
+      setError(e instanceof Error ? e.message : "Plan failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const allocateRun = async () => {
+    if (currentRunId == null) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const allocated = await api.allocateRunResources(currentRunId, {});
+      setCurrentRun(allocated);
+      setBanner(`Run #${allocated.id} resources allocated.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Allocate failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const bootRun = async () => {
+    if (currentRunId == null) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const booted = await api.bootRun(currentRunId, {});
+      setCurrentRun(booted);
+      setBanner(`Run #${booted.id} booted.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Boot failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runLifecycleAction = async (action: "stop" | "teardown" | "destroy") => {
+    if (currentRunId == null) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const detail = action === "stop"
+        ? await api.stopRun(currentRunId, {})
+        : action === "teardown"
+          ? await api.teardownRun(currentRunId, {})
+          : await api.destroyRun(currentRunId, {});
+      setCurrentRun(detail);
+      setBanner(`Run #${detail.id} ${action} complete.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `${action} failed.`);
     } finally {
       setBusy(false);
     }
@@ -554,8 +634,8 @@ export function RecipeBuilderPage() {
           <p className="tw-text-xs tw-uppercase tw-tracking-[0.2em] tw-text-shesh-accent2/90 tw-mb-2">Lab</p>
           <h1 className="tw-text-3xl tw-font-semibold tw-tracking-tight tw-text-white">Recipe builder</h1>
           <p className="tw-mt-2 tw-text-shesh-muted tw-max-w-2xl tw-text-sm tw-leading-relaxed">
-            Compose constrained validation recipes, lint policy, diff revisions, and launch approved runs against the demo
-            tenant.
+            Compose constrained validation recipes, lint policy, diff revisions, and move approved runs through plan,
+            allocate, boot, and teardown in the active workspace.
           </p>
         </header>
 
@@ -856,21 +936,72 @@ export function RecipeBuilderPage() {
                     value={launchMode}
                     onChange={(e) => setLaunchMode(e.target.value as typeof launchMode)}
                   >
-                    <option value="simulated">simulated</option>
-                    <option value="live">live</option>
+                    <option value="dry_run">Dry run</option>
+                    <option value="simulated">Simulated</option>
+                    <option value="execute">Execute</option>
                   </select>
                 </label>
                 <button
                   type="button"
                   className="tw-w-full tw-rounded-lg tw-bg-gradient-to-r tw-from-shesh-accent tw-to-amber-500 tw-py-2.5 tw-text-sm tw-font-bold tw-text-black tw-shadow-lg tw-transition hover:tw-opacity-95 disabled:tw-cursor-not-allowed disabled:tw-opacity-40"
-                  onClick={() => void launchRun()}
+                  onClick={() => void planRun()}
                   disabled={busy || recipeId == null || launchBlocked}
                   title={launchBlocked ? "Resolve lint errors before launch." : undefined}
                 >
-                  Launch run
+                  Plan run
                 </button>
                 {launchBlocked ? (
-                  <p className="tw-text-center tw-text-[11px] tw-text-amber-200/90">Launch disabled while lint reports blocking errors.</p>
+                  <p className="tw-text-center tw-text-[11px] tw-text-amber-200/90">Planning disabled while lint reports blocking errors.</p>
+                ) : null}
+                <button
+                  type="button"
+                  className="tw-w-full tw-rounded-lg tw-border tw-border-shesh-line tw-bg-white/5 tw-py-2.5 tw-text-sm tw-font-medium tw-text-shesh-ink tw-transition hover:tw-bg-white/10 disabled:tw-opacity-40"
+                  onClick={() => void allocateRun()}
+                  disabled={busy || currentRunId == null}
+                >
+                  Allocate resources
+                </button>
+                <button
+                  type="button"
+                  className="tw-w-full tw-rounded-lg tw-border tw-border-shesh-line tw-bg-white/5 tw-py-2.5 tw-text-sm tw-font-medium tw-text-shesh-ink tw-transition hover:tw-bg-white/10 disabled:tw-opacity-40"
+                  onClick={() => void bootRun()}
+                  disabled={busy || currentRunId == null}
+                >
+                  Boot / execute
+                </button>
+                <div className="tw-grid tw-gap-2 tw-grid-cols-3">
+                  <button
+                    type="button"
+                    className="tw-rounded-lg tw-border tw-border-shesh-line tw-bg-white/5 tw-py-2 tw-text-xs"
+                    onClick={() => void runLifecycleAction("stop")}
+                    disabled={busy || currentRunId == null}
+                  >
+                    Stop
+                  </button>
+                  <button
+                    type="button"
+                    className="tw-rounded-lg tw-border tw-border-shesh-line tw-bg-white/5 tw-py-2 tw-text-xs"
+                    onClick={() => void runLifecycleAction("teardown")}
+                    disabled={busy || currentRunId == null}
+                  >
+                    Teardown
+                  </button>
+                  <button
+                    type="button"
+                    className="tw-rounded-lg tw-border tw-border-red-500/35 tw-bg-red-950/30 tw-py-2 tw-text-xs"
+                    onClick={() => void runLifecycleAction("destroy")}
+                    disabled={busy || currentRunId == null}
+                  >
+                    Destroy
+                  </button>
+                </div>
+                {currentRun ? (
+                  <div className="tw-rounded-lg tw-border tw-border-shesh-line tw-bg-black/25 tw-p-3 tw-text-xs tw-text-shesh-muted tw-space-y-1">
+                    <div>Current run: #{currentRun.id}</div>
+                    <div>State: {currentRun.state}</div>
+                    <div>Mode: {currentRun.launch_mode}</div>
+                    <div>Provider: {currentRun.provider_readiness.status ?? "unknown"}</div>
+                  </div>
                 ) : null}
               </div>
 

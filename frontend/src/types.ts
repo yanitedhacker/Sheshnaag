@@ -538,6 +538,24 @@ export type RunSummary = {
   ended_at: string | null;
   manifest: Record<string, unknown>;
   run_transcript: string | null;
+  provider_readiness: {
+    provider?: string;
+    status?: string;
+    workspace_root?: string;
+    checks?: Array<{ name: string; status: string; detail: string }>;
+  };
+  image_catalog?: Record<string, unknown>;
+  execution_policy?: Record<string, unknown>;
+  provider_contract?: Record<string, unknown>;
+  collector_capabilities: Array<{
+    collector_name: string;
+    tier: string;
+    selected: boolean;
+    status: string;
+    reason?: string;
+    feature_flag?: string | null;
+    guest_tool?: string | null;
+  }>;
 };
 
 export type RunTimelineEvent = {
@@ -573,6 +591,16 @@ export type RunDetailResponse = RunSummary & {
   evidence_timeline: {
     items: EvidenceTimelineItem[];
     ordered_by: string;
+  };
+  evidence_summary: {
+    count: number;
+    by_kind: Record<string, number>;
+    collectors: Array<{
+      collector_name: string;
+      status: string;
+      count: number;
+      latest_title: string;
+    }>;
   };
   runtime_findings_summary: {
     count: number;
@@ -742,6 +770,12 @@ export type DetectionArtifactRecord = {
   sha256: string;
   evidence_artifact_id?: number | null;
   rule_body: string;
+  lineage?: {
+    supersedes_artifact_id?: number | null;
+    correction_note?: string | null;
+    latest_decision?: string | null;
+    latest_reviewed_at?: string | null;
+  };
   review_history: ArtifactReviewEntry[];
   feedback: ArtifactFeedbackEntry[];
 };
@@ -753,6 +787,12 @@ export type MitigationArtifactRecord = {
   title: string;
   status: string;
   body: string;
+  lineage?: {
+    supersedes_artifact_id?: number | null;
+    correction_note?: string | null;
+    latest_decision?: string | null;
+    latest_reviewed_at?: string | null;
+  };
   review_history: ArtifactReviewEntry[];
   feedback: ArtifactFeedbackEntry[];
 };
@@ -778,6 +818,7 @@ export type ProvenanceAttestation = {
   signature: string;
   signer: string;
   payload: Record<string, unknown>;
+  signing?: Record<string, unknown>;
   created_at?: string | null;
 };
 
@@ -790,6 +831,7 @@ export type DisclosureBundleRecord = {
   sha256: string;
   signed_by: string;
   manifest: Record<string, unknown>;
+  attachment_policy?: Record<string, unknown>;
   archive?: {
     path?: string;
     filename?: string;
@@ -797,6 +839,7 @@ export type DisclosureBundleRecord = {
     size?: number;
   };
   download_url: string;
+  signing?: Record<string, unknown>;
   created_at?: string | null;
 };
 

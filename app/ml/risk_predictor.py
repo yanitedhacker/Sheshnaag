@@ -381,10 +381,10 @@ class RiskPredictor:
         """
         load_path = path or self.model_path
 
-        # Try new joblib format first, then fall back to legacy pickle
+        # Prefer the supported joblib format; detect insecure pickle artifacts explicitly.
         model_file = os.path.join(load_path, "risk_model.joblib")
         checksum_file = os.path.join(load_path, "risk_model.sha256")
-        legacy_model_file = os.path.join(load_path, "risk_model.pkl")
+        pickle_model_file = os.path.join(load_path, "risk_model.pkl")
 
         # Check for new format
         if os.path.exists(model_file):
@@ -401,15 +401,15 @@ class RiskPredictor:
 
             model_data = joblib.load(model_file)
 
-        # Legacy pickle format is no longer supported for security reasons
-        elif os.path.exists(legacy_model_file):
+        # Pickle model artifacts are not supported for security reasons.
+        elif os.path.exists(pickle_model_file):
             logger.error(
-                f"Legacy pickle model found at {legacy_model_file}. "
+                f"Unsupported pickle model found at {pickle_model_file}. "
                 "Pickle files are not supported due to security risks (arbitrary code execution). "
                 "Please re-train and save the model in joblib format."
             )
             raise ValueError(
-                "Legacy pickle models are no longer supported for security reasons. "
+                "Pickle model artifacts are not supported for security reasons. "
                 "Please re-train the model and save it using the save_model() method."
             )
         else:

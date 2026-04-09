@@ -17,6 +17,34 @@ class PcapCollector(Collector):
 
     def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
         started = utc_iso()
+        plan = provider_result.get("plan") or {}
+        provider_name = str(plan.get("provider") or run_context.get("provider") or "")
+        if provider_name != "lima":
+            ended = utc_iso()
+            payload = {
+                "collector": self.collector_name,
+                "mode": "disabled",
+                "collector_health": collector_health_meta(
+                    collector=self.collector_name,
+                    version=self.collector_version,
+                    started_at=started,
+                    ended_at=ended,
+                    status="skipped",
+                    skip_reason="secure_mode_only",
+                ),
+            }
+            return [
+                build_evidence_dict(
+                    artifact_kind=self.collector_name,
+                    title="PCAP disabled",
+                    summary="PCAP capture is restricted to secure-mode Lima runs in v2.",
+                    payload=payload,
+                    capture_started_at=started,
+                    capture_ended_at=ended,
+                    collector_name=self.collector_name,
+                    collector_version=self.collector_version,
+                )
+            ]
         if not env_flag_enabled("SHESHNAAG_ENABLE_PCAP", default=False):
             ended = utc_iso()
             payload = {

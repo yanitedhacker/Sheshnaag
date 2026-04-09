@@ -100,11 +100,16 @@ export function ArtifactForgePage() {
                   <strong>{item.name}</strong>
                   <p>{item.artifact_type} · {item.status}</p>
                 </div>
+                {item.lineage?.supersedes_artifact_id ? (
+                  <p className="muted">Supersedes artifact #{item.lineage.supersedes_artifact_id}</p>
+                ) : null}
+                {item.lineage?.correction_note ? <p className="muted">{item.lineage.correction_note}</p> : null}
                 <pre className="code-card">{item.rule_body}</pre>
                 <div className="button-row">
                   <button className="ghost-button" onClick={() => reviewArtifact("detection", item.id, "under_review")}>Send review</button>
                   <button className="ghost-button" onClick={() => reviewArtifact("detection", item.id, "approved")}>Approve</button>
                   <button className="ghost-button" onClick={() => reviewArtifact("detection", item.id, "rejected")}>Reject</button>
+                  <button className="ghost-button" onClick={() => reviewArtifact("detection", item.id, "deprecated")}>Deprecate</button>
                 </div>
                 <div className="toolbar">
                   <input value={feedbackNote} onChange={(event) => setFeedbackNote(event.target.value)} placeholder="Feedback note" />
@@ -127,11 +132,16 @@ export function ArtifactForgePage() {
                   <strong>{item.title}</strong>
                   <p>{item.artifact_type} · {item.status}</p>
                 </div>
+                {item.lineage?.supersedes_artifact_id ? (
+                  <p className="muted">Supersedes artifact #{item.lineage.supersedes_artifact_id}</p>
+                ) : null}
+                {item.lineage?.correction_note ? <p className="muted">{item.lineage.correction_note}</p> : null}
                 <pre className="code-card">{item.body}</pre>
                 <div className="button-row">
                   <button className="ghost-button" onClick={() => reviewArtifact("mitigation", item.id, "under_review")}>Send review</button>
                   <button className="ghost-button" onClick={() => reviewArtifact("mitigation", item.id, "approved")}>Approve</button>
                   <button className="ghost-button" onClick={() => reviewArtifact("mitigation", item.id, "rejected")}>Reject</button>
+                  <button className="ghost-button" onClick={() => reviewArtifact("mitigation", item.id, "deprecated")}>Deprecate</button>
                 </div>
               </article>
             ))}

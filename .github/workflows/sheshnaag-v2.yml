@@ -1,0 +1,33 @@
+name: sheshnaag-v2
+
+on:
+  push:
+    branches: ["main", "codex/**"]
+  pull_request:
+
+jobs:
+  unit-and-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Targeted verification
+        run: PYTHONPATH=. RUN_INTEGRATION_TESTS=1 pytest -q tests/unit/test_recipe_schema.py tests/unit/test_sheshnaag_service.py tests/unit/test_collectors_framework.py tests/integration/test_lab_lifecycle.py tests/integration/test_provenance_and_disclosure_routes.py
+      - name: Frontend build
+        run: npm --prefix frontend run build
+
+  release-rehearsal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release metadata
+        run: python scripts/sheshnaag_release_metadata.py

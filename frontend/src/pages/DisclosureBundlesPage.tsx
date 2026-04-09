@@ -129,7 +129,8 @@ export function DisclosureBundlesPage() {
           <select value={bundleType} onChange={(event) => setBundleType(event.target.value)}>
             <option value="vendor_disclosure">Vendor disclosure</option>
             <option value="bug_bounty">Bug bounty</option>
-            <option value="research_bounty">Research bounty</option>
+            <option value="research_submission">Research submission</option>
+            <option value="internal_remediation">Internal remediation</option>
           </select>
           <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Bundle title" />
           <input value={signedBy} onChange={(event) => setSignedBy(event.target.value)} placeholder="Signed by" />
@@ -154,7 +155,13 @@ export function DisclosureBundlesPage() {
             <article className="line-card" key={bundle.id}>
               <div>
                 <strong>{bundle.title}</strong>
-                <p>{bundle.bundle_type} · archive {bundle.archive?.filename ?? "pending"}</p>
+                <p>
+                  {bundle.bundle_type} · archive {bundle.archive?.filename ?? "pending"} · {String(bundle.signing?.algorithm ?? "unknown")}
+                </p>
+                <p className="muted">
+                  {String((bundle.manifest?.export_audit as Record<string, unknown> | undefined)?.provider ?? "unknown provider")} ·{" "}
+                  {String((bundle.manifest?.export_audit as Record<string, unknown> | undefined)?.verification_status ?? "verification unknown")}
+                </p>
               </div>
               <a className="ghost-button" href={bundle.download_url}>Download</a>
             </article>

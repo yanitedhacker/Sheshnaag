@@ -63,6 +63,12 @@ def build_evidence_dict(
     collector_version: Optional[str] = None,
     truncated: bool = False,
 ) -> Dict[str, Any]:
+    if isinstance(payload, dict):
+        health = payload.get("collector_health")
+        if isinstance(health, dict):
+            status = str(health.get("status") or "").strip().lower()
+            if status:
+                payload.setdefault("collection_state", "live" if status == "ok" else status)
     serialized = json.dumps(payload, sort_keys=True, default=str)
     byte_size = len(serialized.encode("utf-8"))
     item: Dict[str, Any] = {

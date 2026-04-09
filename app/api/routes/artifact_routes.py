@@ -21,6 +21,8 @@ class ArtifactReviewRequest(BaseModel):
     decision: str
     reviewer: str
     rationale: Optional[str] = None
+    correction_note: Optional[str] = None
+    supersedes_artifact_id: Optional[int] = None
 
 
 class ArtifactFeedbackRequest(BaseModel):
@@ -57,6 +59,8 @@ def review_artifact(request: ArtifactReviewRequest, session: Session = Depends(g
             decision=request.decision,
             reviewer=request.reviewer,
             rationale=request.rationale,
+            correction_note=request.correction_note,
+            supersedes_artifact_id=request.supersedes_artifact_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
