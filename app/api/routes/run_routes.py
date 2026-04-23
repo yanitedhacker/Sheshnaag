@@ -23,6 +23,12 @@ class RunLaunchRequest(BaseModel):
     launch_mode: str = "simulated"
     acknowledge_sensitive: bool = False
     workstation: Dict[str, Any] = Field(default_factory=dict)
+    analysis_mode: str = "cve_validation"
+    sandbox_profile_id: Optional[int] = None
+    specimen_ids: list[int] = Field(default_factory=list)
+    egress_mode: Optional[str] = None
+    ai_assist_enabled: bool = False
+    ai_provider_hint: Optional[str] = None
 
     @field_validator("launch_mode", mode="before")
     @classmethod
@@ -65,6 +71,12 @@ def plan_run(request: RunPlanRequest, session: Session = Depends(get_sync_sessio
             workstation=request.workstation,
             launch_mode=request.launch_mode,
             acknowledge_sensitive=request.acknowledge_sensitive,
+            analysis_mode=request.analysis_mode,
+            sandbox_profile_id=request.sandbox_profile_id,
+            specimen_ids=request.specimen_ids,
+            egress_mode=request.egress_mode,
+            ai_assist_enabled=request.ai_assist_enabled,
+            ai_provider_hint=request.ai_provider_hint,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -83,6 +95,12 @@ def launch_run(request: RunLaunchRequest, session: Session = Depends(get_sync_se
             workstation=request.workstation,
             launch_mode=request.launch_mode,
             acknowledge_sensitive=request.acknowledge_sensitive,
+            analysis_mode=request.analysis_mode,
+            sandbox_profile_id=request.sandbox_profile_id,
+            specimen_ids=request.specimen_ids,
+            egress_mode=request.egress_mode,
+            ai_assist_enabled=request.ai_assist_enabled,
+            ai_provider_hint=request.ai_provider_hint,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

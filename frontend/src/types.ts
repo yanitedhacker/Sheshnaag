@@ -523,6 +523,15 @@ export type RunSummary = {
   id: number;
   recipe_revision_id: number;
   candidate_id: number | null;
+  analysis_mode?: string;
+  sandbox_profile_id?: number | null;
+  specimen_ids?: number[];
+  specimen_revisions?: Array<Record<string, unknown>>;
+  egress_mode?: string;
+  ai_assist?: Record<string, unknown>;
+  collector_plan?: Array<Record<string, unknown>>;
+  linked_case_ids?: number[];
+  execution_plan?: Record<string, unknown>;
   provider: string;
   provider_run_ref: string | null;
   state: string;
@@ -773,6 +782,7 @@ export type ReviewQueueItem = {
   entity_type: string;
   entity_id: number;
   run_id?: number | null;
+  analysis_case_id?: number | null;
   title: string;
   status: string;
   review_state: string;
@@ -811,6 +821,12 @@ export type EvidenceRecord = {
   collector_name?: string | null;
   collector_version?: string | null;
   truncated?: boolean;
+  lineage_links?: unknown[];
+  safe_render_metadata?: Record<string, unknown>;
+  collector_status?: string;
+  degradation_reasons?: string[];
+  confidence?: number | null;
+  coverage?: string | null;
   payload: Record<string, unknown>;
 };
 
@@ -873,9 +889,15 @@ export type MitigationArtifactRecord = {
 export type ArtifactListResponse = {
   detections: DetectionArtifactRecord[];
   mitigations: MitigationArtifactRecord[];
+  indicators?: V3IndicatorRecord[];
+  prevention?: V3PreventionRecord[];
+  defang?: V3DefangRecord[];
   summary: {
     detection_count: number;
     mitigation_count: number;
+    indicator_count?: number;
+    prevention_count?: number;
+    defang_count?: number;
     approved_count: number;
     under_review_count: number;
   };
@@ -930,6 +952,252 @@ export type ProvenanceResponse = {
   };
   review_history?: Array<Record<string, unknown>>;
   export_history?: DisclosureBundleRecord[];
+};
+
+export type V3SpecimenRevision = {
+  id: number;
+  specimen_id: number;
+  parent_revision_id?: number | null;
+  revision_number: number;
+  sha256: string;
+  content_ref: string;
+  ingest_source: string;
+  quarantine_path?: string | null;
+  processing_stages: Array<Record<string, unknown>>;
+  static_triage: Record<string, unknown>;
+  safe_rendering: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  detonation_eligibility?: Record<string, unknown>;
+  export_review_state?: string;
+  created_at?: string | null;
+};
+
+export type V3SpecimenRecord = {
+  id: number;
+  name: string;
+  specimen_kind: string;
+  source_type: string;
+  status: string;
+  risk_level: string;
+  submitted_by?: string | null;
+  summary?: string | null;
+  labels: string[];
+  metadata: Record<string, unknown>;
+  latest_revision_number: number;
+  latest_revision?: V3SpecimenRevision | null;
+  detonation_eligibility?: Record<string, unknown>;
+  safe_render_ready?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3SpecimenListResponse = {
+  count: number;
+  items: V3SpecimenRecord[];
+};
+
+export type V3SpecimenRevisionListResponse = {
+  count: number;
+  items: V3SpecimenRevision[];
+};
+
+export type V3AnalysisCaseRecord = {
+  id: number;
+  title: string;
+  summary?: string | null;
+  status: string;
+  priority: string;
+  analyst_name: string;
+  specimen_ids: number[];
+  tags: string[];
+  metadata: Record<string, unknown>;
+  counts: {
+    specimens: number;
+    findings: number;
+    prevention?: number;
+    ai_sessions?: number;
+    reports: number;
+  };
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3AnalysisCaseListResponse = {
+  count: number;
+  items: V3AnalysisCaseRecord[];
+};
+
+export type V3SandboxProfileRecord = {
+  id: number;
+  name: string;
+  profile_type: string;
+  provider_hint: string;
+  risk_level: string;
+  egress_mode: string;
+  is_default: boolean;
+  config: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3SandboxProfileListResponse = {
+  count: number;
+  items: V3SandboxProfileRecord[];
+};
+
+export type V3FindingRecord = {
+  id: number;
+  analysis_case_id: number;
+  run_id?: number | null;
+  finding_type: string;
+  title: string;
+  severity: string;
+  confidence: number;
+  status: string;
+  payload: Record<string, unknown>;
+  review_history: ArtifactReviewEntry[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3FindingListResponse = {
+  count: number;
+  items: V3FindingRecord[];
+};
+
+export type V3IndicatorRecord = {
+  id: number;
+  analysis_case_id: number;
+  indicator_kind: string;
+  value: string;
+  status: string;
+  confidence: number;
+  source?: string | null;
+  payload: Record<string, unknown>;
+  review_history: ArtifactReviewEntry[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3IndicatorListResponse = {
+  count: number;
+  items: V3IndicatorRecord[];
+};
+
+export type V3PreventionRecord = {
+  id: number;
+  analysis_case_id: number;
+  artifact_type: string;
+  name: string;
+  body: string;
+  status: string;
+  payload: Record<string, unknown>;
+  review_history: ArtifactReviewEntry[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3PreventionListResponse = {
+  count: number;
+  items: V3PreventionRecord[];
+};
+
+export type V3DefangRecord = {
+  id: number;
+  analysis_case_id: number;
+  action_type: string;
+  title: string;
+  status: string;
+  result_summary?: string | null;
+  payload: Record<string, unknown>;
+  review_history: ArtifactReviewEntry[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3DefangListResponse = {
+  count: number;
+  items: V3DefangRecord[];
+};
+
+export type V3ReportRecord = {
+  id: number;
+  analysis_case_id: number;
+  run_id?: number | null;
+  report_type: string;
+  title: string;
+  status: string;
+  created_by: string;
+  export_ready: boolean;
+  content: Record<string, unknown>;
+  ai_metadata: Record<string, unknown>;
+  export_metadata: Record<string, unknown>;
+  download_url?: string;
+  review_history: ArtifactReviewEntry[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3ReportListResponse = {
+  count: number;
+  items: V3ReportRecord[];
+};
+
+export type V3PolicyRecord = {
+  id: number;
+  name: string;
+  status: string;
+  is_default: boolean;
+  policy: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3PolicyListResponse = {
+  count: number;
+  items: V3PolicyRecord[];
+};
+
+export type V3AIProvider = {
+  provider_key: string;
+  provider_mode: string;
+  display_name: string;
+  model_label: string;
+  capabilities: string[];
+  requires_api_key: boolean;
+  command_hint?: string | null;
+  status?: string;
+  healthy?: boolean;
+  health?: Record<string, unknown>;
+  provider_family?: string;
+};
+
+export type V3AIProviderListResponse = {
+  count: number;
+  items: V3AIProvider[];
+};
+
+export type V3AISessionRecord = {
+  id: number;
+  analysis_case_id: number;
+  provider_key: string;
+  provider_mode: string;
+  capability: string;
+  prompt: string;
+  grounding_digest: string;
+  created_by: string;
+  status: string;
+  review_state: string;
+  output_markdown: string;
+  output_payload: Record<string, unknown>;
+  review_history: ArtifactReviewEntry[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type V3AISessionListResponse = {
+  count: number;
+  items: V3AISessionRecord[];
 };
 
 export type LedgerEntry = {

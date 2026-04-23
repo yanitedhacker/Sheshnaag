@@ -26,6 +26,17 @@ from app.api.routes.tenant_routes import router as tenant_router
 from app.api.routes.supply_chain_routes import router as supply_chain_router
 from app.api.routes.template_routes import router as template_router
 from app.api.routes.review_queue_routes import router as review_queue_router
+from app.api.routes.specimen_routes import router as specimen_router
+from app.api.routes.specimen_revision_routes import router as specimen_revision_router
+from app.api.routes.analysis_case_routes import router as analysis_case_router
+from app.api.routes.sandbox_profile_routes import router as sandbox_profile_router
+from app.api.routes.finding_routes import router as finding_router
+from app.api.routes.indicator_routes import router as indicator_router
+from app.api.routes.prevention_routes import router as prevention_router
+from app.api.routes.defang_routes import router as defang_router
+from app.api.routes.report_routes import router as report_router
+from app.api.routes.ai_routes import router as ai_router
+from app.api.routes.policy_routes import router as policy_router
 
 __all__ = [
     "cve_router",
@@ -54,4 +65,15 @@ __all__ = [
     "supply_chain_router",
     "template_router",
     "review_queue_router",
+    "specimen_router",
+    "specimen_revision_router",
+    "analysis_case_router",
+    "sandbox_profile_router",
+    "finding_router",
+    "indicator_router",
+    "prevention_router",
+    "defang_router",
+    "report_router",
+    "ai_router",
+    "policy_router",
 ]

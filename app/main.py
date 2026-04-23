@@ -20,28 +20,39 @@ from app.core.logging import configure_logging
 from app.core.rate_limit import rate_limiter
 from app.core.security import decode_token
 from app.api.routes import (
+    ai_router,
+    analysis_case_router,
     asset_router,
     artifact_router,
     auth_router,
     candidate_router,
     copilot_router,
     cve_router,
+    defang_router,
     disclosure_router,
     evidence_router,
     feed_router,
+    finding_router,
     governance_router,
     graph_router,
     import_router,
+    indicator_router,
     intel_router,
     ledger_router,
     model_router,
     patch_router,
+    policy_router,
+    prevention_router,
     provenance_router,
+    report_router,
     risk_router,
     recipe_router,
     review_queue_router,
     run_router,
+    sandbox_profile_router,
     simulation_router,
+    specimen_revision_router,
+    specimen_router,
     supply_chain_router,
     template_router,
     tenant_router,
@@ -276,6 +287,17 @@ app.include_router(candidate_router)
 app.include_router(recipe_router)
 app.include_router(review_queue_router)
 app.include_router(run_router)
+app.include_router(specimen_router)
+app.include_router(specimen_revision_router)
+app.include_router(analysis_case_router)
+app.include_router(sandbox_profile_router)
+app.include_router(finding_router)
+app.include_router(indicator_router)
+app.include_router(prevention_router)
+app.include_router(defang_router)
+app.include_router(report_router)
+app.include_router(ai_router)
+app.include_router(policy_router)
 app.include_router(evidence_router)
 app.include_router(artifact_router)
 app.include_router(provenance_router)

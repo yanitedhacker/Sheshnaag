@@ -244,9 +244,77 @@ class SheshnaagService:
             "analyst_name": analyst_name,
             "provider": run.provider,
             "launch_mode": run.launch_mode,
+            "analysis_mode": (run.manifest or {}).get("analysis_mode", "cve_validation"),
+            "specimen_ids": (run.manifest or {}).get("specimen_ids") or [],
             "candidate": self._candidate_payload(candidate) if candidate else {},
             "cve_id": candidate.cve.cve_id if candidate and candidate.cve else None,
         }
+
+    def _resolve_v3_run_context(
+        self,
+        tenant: Tenant,
+        *,
+        provider_name: str,
+        launch_mode: str,
+        analysis_mode: Optional[str],
+        sandbox_profile_id: Optional[int],
+        specimen_ids: Optional[List[int]],
+        egress_mode: Optional[str],
+        ai_assist_enabled: bool,
+        ai_provider_hint: Optional[str],
+    ) -> Dict[str, Any]:
+        from app.services.malware_lab_service import MalwareLabService
+
+        resolved = MalwareLabService(self.session).resolve_run_contract(
+            tenant,
+            provider_name=provider_name,
+            analysis_mode=analysis_mode,
+            sandbox_profile_id=sandbox_profile_id,
+            specimen_ids=specimen_ids,
+            egress_mode=egress_mode,
+            ai_assist_enabled=ai_assist_enabled,
+            ai_provider_hint=ai_provider_hint,
+        )
+        risky_modes = {"malware_detonation", "url_analysis", "email_analysis"}
+        if resolved["analysis_mode"] in risky_modes and resolved["resolved_provider_name"] != "lima" and launch_mode in {"simulated", "execute"}:
+            raise ValueError("Risky malware analysis modes require the Lima provider.")
+        return resolved
+
+    def _persist_v3_run_context(self, run: LabRun, *, v3_context: Dict[str, Any]) -> None:
+        manifest = dict(run.manifest or {})
+        manifest["analysis_mode"] = v3_context["analysis_mode"]
+        manifest["sandbox_profile_id"] = v3_context["sandbox_profile_id"]
+        manifest["sandbox_profile"] = v3_context["sandbox_profile"]
+        manifest["specimen_ids"] = v3_context["specimen_ids"]
+        manifest["specimen_revisions"] = v3_context.get("specimen_revisions") or []
+        manifest["egress_mode"] = v3_context["egress_mode"]
+        manifest["ai_assist"] = {
+            "enabled": v3_context["ai_assist_enabled"],
+            "provider_hint": v3_context["ai_provider_hint"],
+        }
+        manifest["collector_plan"] = v3_context.get("collector_plan") or []
+        manifest["policy_snapshot"] = v3_context.get("policy_snapshot") or {}
+        manifest["linked_case_ids"] = v3_context.get("linked_case_ids") or []
+        manifest["execution_plan"] = v3_context.get("execution_plan") or {}
+        manifest["v3_context"] = {
+            "analysis_mode": v3_context["analysis_mode"],
+            "sandbox_profile_id": v3_context["sandbox_profile_id"],
+            "specimen_ids": v3_context["specimen_ids"],
+            "specimen_revisions": v3_context.get("specimen_revisions") or [],
+            "egress_mode": v3_context["egress_mode"],
+            "ai_assist_enabled": v3_context["ai_assist_enabled"],
+            "ai_provider_hint": v3_context["ai_provider_hint"],
+            "collector_plan": v3_context.get("collector_plan") or [],
+            "policy_snapshot": v3_context.get("policy_snapshot") or {},
+            "resolved_provider_name": v3_context.get("resolved_provider_name"),
+            "linked_case_ids": v3_context.get("linked_case_ids") or [],
+            "execution_plan": v3_context.get("execution_plan") or {},
+        }
+        run.manifest = manifest
+        if v3_context["egress_mode"] != "default_deny":
+            run.network_mode = v3_context["egress_mode"]
+        if v3_context.get("resolved_provider_name"):
+            run.provider = v3_context["resolved_provider_name"]
 
     def get_intel_overview(self, tenant: Tenant) -> Dict[str, Any]:
         """Return source and candidate freshness data."""
@@ -972,6 +1040,12 @@ class SheshnaagService:
         workstation: Dict[str, Any],
         launch_mode: str = "simulated",
         acknowledge_sensitive: bool = False,
+        analysis_mode: str = "cve_validation",
+        sandbox_profile_id: Optional[int] = None,
+        specimen_ids: Optional[List[int]] = None,
+        egress_mode: Optional[str] = None,
+        ai_assist_enabled: bool = False,
+        ai_provider_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Launch or simulate a validation run."""
         launch_mode = normalize_launch_mode(launch_mode)
@@ -982,6 +1056,18 @@ class SheshnaagService:
         if revision.requires_acknowledgement and not acknowledge_sensitive:
             raise ValueError("Sensitive recipe revisions require analyst acknowledgement before launch.")
         provider_name = self._enforce_execution_policy(recipe=recipe, revision=revision, launch_mode=launch_mode)
+        v3_context = self._resolve_v3_run_context(
+            tenant,
+            provider_name=provider_name,
+            launch_mode=launch_mode,
+            analysis_mode=analysis_mode,
+            sandbox_profile_id=sandbox_profile_id,
+            specimen_ids=specimen_ids,
+            egress_mode=egress_mode,
+            ai_assist_enabled=ai_assist_enabled,
+            ai_provider_hint=ai_provider_hint,
+        )
+        provider_name = v3_context.get("resolved_provider_name") or provider_name
         provider = self._provider_for_name(provider_name)
 
         analyst = self._ensure_analyst_identity(tenant, analyst_name)
@@ -1018,6 +1104,7 @@ class SheshnaagService:
                 analyst_name=analyst_name,
                 acknowledgement_recorded=acknowledge_sensitive,
             )
+            self._persist_v3_run_context(run, v3_context=v3_context)
             self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
             self._add_run_event(run, "run_allocated", allocated_result)
             provider_result = provider.boot(provider_run_ref=allocated_result.provider_run_ref)
@@ -1030,6 +1117,7 @@ class SheshnaagService:
             analyst_name=analyst_name,
             acknowledgement_recorded=acknowledge_sensitive,
         )
+        self._persist_v3_run_context(run, v3_context=v3_context)
         self._persist_run_acknowledgement(
             tenant=tenant,
             run=run,
@@ -1049,6 +1137,9 @@ class SheshnaagService:
         if self._should_collect_after_provider_launch(run):
             artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
             self._persist_run_artifacts(run=run, artifacts=artifacts)
+            from app.services.malware_lab_service import MalwareLabService
+
+            MalwareLabService(self.session).materialize_run_outputs(tenant, run=run)
         self._ledger(tenant.id, analyst.id, "run_launched", "run", str(run.id), 5.0, {"state": run.state})
         self.session.flush()
         return self.get_run(tenant, run.id)
@@ -1063,6 +1154,12 @@ class SheshnaagService:
         workstation: Dict[str, Any],
         launch_mode: str = "dry_run",
         acknowledge_sensitive: bool = False,
+        analysis_mode: str = "cve_validation",
+        sandbox_profile_id: Optional[int] = None,
+        specimen_ids: Optional[List[int]] = None,
+        egress_mode: Optional[str] = None,
+        ai_assist_enabled: bool = False,
+        ai_provider_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Persist a planned run using provider.build_plan (staged lifecycle, WS4-T3)."""
         launch_mode = normalize_launch_mode(launch_mode)
@@ -1073,6 +1170,18 @@ class SheshnaagService:
         if revision.requires_acknowledgement and not acknowledge_sensitive:
             raise ValueError("Sensitive recipe revisions require analyst acknowledgement before plan.")
         provider_name = self._enforce_execution_policy(recipe=recipe, revision=revision, launch_mode=launch_mode)
+        v3_context = self._resolve_v3_run_context(
+            tenant,
+            provider_name=provider_name,
+            launch_mode=launch_mode,
+            analysis_mode=analysis_mode,
+            sandbox_profile_id=sandbox_profile_id,
+            specimen_ids=specimen_ids,
+            egress_mode=egress_mode,
+            ai_assist_enabled=ai_assist_enabled,
+            ai_provider_hint=ai_provider_hint,
+        )
+        provider_name = v3_context.get("resolved_provider_name") or provider_name
 
         analyst = self._ensure_analyst_identity(tenant, analyst_name)
         workstation_record = self._ensure_workstation(tenant, workstation)
@@ -1113,6 +1222,7 @@ class SheshnaagService:
             analyst_name=analyst_name,
             acknowledgement_recorded=acknowledge_sensitive,
         )
+        self._persist_v3_run_context(run, v3_context=v3_context)
         self._persist_run_acknowledgement(
             tenant=tenant,
             run=run,
@@ -1365,6 +1475,16 @@ class SheshnaagService:
                     )
                 )
 
+        from app.services.malware_lab_service import MalwareLabService
+
+        items.extend(
+            [
+                item
+                for item in MalwareLabService(self.session).review_queue_items(tenant)
+                if entity_type is None or entity_type == item["entity_type"]
+            ]
+        )
+
         if run_id is not None:
             items = [item for item in items if item["run_id"] == run_id]
         if status:
@@ -1595,6 +1715,12 @@ class SheshnaagService:
                     "collector_name": item.collector_name,
                     "collector_version": item.collector_version,
                     "truncated": item.truncated,
+                    "lineage_links": (item.payload or {}).get("lineage_links") or [],
+                    "safe_render_metadata": (item.payload or {}).get("safe_render_metadata") or {},
+                    "collector_status": (item.payload or {}).get("collector_status") or "completed",
+                    "degradation_reasons": (item.payload or {}).get("degradation_reasons") or [],
+                    "confidence": (item.payload or {}).get("confidence"),
+                    "coverage": (item.payload or {}).get("coverage"),
                     "payload": item.payload,
                 }
                 for item in rows
@@ -1603,6 +1729,8 @@ class SheshnaagService:
 
     def list_artifacts(self, tenant: Tenant, *, run_id: Optional[int] = None) -> Dict[str, Any]:
         """List generated defensive artifacts."""
+        from app.services.malware_lab_service import MalwareLabService
+
         detection_query = self.session.query(DetectionArtifact).join(LabRun, LabRun.id == DetectionArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
         mitigation_query = self.session.query(MitigationArtifact).join(LabRun, LabRun.id == MitigationArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
         if run_id is not None:
@@ -1610,12 +1738,22 @@ class SheshnaagService:
             mitigation_query = mitigation_query.filter(MitigationArtifact.run_id == run_id)
         detections = detection_query.order_by(desc(DetectionArtifact.created_at)).all()
         mitigations = mitigation_query.order_by(desc(MitigationArtifact.created_at)).all()
+        malware = MalwareLabService(self.session)
+        indicators = malware.list_indicators(tenant)["items"]
+        prevention = malware.list_prevention_artifacts(tenant)["items"]
+        defang = malware.list_defang_actions(tenant)["items"]
         return {
             "detections": [self._detection_artifact_payload(item) for item in detections],
             "mitigations": [self._mitigation_artifact_payload(item) for item in mitigations],
+            "indicators": indicators,
+            "prevention": prevention,
+            "defang": defang,
             "summary": {
                 "detection_count": len(detections),
                 "mitigation_count": len(mitigations),
+                "indicator_count": len(indicators),
+                "prevention_count": len(prevention),
+                "defang_count": len(defang),
                 "approved_count": sum(1 for item in [*detections, *mitigations] if item.status == "approved"),
                 "under_review_count": sum(1 for item in [*detections, *mitigations] if item.status == "under_review"),
             },
@@ -2705,6 +2843,15 @@ class SheshnaagService:
             "id": run.id,
             "recipe_revision_id": run.recipe_revision_id,
             "candidate_id": run.candidate_id,
+            "analysis_mode": manifest.get("analysis_mode", "cve_validation"),
+            "sandbox_profile_id": manifest.get("sandbox_profile_id"),
+            "specimen_ids": manifest.get("specimen_ids") or [],
+            "specimen_revisions": manifest.get("specimen_revisions") or [],
+            "egress_mode": manifest.get("egress_mode", "default_deny"),
+            "ai_assist": manifest.get("ai_assist") or {},
+            "collector_plan": manifest.get("collector_plan") or [],
+            "linked_case_ids": manifest.get("linked_case_ids") or [],
+            "execution_plan": manifest.get("execution_plan") or {},
             "provider": run.provider,
             "provider_run_ref": run.provider_run_ref,
             "state": run.state,

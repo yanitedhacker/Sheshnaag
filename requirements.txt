@@ -42,7 +42,9 @@ joblib>=1.4.0
 # Security & Authentication
 # ===========================================
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
+passlib>=1.7.4
+argon2-cffi>=23.1.0
+bcrypt>=4.0.1,<5.0.0
 
 # ===========================================
 # Caching & Queues

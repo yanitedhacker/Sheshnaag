@@ -37,6 +37,18 @@ import type {
   TemplateListResponse,
   TenantListResponse,
   TenantOnboardResponse,
+  V3AIProviderListResponse,
+  V3AISessionListResponse,
+  V3AnalysisCaseListResponse,
+  V3DefangListResponse,
+  V3FindingListResponse,
+  V3IndicatorListResponse,
+  V3PolicyListResponse,
+  V3PreventionListResponse,
+  V3ReportListResponse,
+  V3SandboxProfileListResponse,
+  V3SpecimenListResponse,
+  V3SpecimenRevisionListResponse,
   WorkbenchSummary,
 } from "./types";
 
@@ -248,4 +260,68 @@ export const api = {
     fetchJson<DisclosureBundleRecord>("/api/disclosures", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
   reviewDisclosureBundle: async (payload: Record<string, unknown>) =>
     fetchJson<DisclosureBundleRecord>("/api/disclosures/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listSpecimens: () => fetchTenantJson<V3SpecimenListResponse>("/api/specimens"),
+  createSpecimen: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/specimens", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  listSpecimenRevisions: (specimenId?: number) =>
+    fetchTenantJson<V3SpecimenRevisionListResponse>("/api/specimen-revisions", specimenId ? { specimen_id: specimenId } : undefined),
+  createSpecimenRevision: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/specimen-revisions", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listAnalysisCases: () => fetchTenantJson<V3AnalysisCaseListResponse>("/api/analysis-cases"),
+  getAnalysisCase: async (caseId: number) => fetchJson(await tenantPath(`/api/analysis-cases/${caseId}`)),
+  createAnalysisCase: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/analysis-cases", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listSandboxProfiles: () => fetchTenantJson<V3SandboxProfileListResponse>("/api/sandbox-profiles"),
+  createSandboxProfile: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/sandbox-profiles", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listFindings: (analysisCaseId?: number) =>
+    fetchTenantJson<V3FindingListResponse>("/api/findings", analysisCaseId ? { analysis_case_id: analysisCaseId } : undefined),
+  createFinding: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/findings", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  reviewFinding: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/findings/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listIndicators: (analysisCaseId?: number) =>
+    fetchTenantJson<V3IndicatorListResponse>("/api/indicators", analysisCaseId ? { analysis_case_id: analysisCaseId } : undefined),
+  createIndicator: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/indicators", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listPrevention: (analysisCaseId?: number) =>
+    fetchTenantJson<V3PreventionListResponse>("/api/prevention", analysisCaseId ? { analysis_case_id: analysisCaseId } : undefined),
+  createPrevention: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/prevention", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  reviewPrevention: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/prevention/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listDefang: (analysisCaseId?: number) =>
+    fetchTenantJson<V3DefangListResponse>("/api/defang", analysisCaseId ? { analysis_case_id: analysisCaseId } : undefined),
+  createDefang: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/defang", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  reviewDefang: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/defang/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listReports: (analysisCaseId?: number) =>
+    fetchTenantJson<V3ReportListResponse>("/api/reports", analysisCaseId ? { analysis_case_id: analysisCaseId } : undefined),
+  createReport: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/reports", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  reviewReport: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/reports/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  exportReport: async (reportId: number) =>
+    fetchJson(await tenantPath(`/api/reports/${reportId}/export`), { method: "POST" }),
+
+  listAIProviders: () => fetchTenantJson<V3AIProviderListResponse>("/api/ai/providers"),
+  listAISessions: (analysisCaseId?: number) =>
+    fetchTenantJson<V3AISessionListResponse>("/api/ai/sessions", analysisCaseId ? { analysis_case_id: analysisCaseId } : undefined),
+  createAISession: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/ai/sessions", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  reviewAISession: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/ai/sessions/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listPolicies: () => fetchTenantJson<V3PolicyListResponse>("/api/policy"),
+  createPolicy: async (payload: Record<string, unknown>) =>
+    fetchJson("/api/policy", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
 };

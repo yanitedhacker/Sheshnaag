@@ -58,7 +58,7 @@ export function ReviewQueuePage() {
         <div>
           <p className="eyebrow">Review Queue</p>
           <h1>One queue for runs, evidence, artifacts, and bundles</h1>
-          <p className="page-copy">Triage blockers across the operator console, then jump into the existing detail pages to take action.</p>
+          <p className="page-copy">Triage blockers across runs, evidence, bundles, prevention artifacts, malware reports, and AI drafts, then jump into the detail pages to take action.</p>
         </div>
       </div>
 
@@ -76,6 +76,9 @@ export function ReviewQueuePage() {
             <option value="evidence">Evidence</option>
             <option value="artifact">Artifacts</option>
             <option value="bundle">Bundles</option>
+            <option value="prevention_artifact">Prevention</option>
+            <option value="malware_report">Reports</option>
+            <option value="ai_session">AI drafts</option>
           </select>
           <input value={status} onChange={(event) => setStatus(event.target.value)} placeholder="Status or review state" />
           <input value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Last reviewer" />

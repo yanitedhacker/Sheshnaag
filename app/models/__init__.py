@@ -58,6 +58,19 @@ from app.models.sheshnaag import (
     VersionRange,
     WorkstationFingerprint,
 )
+from app.models.malware_lab import (
+    AISession,
+    AnalysisCase,
+    BehaviorFinding,
+    DefangAction,
+    IndicatorArtifact,
+    MalwareReport,
+    PreventionArtifact,
+    SandboxProfile,
+    ScopePolicy,
+    Specimen,
+    SpecimenRevision,
+)
 
 __all__ = [
     "CVE",
@@ -124,4 +137,15 @@ __all__ = [
     "ReviewDecision",
     "RawKnowledgeSource",
     "KnowledgeWikiPage",
+    "Specimen",
+    "SpecimenRevision",
+    "AnalysisCase",
+    "SandboxProfile",
+    "BehaviorFinding",
+    "IndicatorArtifact",
+    "PreventionArtifact",
+    "DefangAction",
+    "MalwareReport",
+    "ScopePolicy",
+    "AISession",
 ]

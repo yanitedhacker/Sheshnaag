@@ -22,7 +22,17 @@ except ImportError:  # pragma: no cover - environment-specific fallback
 from app.core.config import settings
 
 # Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto") if CryptContext is not None else None
+#
+# New hashes use Argon2 to avoid bcrypt's 72-byte input ceiling, while legacy
+# bcrypt hashes remain verifiable during migration.
+pwd_context = (
+    CryptContext(
+        schemes=["argon2", "bcrypt"],
+        deprecated="auto",
+    )
+    if CryptContext is not None
+    else None
+)
 
 # HTTP Bearer token security scheme
 security = HTTPBearer(auto_error=False)

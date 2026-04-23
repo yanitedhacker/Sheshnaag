@@ -14,6 +14,16 @@ const operatorNavItems = [
   { to: "/provenance", label: "Provenance" },
   { to: "/ledger", label: "Ledger" },
   { to: "/disclosures", label: "Bundles" },
+  { to: "/specimens", label: "Specimens" },
+  { to: "/analysis-cases", label: "Cases" },
+  { to: "/sandbox-profiles", label: "Profiles" },
+  { to: "/findings", label: "Findings" },
+  { to: "/indicators", label: "Indicators" },
+  { to: "/prevention-v3", label: "Prevention" },
+  { to: "/defang", label: "Defang" },
+  { to: "/reports", label: "Reports" },
+  { to: "/ai-sessions", label: "AI Drafts" },
+  { to: "/policy", label: "Policy" },
 ];
 
 export function Layout() {
