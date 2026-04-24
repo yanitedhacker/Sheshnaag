@@ -66,11 +66,10 @@ def create_engine_with_retry(
 
 # Sync engine for migrations and scripts
 if is_sqlite:
-    engine = create_engine(
-        settings.database_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool
-    )
+    sqlite_engine_kwargs = {"connect_args": {"check_same_thread": False}}
+    if settings.database_url in {"sqlite://", "sqlite:///:memory:"}:
+        sqlite_engine_kwargs["poolclass"] = StaticPool
+    engine = create_engine(settings.database_url, **sqlite_engine_kwargs)
 else:
     engine = create_engine_with_retry(
         settings.database_url,

@@ -132,11 +132,14 @@ class PatchScheduler:
 
         # Dependency constraints
         for dep in dependencies:
-            if dep.patch_id in x and dep.depends_on_patch_id in x:
-                if dep.kind == "requires":
-                    solver.Add(x[dep.patch_id] <= x[dep.depends_on_patch_id])
-                elif dep.kind == "conflicts":
-                    solver.Add(x[dep.patch_id] + x[dep.depends_on_patch_id] <= 1)
+            patch_id = getattr(dep, "patch_id", None)
+            depends_on_patch_id = getattr(dep, "depends_on_patch_id", None)
+            kind = getattr(dep, "kind", None)
+            if patch_id in x and depends_on_patch_id in x:
+                if kind == "requires":
+                    solver.Add(x[patch_id] <= x[depends_on_patch_id])
+                elif kind == "conflicts":
+                    solver.Add(x[patch_id] + x[depends_on_patch_id] <= 1)
 
         # Reboot group constraint: avoid more than 1 per group per window
         group_map: Dict[str, List[str]] = {}

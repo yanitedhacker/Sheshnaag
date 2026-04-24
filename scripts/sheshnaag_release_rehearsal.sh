@@ -26,7 +26,7 @@ for step in "${STEPS[@]}"; do
   name="${step%%|*}"
   cmd="${step#*|}"
   echo "==> ${name}"
-  if bash -lc "$cmd"; then
+  if bash -c "$cmd"; then
     echo "PASS: ${name}"
   else
     echo "FAIL: ${name}"

@@ -29,7 +29,7 @@ for step in "${STEPS[@]}"; do
   slug="$(echo "${name}" | tr '[:upper:]' '[:lower:]' | tr ' /' '--')"
   logfile="${ARCHIVE_DIR}/${slug}.log"
   echo "==> ${name}"
-  if bash -lc "$cmd" >"${logfile}" 2>&1; then
+  if bash -c "$cmd" >"${logfile}" 2>&1; then
     echo "PASS: ${name}"
   else
     echo "FAIL: ${name} (see ${logfile})"

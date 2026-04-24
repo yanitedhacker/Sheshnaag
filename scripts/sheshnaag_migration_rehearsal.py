@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -81,7 +82,7 @@ def run_alembic(db_url: str, command: list[str]) -> subprocess.CompletedProcess[
     env = os.environ.copy()
     env["DATABASE_URL"] = db_url
     return subprocess.run(
-        ["python", "-m", "alembic", *command],
+        [sys.executable, "-m", "alembic", *command],
         cwd=ROOT,
         env=env,
         capture_output=True,
