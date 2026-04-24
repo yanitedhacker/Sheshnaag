@@ -37,6 +37,7 @@ from app.api.routes.defang_routes import router as defang_router
 from app.api.routes.report_routes import router as report_router
 from app.api.routes.ai_routes import router as ai_router
 from app.api.routes.policy_routes import router as policy_router
+from app.api.routes.taxii_routes import router as taxii_router
 
 __all__ = [
     "cve_router",
@@ -76,4 +77,5 @@ __all__ = [
     "report_router",
     "ai_router",
     "policy_router",
+    "taxii_router",
 ]

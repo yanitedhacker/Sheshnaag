@@ -316,7 +316,28 @@ class ExposureGraphNode(Base):
 
 
 class ExposureGraphEdge(Base):
-    """Persisted graph edge for attack-path drill-downs."""
+    """Persisted graph edge for attack-path drill-downs.
+
+    ``edge_type`` vocabulary (extend when adding new kinds):
+
+    Base exposure-graph kinds (Phase V2):
+
+    - ``runs`` — asset runs a service
+    - ``reachable_from`` — service reachable from another service/identity
+    - ``exposes`` — asset exposes a service on a port
+    - ``contains_vulnerability`` — software component contains a CVE
+    - ``depends_on`` — service / asset depends on a software component
+    - ``authenticates_to`` — identity authenticates to an asset
+    - ``mitigated_by`` — CVE mitigated by a patch
+
+    V4 Phase C IOC pivot kinds (slice 4 — :mod:`app.services.graph_service`):
+
+    - ``ioc_to_finding`` — indicator sourced from / evidenced by a behavior finding
+    - ``ioc_to_specimen`` — indicator derived from a specimen (direct provenance)
+    - ``ioc_to_cve`` — indicator inferred to co-reference a CVE
+    - ``ioc_to_asset`` — indicator observed on / matching an asset
+    - ``ioc_cooccurs_with`` — two indicators co-occurring within a case or run
+    """
 
     __tablename__ = "exposure_graph_edges"
     __table_args__ = (
