@@ -632,6 +632,74 @@ export type RunHealthResponse = RunSummary & {
   timeline: RunTimelineEvent[];
 };
 
+export type LiveRunEvent = {
+  id?: string;
+  run_id: number;
+  type: string;
+  timestamp: string;
+  severity: string;
+  source: string;
+  payload: Record<string, unknown>;
+};
+
+export type AuthorizationArtifact = {
+  artifact_id: string;
+  schema_version: string;
+  capability: string;
+  scope: Record<string, unknown>;
+  requester: Record<string, unknown>;
+  reviewers: Array<Record<string, unknown>>;
+  issued_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  revoked_by?: string | null;
+  revoke_reason?: string | null;
+  signer_cert?: string;
+  signature?: string;
+};
+
+export type AuthorizationListResponse = {
+  items: AuthorizationArtifact[];
+  count: number;
+};
+
+export type CapabilityCheckResponse = {
+  permitted: boolean;
+  reason: string;
+  artifact_id: string | null;
+};
+
+export type AuthorizationChainRootResponse = {
+  idx: number;
+  entry_hash: string;
+};
+
+export type AuthorizationChainVerifyResponse = {
+  ok: boolean;
+  last_verified_idx: number;
+  first_bad_idx: number | null;
+  reason: string;
+};
+
+export type AttackTechniqueBucket = {
+  count: number;
+  confidence_avg: number;
+  finding_ids: number[];
+};
+
+export type AttackCoverageResponse = {
+  tenant: { id: number; slug: string; name: string };
+  tactics: Record<string, { techniques: Record<string, AttackTechniqueBucket> }>;
+};
+
+export type AttackTechniqueFindingsResponse = {
+  tenant: { id: number; slug: string; name: string };
+  technique_id: string;
+  tactic: string;
+  count: number;
+  items: V3FindingRecord[];
+};
+
 export type TemplateItem = {
   id: number;
   provider: string;

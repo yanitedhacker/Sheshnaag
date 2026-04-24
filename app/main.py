@@ -24,8 +24,11 @@ from app.api.routes import (
     analysis_case_router,
     asset_router,
     artifact_router,
+    attack_router,
+    authorization_router,
     auth_router,
     candidate_router,
+    capability_router,
     copilot_router,
     cve_router,
     defang_router,
@@ -39,7 +42,9 @@ from app.api.routes import (
     indicator_router,
     intel_router,
     ledger_router,
+    live_run_router,
     model_router,
+    ops_router,
     patch_router,
     policy_router,
     prevention_router,
@@ -297,7 +302,12 @@ app.include_router(prevention_router)
 app.include_router(defang_router)
 app.include_router(report_router)
 app.include_router(ai_router)
+app.include_router(attack_router)
 app.include_router(policy_router)
+app.include_router(authorization_router)
+app.include_router(capability_router)
+app.include_router(live_run_router)
+app.include_router(ops_router)
 app.include_router(evidence_router)
 app.include_router(artifact_router)
 app.include_router(provenance_router)

@@ -1,6 +1,12 @@
 import type {
   ApprovalResponse,
+  AttackCoverageResponse,
+  AttackTechniqueFindingsResponse,
   ArtifactListResponse,
+  AuthorizationArtifact,
+  AuthorizationChainRootResponse,
+  AuthorizationChainVerifyResponse,
+  AuthorizationListResponse,
   AssetDetail,
   AssetListResponse,
   AssetVulnerability,
@@ -10,6 +16,7 @@ import type {
   CandidateRecalculationHistoryResponse,
   CandidateRecalculationResponse,
   CandidateWorkloadResponse,
+  CapabilityCheckResponse,
   CopilotResponse,
   CveDetail,
   DashboardResponse,
@@ -21,6 +28,7 @@ import type {
   ImportResponse,
   IntelOverviewResponse,
   LedgerResponse,
+  LiveRunEvent,
   ModelTrustResponse,
   PatchDetail,
   ProvenanceResponse,
@@ -147,6 +155,17 @@ async function fetchTenantJson<T>(
   return fetchJson<T>(await tenantPath(path, params));
 }
 
+function streamUrl(path: string, params?: Record<string, string | number | boolean | undefined>): string {
+  const search = new URLSearchParams();
+  Object.entries(params ?? {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") {
+      search.set(key, String(value));
+    }
+  });
+  const query = search.toString();
+  return `${API_BASE}${path}${query ? `?${query}` : ""}`;
+}
+
 export const api = {
   getDashboard: () => fetchJson<DashboardResponse>("/api/dashboard"),
   getWorkbench: () => fetchTenantJson<WorkbenchSummary>("/api/workbench/summary", { limit: 20 }),
@@ -242,6 +261,16 @@ export const api = {
     fetchJson<RunDetailResponse>(`/api/runs/${runId}/destroy`, { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
   launchRun: async (payload: Record<string, unknown>) =>
     fetchJson<RunDetailResponse>("/api/runs", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+  streamRunEvents: (runId: number, handlers: { onEvent: (event: LiveRunEvent) => void; onError?: () => void }) => {
+    const source = new EventSource(streamUrl(`/api/v4/runs/${runId}/events`));
+    source.addEventListener("run_event", (event) => {
+      handlers.onEvent(JSON.parse((event as MessageEvent).data) as LiveRunEvent);
+    });
+    source.onerror = () => {
+      handlers.onError?.();
+    };
+    return source;
+  },
   getReviewQueue: (params?: Record<string, string | number | boolean | undefined>) =>
     fetchTenantJson<ReviewQueueResponse>("/api/review-queue", params),
 
@@ -260,6 +289,31 @@ export const api = {
     fetchJson<DisclosureBundleRecord>("/api/disclosures", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
   reviewDisclosureBundle: async (payload: Record<string, unknown>) =>
     fetchJson<DisclosureBundleRecord>("/api/disclosures/review", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  listAuthorizations: (params?: Record<string, string | number | boolean | undefined>) =>
+    fetchJson<AuthorizationListResponse>(streamUrl("/api/v4/authorization", params)),
+  requestAuthorization: async (payload: Record<string, unknown>) =>
+    fetchJson<AuthorizationArtifact>("/api/v4/authorization/request", { method: "POST", body: JSON.stringify(payload) }),
+  revokeAuthorization: async (artifactId: string, payload: Record<string, unknown>) =>
+    fetchJson<{ artifact_id: string; revoked: boolean }>(`/api/v4/authorization/${artifactId}/revoke`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  approveAuthorization: async (artifactId: string, payload: Record<string, unknown>) =>
+    fetchJson<AuthorizationArtifact & { approval_status?: string }>(`/api/v4/authorization/${artifactId}/approve`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getAuthorizationChainRoot: () => fetchJson<AuthorizationChainRootResponse>("/api/v4/authorization/chain/root"),
+  verifyAuthorizationChain: () => fetchJson<AuthorizationChainVerifyResponse>("/api/v4/authorization/chain/verify"),
+  checkCapability: (capability: string, scope: Record<string, unknown> = {}, actor = "ui") =>
+    fetchJson<CapabilityCheckResponse>(
+      streamUrl("/api/v4/capability/check", { capability, scope: JSON.stringify(scope), actor }),
+    ),
+  getAttackCoverage: (params?: Record<string, string | number | boolean | undefined>) =>
+    fetchTenantJson<AttackCoverageResponse>("/api/v4/attack/coverage", params),
+  getAttackTechniqueFindings: (techniqueId: string) =>
+    fetchTenantJson<AttackTechniqueFindingsResponse>(`/api/v4/attack/technique/${encodeURIComponent(techniqueId)}`),
 
   listSpecimens: () => fetchTenantJson<V3SpecimenListResponse>("/api/specimens"),
   createSpecimen: async (payload: Record<string, unknown>) =>

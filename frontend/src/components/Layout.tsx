@@ -9,6 +9,8 @@ const operatorNavItems = [
   { to: "/candidates", label: "Candidates" },
   { to: "/recipes", label: "Recipes" },
   { to: "/runs", label: "Runs" },
+  { to: "/authorization", label: "Auth" },
+  { to: "/attack-coverage", label: "ATT&CK" },
   { to: "/evidence", label: "Evidence" },
   { to: "/artifacts", label: "Artifacts" },
   { to: "/provenance", label: "Provenance" },

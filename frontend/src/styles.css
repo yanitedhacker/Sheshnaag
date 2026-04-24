@@ -146,6 +146,44 @@ select {
   transform: translateY(-1px);
 }
 
+.ghost-button:disabled,
+.primary-button:disabled,
+.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+  transform: none;
+}
+
+.capability-gate {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.attack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.attack-cell {
+  display: grid;
+  gap: 8px;
+  min-height: 116px;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(217, 120, 58, 0.2);
+  color: var(--ink);
+  text-align: left;
+}
+
+.attack-cell span,
+.attack-cell small,
+.muted {
+  color: var(--muted);
+}
+
 .marketing-page {
   max-width: 1240px;
   margin: 0 auto;

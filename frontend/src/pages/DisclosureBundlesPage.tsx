@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { CapabilityGate } from "../components/CapabilityGate";
 import type { DisclosureBundleRecord, RunDetailResponse, RunSummary } from "../types";
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -150,7 +151,9 @@ export function DisclosureBundlesPage() {
           {!confirmExternalExport ? (
             <p className="field-help">External export stays blocked when the bundle includes sensitive evidence warnings.</p>
           ) : null}
-          <button className="primary-button" onClick={createBundle}>Export bundle</button>
+          <CapabilityGate capability="external_disclosure" scope={{}}>
+            <button className="primary-button" onClick={createBundle}>Export bundle</button>
+          </CapabilityGate>
         </div>
       </section>
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { RunDetailResponse, RunSummary } from "../types";
+import type { LiveRunEvent, RunDetailResponse, RunSummary } from "../types";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -63,6 +63,11 @@ export function RunConsolePage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [detail, setDetail] = useState<RunDetailResponse | null>(null);
+  const [liveEvents, setLiveEvents] = useState<LiveRunEvent[]>([]);
+  const [streamStatus, setStreamStatus] = useState<"idle" | "connecting" | "connected" | "disconnected" | "error">("idle");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [error, setError] = useState<string | null>(null);
 
   async function loadRuns() {
@@ -82,9 +87,53 @@ export function RunConsolePage() {
 
   useEffect(() => {
     if (!selectedRunId) {
+      setLiveEvents([]);
+      setStreamStatus("idle");
       return;
     }
     loadDetail(selectedRunId).catch((err) => setError(err instanceof Error ? err.message : "Failed to load run detail."));
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      return;
+    }
+    let active = true;
+    setLiveEvents([]);
+    setStreamStatus("connecting");
+    const source = api.streamRunEvents(selectedRunId, {
+      onEvent: (event) => {
+        if (!active) {
+          return;
+        }
+        setStreamStatus("connected");
+        setLiveEvents((current) => {
+          if (event.id && current.some((item) => item.id === event.id)) {
+            return current;
+          }
+          return [event, ...current].slice(0, 100);
+        });
+        if (["run_completed", "run_failed"].includes(event.type)) {
+          loadRuns().catch(() => null);
+          loadDetail(selectedRunId).catch(() => null);
+        }
+      },
+      onError: () => {
+        if (active) {
+          setStreamStatus("error");
+        }
+      },
+    });
+    source.onopen = () => {
+      if (active) {
+        setStreamStatus("connected");
+      }
+    };
+    return () => {
+      active = false;
+      source.close();
+      setStreamStatus("disconnected");
+    };
   }, [selectedRunId]);
 
   useEffect(() => {
@@ -120,6 +169,16 @@ export function RunConsolePage() {
   }
 
   const safetyWarnings = detail ? buildSafetyWarnings(detail) : [];
+  const filteredLiveEvents = liveEvents.filter((event) => {
+    return (
+      (typeFilter === "all" || event.type === typeFilter) &&
+      (severityFilter === "all" || event.severity === severityFilter) &&
+      (sourceFilter === "all" || event.source === sourceFilter)
+    );
+  });
+  const eventTypes = Array.from(new Set(liveEvents.map((event) => event.type))).sort();
+  const eventSeverities = Array.from(new Set(liveEvents.map((event) => event.severity))).sort();
+  const eventSources = Array.from(new Set(liveEvents.map((event) => event.source))).sort();
 
   return (
     <section className="operator-page">
@@ -192,6 +251,48 @@ export function RunConsolePage() {
                 <button className="ghost-button" onClick={() => act("stop")}>Stop</button>
                 <button className="ghost-button" onClick={() => act("teardown")}>Teardown</button>
                 <button className="primary-button" onClick={() => act("destroy")}>Destroy</button>
+              </div>
+              <div className="panel-subsection">
+                <div className="panel-header compact-header">
+                  <h3>Live event stream</h3>
+                  <span className={`status-pill${streamStatus === "error" ? " status-danger" : ""}`}>{streamStatus}</span>
+                </div>
+                <div className="toolbar">
+                  <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+                    <option value="all">All types</option>
+                    {eventTypes.map((type) => (
+                      <option value={type} key={type}>{type}</option>
+                    ))}
+                  </select>
+                  <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
+                    <option value="all">All severities</option>
+                    {eventSeverities.map((severity) => (
+                      <option value={severity} key={severity}>{severity}</option>
+                    ))}
+                  </select>
+                  <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+                    <option value="all">All sources</option>
+                    {eventSources.map((source) => (
+                      <option value={source} key={source}>{source}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="stack-list">
+                  {filteredLiveEvents.map((event, index) => (
+                    <article className="line-card" key={event.id ?? `${event.type}-${event.timestamp}-${index}`}>
+                      <div>
+                        <strong>{event.type}</strong>
+                        <p>{event.source} · {JSON.stringify(event.payload ?? {})}</p>
+                      </div>
+                      <span>{event.severity} · {new Date(event.timestamp).toLocaleTimeString()}</span>
+                    </article>
+                  ))}
+                  {!filteredLiveEvents.length ? (
+                    <div className="empty-panel">
+                      {streamStatus === "error" ? "Live stream disconnected or unavailable." : "Waiting for lifecycle events."}
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div className="panel-subsection">
                 <h3>Provider readiness</h3>

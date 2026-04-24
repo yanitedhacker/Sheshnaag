@@ -36,8 +36,13 @@ from app.api.routes.prevention_routes import router as prevention_router
 from app.api.routes.defang_routes import router as defang_router
 from app.api.routes.report_routes import router as report_router
 from app.api.routes.ai_routes import router as ai_router
+from app.api.routes.attack_routes import router as attack_router
 from app.api.routes.policy_routes import router as policy_router
 from app.api.routes.taxii_routes import router as taxii_router
+from app.api.routes.authorization_routes import router as authorization_router
+from app.api.routes.capability_routes import router as capability_router
+from app.api.routes.live_run_routes import router as live_run_router
+from app.api.routes.ops_routes import router as ops_router
 
 __all__ = [
     "cve_router",
@@ -76,6 +81,11 @@ __all__ = [
     "defang_router",
     "report_router",
     "ai_router",
+    "attack_router",
     "policy_router",
     "taxii_router",
+    "authorization_router",
+    "capability_router",
+    "live_run_router",
+    "ops_router",
 ]

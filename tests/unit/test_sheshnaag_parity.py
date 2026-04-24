@@ -86,6 +86,8 @@ def test_live_alias_normalizes_to_execute_and_bundle_urls_are_tenant_aware():
     )
 
     assert run["launch_mode"] == "execute"
+    assert run["state"] == "queued"
+    assert any(event["event_type"] == "run_queued" for event in run["timeline"])
     assert run["provider_readiness"]["status"] in {"ready", "degraded", "unavailable"}
     assert len(run["collector_capabilities"]) >= 5
     assert "tenant_slug=parity-private" in bundle["download_url"]

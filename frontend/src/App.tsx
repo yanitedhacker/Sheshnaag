@@ -3,7 +3,9 @@ import { Layout } from "./components/Layout";
 import { AnalystLedgerPage } from "./pages/AnalystLedgerPage";
 import { AISessionsPage } from "./pages/AISessionsPage";
 import { AnalysisCasesPage } from "./pages/AnalysisCasesPage";
+import { AttackCoveragePage } from "./pages/AttackCoveragePage";
 import { ArtifactForgePage } from "./pages/ArtifactForgePage";
+import { AuthorizationCenterPage } from "./pages/AuthorizationCenterPage";
 import { BehaviorFindingsPage } from "./pages/BehaviorFindingsPage";
 import { CandidateQueuePage } from "./pages/CandidateQueuePage";
 import { DefangQueuePage } from "./pages/DefangQueuePage";
@@ -31,6 +33,8 @@ export default function App() {
         <Route path="candidates" element={<CandidateQueuePage />} />
         <Route path="recipes" element={<RecipeBuilderPage />} />
         <Route path="runs" element={<RunConsolePage />} />
+        <Route path="authorization" element={<AuthorizationCenterPage />} />
+        <Route path="attack-coverage" element={<AttackCoveragePage />} />
         <Route path="evidence" element={<EvidenceExplorerPage />} />
         <Route path="artifacts" element={<ArtifactForgePage />} />
         <Route path="provenance" element={<ProvenanceCenterPage />} />

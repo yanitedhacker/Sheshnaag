@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import time
+import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -219,6 +220,42 @@ class SheshnaagService:
             )
         )
 
+    def _publish_live_run_event(
+        self,
+        run: LabRun,
+        event_type: str,
+        *,
+        severity: str = "info",
+        source: str = "api",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        from app.core.event_bus import EventBus, run_event_stream
+
+        EventBus().publish(
+            run_event_stream(run.id),
+            {
+                "run_id": run.id,
+                "type": event_type,
+                "timestamp": utc_now().isoformat(),
+                "severity": severity,
+                "source": source,
+                "payload": payload or {},
+            },
+        )
+
+    def _enqueue_sandbox_work(self, *, run: LabRun, tenant: Tenant, actor: str) -> str:
+        from app.core.event_bus import EventBus, SANDBOX_WORK_STREAM
+
+        return EventBus().publish(
+            SANDBOX_WORK_STREAM,
+            {
+                "run_id": run.id,
+                "tenant_id": tenant.id,
+                "actor": actor,
+                "correlation_id": uuid.uuid4().hex,
+            },
+        )
+
     def _analyst_display_name(self, run: LabRun) -> str:
         if run.analyst_id:
             row = (
@@ -315,6 +352,22 @@ class SheshnaagService:
             run.network_mode = v3_context["egress_mode"]
         if v3_context.get("resolved_provider_name"):
             run.provider = v3_context["resolved_provider_name"]
+
+    def _revision_content_for_provider(self, content: Dict[str, Any], provider_name: str) -> Dict[str, Any]:
+        """Adapt trusted recipe defaults when policy resolves to a different provider."""
+        resolved = dict(content or {})
+        original_provider = str(resolved.get("provider") or "docker_kali")
+        if provider_name == original_provider:
+            return resolved
+        resolved["provider"] = provider_name
+        if provider_name == "lima":
+            resolved.pop("base_image", None)
+            resolved.pop("image_profile", None)
+            execution_policy = dict(resolved.get("execution_policy") or {})
+            execution_policy["preferred_provider"] = "lima"
+            execution_policy["secure_mode_required"] = True
+            resolved["execution_policy"] = execution_policy
+        return resolved
 
     def get_intel_overview(self, tenant: Tenant) -> Dict[str, Any]:
         """Return source and candidate freshness data."""
@@ -1094,10 +1147,18 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=analyst_name, candidate=candidate
         )
+        provider_revision_content = self._revision_content_for_provider(revision.content or {}, provider_name)
         if launch_mode == "execute":
-            built_plan = provider.build_plan(revision_content=revision.content, run_context=run_context)
-            allocated_result = provider.create(plan=built_plan, run_context=run_context)
-            self._apply_provider_result(run, allocated_result)
+            built_plan = provider.build_plan(revision_content=provider_revision_content, run_context=run_context)
+            queued_result = ProviderResult(
+                state=RunState.PLANNED,
+                provider_run_ref="",
+                plan=built_plan,
+                transcript="Run queued for sandbox worker execution.",
+            )
+            self._apply_provider_result(run, queued_result)
+            run.provider_run_ref = None
+            run.state = "queued"
             self._annotate_run_manifest(
                 run=run,
                 revision=revision,
@@ -1105,11 +1166,22 @@ class SheshnaagService:
                 acknowledgement_recorded=acknowledge_sensitive,
             )
             self._persist_v3_run_context(run, v3_context=v3_context)
-            self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
-            self._add_run_event(run, "run_allocated", allocated_result)
-            provider_result = provider.boot(provider_run_ref=allocated_result.provider_run_ref)
-        else:
-            provider_result = provider.launch(revision_content=revision.content, run_context=run_context)
+            self._persist_run_acknowledgement(
+                tenant=tenant,
+                run=run,
+                revision=revision,
+                analyst_name=analyst_name,
+                acknowledged=acknowledge_sensitive,
+            )
+            queue_entry_id = self._enqueue_sandbox_work(run=run, tenant=tenant, actor=analyst_name)
+            queued_payload = {"queue_entry_id": queue_entry_id, "message": "Run queued for sandbox worker execution."}
+            self._add_run_event(run, "run_queued", queued_result, message=queued_payload["message"])
+            self._publish_live_run_event(run, "run_queued", payload=queued_payload)
+            self._ledger(tenant.id, analyst.id, "run_queued", "run", str(run.id), 2.0, {"state": run.state})
+            self.session.flush()
+            return self.get_run(tenant, run.id)
+
+        provider_result = provider.launch(revision_content=provider_revision_content, run_context=run_context)
         self._apply_provider_result(run, provider_result)
         self._annotate_run_manifest(
             run=run,
@@ -1207,7 +1279,8 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=analyst_name, candidate=candidate
         )
-        built_plan = self._provider_for_name(provider_name).build_plan(revision_content=revision.content, run_context=run_context)
+        provider_revision_content = self._revision_content_for_provider(revision.content or {}, provider_name)
+        built_plan = self._provider_for_name(provider_name).build_plan(revision_content=provider_revision_content, run_context=run_context)
         placeholder = ProviderResult(
             state=RunState.PLANNED,
             provider_run_ref="",
