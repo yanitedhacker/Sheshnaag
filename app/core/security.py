@@ -7,7 +7,7 @@ Provides JWT-based authentication for API endpoints.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
+from typing import Any, Optional, List
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -193,3 +193,78 @@ def require_scope(required_scope: str):
             )
         return token_data
     return scope_checker
+
+
+def require_capability(capability: str):
+    """Dependency factory for the V4 capability-policy gate.
+
+    Resolves the current actor from the JWT dependency, then delegates to
+    :meth:`app.services.capability_policy.CapabilityPolicy.evaluate`. Raises
+    ``HTTPException(403, detail="capability_required: <name>")`` when denied.
+
+    Import of ``CapabilityPolicy`` is deferred to avoid a circular import
+    (the service imports models which depend on Base, which may still be
+    initializing when this module is first loaded).
+
+    Usage::
+
+        @router.post(
+            "/runs",
+            dependencies=[Depends(require_capability("dynamic_detonation"))],
+        )
+    """
+
+    def _dep(
+        token_data: TokenData = Depends(verify_token),
+        session: Session = Depends(_session_dep),
+    ) -> TokenData:
+        from app.services.capability_policy import CapabilityPolicy  # lazy
+
+        policy = CapabilityPolicy(session)
+        scope = _scope_from_token(token_data)
+        decision = policy.evaluate(
+            capability=capability,
+            scope=scope,
+            actor=token_data.username or "anonymous",
+        )
+        if not decision.permitted:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"capability_required: {capability}",
+            )
+        return token_data
+
+    return _dep
+
+
+def _scope_from_token(token_data: TokenData) -> dict:
+    """Derive a capability-policy scope dict from a JWT token.
+
+    We surface tenant context when present so the engine can honor per-tenant
+    ``tenant_default_capabilities`` fast paths.
+    """
+
+    scope: dict = {}
+    if token_data.memberships:
+        tenant_ids = [
+            m.get("tenant_id")
+            for m in token_data.memberships
+            if isinstance(m, dict) and m.get("tenant_id") is not None
+        ]
+        if len(tenant_ids) == 1:
+            scope["tenant_id"] = tenant_ids[0]
+    return scope
+
+
+def _session_dep() -> "Session":
+    # Lazily import the sync-session factory; this keeps circular imports at
+    # bay and lets test suites swap the dependency via FastAPI's override.
+    from app.core.database import get_sync_session
+
+    yield from get_sync_session()
+
+
+try:
+    from sqlalchemy.orm import Session  # noqa: E402  (typed Depends target)
+except Exception:  # pragma: no cover - sqlalchemy is a hard dep
+    Session = Any  # type: ignore[assignment]
