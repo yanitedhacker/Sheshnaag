@@ -71,6 +71,13 @@ from app.models.malware_lab import (
     Specimen,
     SpecimenRevision,
 )
+from app.models.embeddings import (
+    KnowledgeChunkEmbedding,
+    SpecimenBehaviorEmbedding,
+    VectorOrJSON,
+    VECTOR_DIM,
+)
+from app.models.capability import AuditLogEntry, AuthorizationArtifact
 
 __all__ = [
     "CVE",
@@ -148,4 +155,10 @@ __all__ = [
     "MalwareReport",
     "ScopePolicy",
     "AISession",
+    "KnowledgeChunkEmbedding",
+    "SpecimenBehaviorEmbedding",
+    "VectorOrJSON",
+    "VECTOR_DIM",
+    "AuditLogEntry",
+    "AuthorizationArtifact",
 ]
