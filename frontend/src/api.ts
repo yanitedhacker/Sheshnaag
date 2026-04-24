@@ -7,6 +7,9 @@ import type {
   AuthorizationChainRootResponse,
   AuthorizationChainVerifyResponse,
   AuthorizationListResponse,
+  AutonomousAgentRun,
+  AutonomousAgentRunRequest,
+  CaseGraphResponse,
   AssetDetail,
   AssetListResponse,
   AssetVulnerability,
@@ -314,6 +317,15 @@ export const api = {
     fetchTenantJson<AttackCoverageResponse>("/api/v4/attack/coverage", params),
   getAttackTechniqueFindings: (techniqueId: string) =>
     fetchTenantJson<AttackTechniqueFindingsResponse>(`/api/v4/attack/technique/${encodeURIComponent(techniqueId)}`),
+  getCaseGraph: (caseId: number, depth = 2) =>
+    fetchTenantJson<CaseGraphResponse>(`/api/v4/cases/${caseId}/graph`, { depth }),
+  runAutonomousAgent: async (payload: AutonomousAgentRunRequest) =>
+    fetchJson<AutonomousAgentRun>("/api/v4/autonomous/run", {
+      method: "POST",
+      body: JSON.stringify(await withActiveTenant(payload as Record<string, unknown>)),
+    }),
+  listAutonomousRuns: (params?: Record<string, string | number | boolean | undefined>) =>
+    fetchTenantJson<{ items: AutonomousAgentRun[]; count: number }>("/api/v4/autonomous/runs", params),
 
   listSpecimens: () => fetchTenantJson<V3SpecimenListResponse>("/api/specimens"),
   createSpecimen: async (payload: Record<string, unknown>) =>

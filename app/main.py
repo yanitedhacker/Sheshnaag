@@ -16,7 +16,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings, validate_settings_for_startup
 from app.core.database import engine, Base, SessionLocal
-from app.core.logging import configure_logging
+from app.core.logging import bind_log_context, clear_log_context, configure_logging
+from app.core.observability import configure_telemetry
 from app.core.rate_limit import rate_limiter
 from app.core.security import decode_token
 from app.api.routes import (
@@ -45,6 +46,8 @@ from app.api.routes import (
     live_run_router,
     model_router,
     ops_router,
+    case_graph_router,
+    autonomous_router,
     patch_router,
     policy_router,
     prevention_router,
@@ -97,7 +100,17 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # Store in request state for access in handlers
         request.state.request_id = request_id
 
-        response = await call_next(request)
+        # Bind onto the structured-log contextvar so downstream log calls
+        # carry it without needing to thread the value through callers.
+        bind_log_context(
+            request_id=request_id,
+            path=request.url.path,
+            method=request.method,
+        )
+        try:
+            response = await call_next(request)
+        finally:
+            clear_log_context()
 
         # Add request ID to response headers
         response.headers["X-Request-ID"] = request_id
@@ -257,6 +270,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Wire OpenTelemetry tracing when an exporter endpoint is configured.
+# This is a no-op when OTEL_ENABLED/OTEL_EXPORTER_OTLP_ENDPOINT is unset,
+# so local dev keeps zero overhead.
+configure_telemetry(app)
+
 # Add request ID middleware (first, so all other middleware can use it)
 app.add_middleware(RequestIDMiddleware)
 
@@ -308,6 +326,8 @@ app.include_router(authorization_router)
 app.include_router(capability_router)
 app.include_router(live_run_router)
 app.include_router(ops_router)
+app.include_router(case_graph_router)
+app.include_router(autonomous_router)
 app.include_router(evidence_router)
 app.include_router(artifact_router)
 app.include_router(provenance_router)

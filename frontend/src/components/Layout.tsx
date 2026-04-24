@@ -11,6 +11,8 @@ const operatorNavItems = [
   { to: "/runs", label: "Runs" },
   { to: "/authorization", label: "Auth" },
   { to: "/attack-coverage", label: "ATT&CK" },
+  { to: "/case-graph", label: "Graph" },
+  { to: "/autonomous", label: "Agent" },
   { to: "/evidence", label: "Evidence" },
   { to: "/artifacts", label: "Artifacts" },
   { to: "/provenance", label: "Provenance" },

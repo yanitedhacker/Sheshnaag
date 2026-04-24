@@ -81,6 +81,9 @@ models/*.pt
 data/*.csv
 data/*.json
 data/*.parquet
+# Object store filesystem fallback (V4 quarantine)
+data/object_store/
+data/release_metadata/
 
 # Test coverage
 htmlcov/

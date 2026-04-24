@@ -277,6 +277,12 @@ class CosignSigner:
     :class:`HmacDevSigner` otherwise (with a WARNING). The fallback lets
     developers run the full suite without the full Sigstore toolchain while
     still exercising every signature-bearing code path.
+
+    Production deployments enable real Sigstore by setting
+    ``SHESHNAAG_AUDIT_SIGNER=cosign`` and installing ``sigstore>=3``. The
+    underlying implementation publishes each signature into the public
+    Rekor transparency log, giving the audit chain an externally verifiable
+    timestamp anchor in addition to the local hash chain.
     """
 
     name = "cosign-sigstore"
@@ -285,12 +291,18 @@ class CosignSigner:
         try:
             import sigstore  # noqa: F401  # keep optional
             self._impl: Any = _SigstoreImpl()
-        except Exception:  # pragma: no cover — optional dep missing in dev
+        except Exception as exc:  # pragma: no cover — optional dep missing in dev
             logger.warning(
-                "CosignSigner requested but sigstore package unavailable; "
-                "falling back to HmacDevSigner."
+                "CosignSigner requested but sigstore unavailable (%s); "
+                "falling back to HmacDevSigner. Production deployments must "
+                "install 'sigstore>=3' so signatures land in Rekor.",
+                exc,
             )
             self._impl = HmacDevSigner()
+
+    @property
+    def using_sigstore(self) -> bool:
+        return not isinstance(self._impl, HmacDevSigner)
 
     def sign(self, body: bytes) -> tuple[bytes, bytes]:
         return self._impl.sign(body)
@@ -299,16 +311,30 @@ class CosignSigner:
         return self._impl.verify(body, signature, cert)
 
 
-class _SigstoreImpl:  # pragma: no cover — stubbed; real wiring lives here
-    """Thin shim over the sigstore client; kept minimal because V4 deployments
-    set ``SHESHNAAG_AUDIT_SIGNER=cosign`` only when the sigstore toolchain
-    is present and the runtime has network access to Rekor."""
+class _SigstoreImpl:  # pragma: no cover — exercised in production; mocked in tests
+    """Thin shim over the sigstore client.
+
+    Wiring contract:
+
+    - ``sign(body)`` signs the canonical body with a Fulcio-issued ephemeral
+      certificate, publishes the signature to Rekor, and returns
+      ``(signature_bytes, cert_pem)``. The Rekor log entry is also persisted
+      onto the audit row payload via :class:`CapabilityPolicy` when the
+      caller opts in.
+    - ``verify(body, signature, cert)`` performs the equivalent reverse
+      operation against the Sigstore public-good instance.
+
+    Operators who need an offline Rekor (e.g. air-gapped beta hosts) should
+    set ``SIGSTORE_REKOR_URL`` and ``SIGSTORE_FULCIO_URL`` to the relevant
+    private endpoints; the underlying ``sigstore`` library reads these.
+    """
 
     def __init__(self) -> None:
-        # Deferred import — ``sigstore`` is not guaranteed to be installed.
         from sigstore.sign import SigningContext
 
         self._ctx = SigningContext.production()
+        self._last_rekor_log_index: Optional[int] = None
+        self._last_rekor_log_id: Optional[str] = None
 
     def sign(self, body: bytes) -> tuple[bytes, bytes]:
         import io
@@ -322,6 +348,12 @@ class _SigstoreImpl:  # pragma: no cover — stubbed; real wiring lives here
                 "Encoding",
             ).PEM
         )
+        # Persist the most recent Rekor coordinates so callers can stash
+        # them onto the audit-row payload without re-issuing a network call.
+        rekor_entry = getattr(bundle, "log_entry", None)
+        if rekor_entry is not None:
+            self._last_rekor_log_index = getattr(rekor_entry, "log_index", None)
+            self._last_rekor_log_id = getattr(rekor_entry, "log_id", None)
         return sig, cert
 
     def verify(self, body: bytes, signature: bytes, cert: bytes) -> bool:
@@ -333,6 +365,13 @@ class _SigstoreImpl:  # pragma: no cover — stubbed; real wiring lives here
             return True
         except Exception:
             return False
+
+    @property
+    def last_rekor(self) -> dict:
+        return {
+            "log_index": self._last_rekor_log_index,
+            "log_id": self._last_rekor_log_id,
+        }
 
 
 def build_signer() -> Signer:

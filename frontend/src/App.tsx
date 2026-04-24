@@ -6,6 +6,8 @@ import { AnalysisCasesPage } from "./pages/AnalysisCasesPage";
 import { AttackCoveragePage } from "./pages/AttackCoveragePage";
 import { ArtifactForgePage } from "./pages/ArtifactForgePage";
 import { AuthorizationCenterPage } from "./pages/AuthorizationCenterPage";
+import { AutonomousAgentPage } from "./pages/AutonomousAgentPage";
+import { CaseGraphPage } from "./pages/CaseGraphPage";
 import { BehaviorFindingsPage } from "./pages/BehaviorFindingsPage";
 import { CandidateQueuePage } from "./pages/CandidateQueuePage";
 import { DefangQueuePage } from "./pages/DefangQueuePage";
@@ -35,6 +37,8 @@ export default function App() {
         <Route path="runs" element={<RunConsolePage />} />
         <Route path="authorization" element={<AuthorizationCenterPage />} />
         <Route path="attack-coverage" element={<AttackCoveragePage />} />
+        <Route path="case-graph" element={<CaseGraphPage />} />
+        <Route path="autonomous" element={<AutonomousAgentPage />} />
         <Route path="evidence" element={<EvidenceExplorerPage />} />
         <Route path="artifacts" element={<ArtifactForgePage />} />
         <Route path="provenance" element={<ProvenanceCenterPage />} />
