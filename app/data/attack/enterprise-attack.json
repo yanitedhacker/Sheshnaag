@@ -1,0 +1,115 @@
+{
+  "version": "v15.1-bundle",
+  "schema_version": "v4.1",
+  "source": "https://github.com/mitre/cti enterprise-attack",
+  "generated_at": "2026-04-25T00:00:00Z",
+  "techniques": [
+    {
+      "technique_id": "T1055",
+      "name": "Process Injection",
+      "tactic": "Defense Evasion",
+      "subtechniques": ["T1055.008", "T1055.012"],
+      "description": "Adversaries inject code into processes to evade defenses or elevate privileges."
+    },
+    {
+      "technique_id": "T1055.008",
+      "name": "Ptrace System Call Injection",
+      "tactic": "Defense Evasion",
+      "parent": "T1055",
+      "description": "Adversaries use ptrace(2) to inject code into running processes on Linux."
+    },
+    {
+      "technique_id": "T1055.012",
+      "name": "Process Hollowing",
+      "tactic": "Defense Evasion",
+      "parent": "T1055",
+      "description": "Adversaries inject code into a suspended/hollowed process before execution."
+    },
+    {
+      "technique_id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "tactic": "Execution",
+      "subtechniques": ["T1059.001", "T1059.004"],
+      "description": "Adversaries abuse command and script interpreters to execute commands."
+    },
+    {
+      "technique_id": "T1059.001",
+      "name": "PowerShell",
+      "tactic": "Execution",
+      "parent": "T1059",
+      "description": "Adversaries abuse PowerShell to execute commands and scripts on Windows hosts."
+    },
+    {
+      "technique_id": "T1059.004",
+      "name": "Unix Shell",
+      "tactic": "Execution",
+      "parent": "T1059",
+      "description": "Adversaries abuse Unix shell commands and scripts to execute payloads."
+    },
+    {
+      "technique_id": "T1071",
+      "name": "Application Layer Protocol",
+      "tactic": "Command and Control",
+      "subtechniques": ["T1071.001", "T1071.004"],
+      "description": "Adversaries embed C2 in standard application-layer protocols."
+    },
+    {
+      "technique_id": "T1071.001",
+      "name": "Web Protocols",
+      "tactic": "Command and Control",
+      "parent": "T1071",
+      "description": "Adversaries communicate using HTTP/S to blend with normal web traffic."
+    },
+    {
+      "technique_id": "T1071.004",
+      "name": "DNS",
+      "tactic": "Command and Control",
+      "parent": "T1071",
+      "description": "Adversaries use DNS protocol for C2 to evade network monitoring."
+    },
+    {
+      "technique_id": "T1105",
+      "name": "Ingress Tool Transfer",
+      "tactic": "Command and Control",
+      "description": "Adversaries transfer tools or files from an external system into a compromised environment."
+    },
+    {
+      "technique_id": "T1547",
+      "name": "Boot or Logon Autostart Execution",
+      "tactic": "Persistence",
+      "subtechniques": ["T1547.001"],
+      "description": "Adversaries configure system settings to execute programs at boot or logon."
+    },
+    {
+      "technique_id": "T1547.001",
+      "name": "Registry Run Keys / Startup Folder",
+      "tactic": "Persistence",
+      "parent": "T1547",
+      "description": "Adversaries achieve persistence by adding entries to Windows Run keys or the Startup folder."
+    },
+    {
+      "technique_id": "T1027",
+      "name": "Obfuscated Files or Information",
+      "tactic": "Defense Evasion",
+      "description": "Adversaries make payloads difficult to discover or analyze by encrypting, encoding, or otherwise obfuscating their contents."
+    },
+    {
+      "technique_id": "T1486",
+      "name": "Data Encrypted for Impact",
+      "tactic": "Impact",
+      "description": "Adversaries encrypt data on target systems to interrupt availability."
+    },
+    {
+      "technique_id": "T1003",
+      "name": "OS Credential Dumping",
+      "tactic": "Credential Access",
+      "description": "Adversaries attempt to dump credentials to obtain account login material."
+    },
+    {
+      "technique_id": "T1083",
+      "name": "File and Directory Discovery",
+      "tactic": "Discovery",
+      "description": "Adversaries enumerate files and directories to gather information about a host."
+    }
+  ]
+}

@@ -43,6 +43,8 @@ from app.api.routes.authorization_routes import router as authorization_router
 from app.api.routes.capability_routes import router as capability_router
 from app.api.routes.live_run_routes import router as live_run_router
 from app.api.routes.ops_routes import router as ops_router
+from app.api.routes.case_graph_routes import router as case_graph_router
+from app.api.routes.autonomous_routes import router as autonomous_router
 
 __all__ = [
     "cve_router",
@@ -88,4 +90,6 @@ __all__ = [
     "capability_router",
     "live_run_router",
     "ops_router",
+    "case_graph_router",
+    "autonomous_router",
 ]

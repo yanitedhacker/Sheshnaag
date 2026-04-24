@@ -1133,6 +1133,139 @@ class ExposureGraphService:
         paths.sort(key=lambda item: item["score"], reverse=True)
         return paths[:limit]
 
+    def case_graph(self, tenant: Tenant, *, case_id: int, depth: int = 2) -> Dict[str, object]:
+        """Return a subgraph anchored on an :class:`AnalysisCase`.
+
+        The case node is virtual: we synthesise a single ``case`` node and
+        attach edges from each indicator and finding linked to the case.
+        Then we expand outward by ``depth`` hops over the persisted IOC
+        pivot edges so the analyst sees specimens, IOCs, CVEs, and assets
+        related to the case in one view.
+        """
+
+        case = (
+            self.session.query(AnalysisCase)
+            .filter(AnalysisCase.tenant_id == tenant.id, AnalysisCase.id == case_id)
+            .first()
+        )
+        if case is None:
+            return {
+                "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
+                "case": None,
+                "nodes": [],
+                "edges": [],
+                "depth": depth,
+            }
+
+        indicators = (
+            self.session.query(IndicatorArtifact)
+            .filter(
+                IndicatorArtifact.tenant_id == tenant.id,
+                IndicatorArtifact.analysis_case_id == case_id,
+            )
+            .all()
+        )
+        findings = (
+            self.session.query(BehaviorFinding)
+            .filter(
+                BehaviorFinding.tenant_id == tenant.id,
+                BehaviorFinding.analysis_case_id == case_id,
+            )
+            .all()
+        )
+
+        all_nodes = (
+            self.session.query(ExposureGraphNode)
+            .filter(ExposureGraphNode.tenant_id == tenant.id)
+            .all()
+        )
+        all_edges = (
+            self.session.query(ExposureGraphEdge)
+            .filter(ExposureGraphEdge.tenant_id == tenant.id)
+            .all()
+        )
+        node_by_id: Dict[int, ExposureGraphNode] = {node.id: node for node in all_nodes}
+        node_by_key: Dict[str, ExposureGraphNode] = {node.node_key: node for node in all_nodes}
+
+        seed_keys: Set[str] = set()
+        for ind in indicators:
+            seed_keys.add(f"indicator:{ind.id}")
+        for finding in findings:
+            seed_keys.add(f"finding:{finding.id}")
+
+        seed_ids: Set[int] = {
+            node_by_key[key].id for key in seed_keys if key in node_by_key
+        }
+
+        adjacency: Dict[int, List[Tuple[int, ExposureGraphEdge]]] = defaultdict(list)
+        for edge in all_edges:
+            adjacency[edge.from_node_id].append((edge.to_node_id, edge))
+            adjacency[edge.to_node_id].append((edge.from_node_id, edge))
+
+        reachable_node_ids: Set[int] = set(seed_ids)
+        reachable_edge_ids: Set[int] = set()
+        frontier: deque[Tuple[int, int]] = deque((nid, 0) for nid in seed_ids)
+        while frontier:
+            current, distance = frontier.popleft()
+            if distance >= depth:
+                continue
+            for neighbor_id, edge in adjacency.get(current, []):
+                reachable_edge_ids.add(edge.id)
+                if neighbor_id not in reachable_node_ids:
+                    reachable_node_ids.add(neighbor_id)
+                    frontier.append((neighbor_id, distance + 1))
+
+        nodes_payload = [
+            self._serialize_node(node_by_id[nid])
+            for nid in reachable_node_ids
+            if nid in node_by_id
+        ]
+        edges_payload = [
+            self._serialize_edge(edge)
+            for edge in all_edges
+            if edge.id in reachable_edge_ids
+        ]
+
+        # Synthetic case node + edges to seed nodes give the UI an explicit
+        # anchor without polluting the persisted graph schema.
+        case_label = getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
+        case_node = {
+            "id": -case.id,
+            "node_type": "case",
+            "node_key": f"case:{case.id}",
+            "label": case_label,
+            "metadata": {
+                "case_id": case.id,
+                "status": case.status,
+                "priority": getattr(case, "priority", None),
+            },
+        }
+        synthetic_edges = [
+            {
+                "id": -1000 - idx,
+                "from_node_id": -case.id,
+                "to_node_id": node_by_key[key].id,
+                "edge_type": "case_anchor",
+                "weight": 1.0,
+                "metadata": {"case_id": case.id},
+            }
+            for idx, key in enumerate(sorted(seed_keys))
+            if key in node_by_key
+        ]
+        return {
+            "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
+            "case": {
+                "id": case.id,
+                "name": case_label,
+                "status": case.status,
+                "indicator_count": len(indicators),
+                "finding_count": len(findings),
+            },
+            "nodes": [case_node, *nodes_payload],
+            "edges": [*synthetic_edges, *edges_payload],
+            "depth": depth,
+        }
+
     @staticmethod
     def _serialize_node(node: ExposureGraphNode) -> dict:
         return {

@@ -692,6 +692,62 @@ export type AttackCoverageResponse = {
   tactics: Record<string, { techniques: Record<string, AttackTechniqueBucket> }>;
 };
 
+export type CaseGraphNode = {
+  id: number;
+  node_type: string;
+  node_key: string;
+  label: string;
+  metadata: Record<string, unknown>;
+};
+
+export type CaseGraphEdge = {
+  id: number;
+  from_node_id: number;
+  to_node_id: number;
+  edge_type: string;
+  weight: number;
+  metadata: Record<string, unknown>;
+};
+
+export type CaseGraphResponse = {
+  tenant: { id: number; slug: string; name: string };
+  case: {
+    id: number;
+    name: string;
+    status: string;
+    indicator_count: number;
+    finding_count: number;
+  } | null;
+  nodes: CaseGraphNode[];
+  edges: CaseGraphEdge[];
+  depth: number;
+};
+
+export type AutonomousAgentRunRequest = {
+  goal: string;
+  case_id?: number;
+  tenant_slug?: string;
+  max_steps?: number;
+};
+
+export type AutonomousAgentStep = {
+  step: number;
+  thought: string;
+  tool: string | null;
+  tool_input: Record<string, unknown> | null;
+  tool_output: Record<string, unknown> | null;
+  citations: Array<{ label: string; url?: string | null; detail?: string | null }>;
+};
+
+export type AutonomousAgentRun = {
+  run_id: string;
+  goal: string;
+  status: "completed" | "denied" | "failed";
+  reason?: string;
+  steps: AutonomousAgentStep[];
+  final_summary: string;
+};
+
 export type AttackTechniqueFindingsResponse = {
   tenant: { id: number; slug: string; name: string };
   technique_id: string;

@@ -155,6 +155,22 @@ bash scripts/sheshnaag_secure_host_rehearsal.sh
 - Writes for Sheshnaag APIs should use a writable tenant; demo tenant reads are still useful for seeded exploration.
 - The knowledge layer is intended to pair raw source preservation with an LLM-maintained wiki and MemPalace memory continuity.
 
+## Beta Operator Resources
+
+V4 beta deployments rely on a small set of runbooks. Read them in this
+order:
+
+- [`docs/SHESHNAAG_V3_TO_V4_UPGRADE.md`](docs/SHESHNAAG_V3_TO_V4_UPGRADE.md)
+  — upgrade an existing V3 deployment, including the MinIO migration step.
+- [`docs/SHESHNAAG_V4_BETA_OPERATOR_RUNBOOK.md`](docs/SHESHNAAG_V4_BETA_OPERATOR_RUNBOOK.md)
+  — daily checklist, on-call playbooks, escalation, backup cadence.
+- [`docs/SHESHNAAG_V4_TROUBLESHOOTING.md`](docs/SHESHNAAG_V4_TROUBLESHOOTING.md)
+  — symptom-to-cause table for the most common V4 failure modes.
+- [`docs/LOG_SCHEMA.md`](docs/LOG_SCHEMA.md) — structured JSON log
+  schema, run telemetry events, and SIEM ingestion guidance.
+- [`docs/SHESHNAAG_V4_BETA_GAP_CLOSURE.md`](docs/SHESHNAAG_V4_BETA_GAP_CLOSURE.md)
+  — current beta gap ledger.
+
 ## Next Steps
 
 - Expand candidate scoring with richer OSV and GitHub Advisory normalization.
