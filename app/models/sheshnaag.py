@@ -537,6 +537,27 @@ class CandidateScoreRecalculationRun(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class ScheduledBrief(Base):
+    """Persisted output of a scheduled per-tenant briefing job.
+
+    The brief generator (`BriefService.generate_brief`) writes a row each
+    cadence tick. Analysts read the latest row via /api/v4/briefs/latest
+    so the dashboard always has a recent narrative even when the agent
+    runs are quiet.
+    """
+
+    __tablename__ = "scheduled_briefs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    brief_type = Column(String(40), nullable=False, default="daily", index=True)
+    summary = Column(Text)
+    payload = Column(JSON, default=dict, nullable=False)
+    generated_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    period_start = Column(DateTime)
+    period_end = Column(DateTime)
+
+
 class AutonomousAgentRun(Base):
     """Durable record of a V4 autonomous-agent ReAct run.
 

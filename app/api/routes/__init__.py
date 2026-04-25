@@ -45,6 +45,9 @@ from app.api.routes.live_run_routes import router as live_run_router
 from app.api.routes.ops_routes import router as ops_router
 from app.api.routes.case_graph_routes import router as case_graph_router
 from app.api.routes.autonomous_routes import router as autonomous_router
+from app.api.routes.hunt_routes import router as hunt_router
+from app.api.routes.brief_routes import router as brief_router
+from app.api.routes.stix_export_routes import router as stix_export_router
 
 __all__ = [
     "cve_router",
@@ -92,4 +95,7 @@ __all__ = [
     "ops_router",
     "case_graph_router",
     "autonomous_router",
+    "hunt_router",
+    "brief_router",
+    "stix_export_router",
 ]

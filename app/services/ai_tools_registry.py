@@ -506,14 +506,55 @@ def _query_intel_feed(
     return base
 
 
-def _export_external(bundle_id: str, target: str, **_: Any) -> Dict[str, Any]:
-    return {
-        "tool": "export_external",
-        "bundle_id": bundle_id,
-        "target": target,
-        "accepted": False,
-        "reason": "Awaiting STIX exporter (Pillar 3 §3.2); capability gate: external_disclosure.",
-    }
+def _export_external(
+    bundle_id: str,
+    target: str,
+    _context: Optional[Dict[str, Any]] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    """Materialise an external export bundle.
+
+    target=stix uses the new StixExportService; bundle_id is interpreted as
+    the analysis case id (the LLM doesn't have access to internal bundle
+    primary keys, but it can reach a case via prior tool calls). Other
+    targets (taxii/misp/pdf) remain stub-shaped pending their backing
+    services. The capability gate (`external_disclosure`) is enforced by
+    AIAgentLoop._execute_tool before this callable runs.
+    """
+
+    base = {"tool": "export_external", "bundle_id": bundle_id, "target": target}
+    if (target or "").lower() != "stix":
+        base["accepted"] = False
+        base["reason"] = (
+            f"target {target!r} not yet implemented — only 'stix' is wired."
+        )
+        return base
+    session = _ctx_session(_context)
+    tenant_id = _ctx_tenant_id(_context)
+    if session is None or tenant_id is None:
+        base["accepted"] = False
+        base["error"] = "context_required"
+        return base
+    try:
+        case_id = int(bundle_id)
+    except (TypeError, ValueError):
+        base["accepted"] = False
+        base["error"] = "bundle_id_must_be_case_id"
+        return base
+    from app.core.tenancy import resolve_tenant
+    from app.services.stix_export_service import StixExportService
+
+    try:
+        tenant = resolve_tenant(session, tenant_id=tenant_id, default_to_demo=False)
+        bundle = StixExportService(session).export_case(tenant, case_id=case_id)
+    except ValueError as exc:
+        base["accepted"] = False
+        base["error"] = str(exc)
+        return base
+    base["accepted"] = True
+    base["bundle"] = bundle
+    base["object_count"] = len(bundle.get("objects", []))
+    return base
 
 
 def _run_authorized_offensive(target: str, recipe_id: str, **_: Any) -> Dict[str, Any]:
@@ -636,7 +677,7 @@ TOOL_REGISTRY: Dict[str, Tool] = {
     ),
     "export_external": Tool(
         name="export_external",
-        description="Emit a bundle externally (TAXII/STIX/MISP/PDF).",
+        description="Emit a bundle externally (TAXII/STIX/MISP/PDF). For target=stix, bundle_id is the analysis case id.",
         input_schema={
             "type": "object",
             "properties": {
@@ -648,6 +689,7 @@ TOOL_REGISTRY: Dict[str, Tool] = {
         capability="external_disclosure",
         callable=_export_external,
         tags=("write", "external"),
+        requires_context=True,
     ),
     "run_authorized_offensive": Tool(
         name="run_authorized_offensive",

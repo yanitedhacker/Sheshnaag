@@ -48,6 +48,9 @@ from app.api.routes import (
     ops_router,
     case_graph_router,
     autonomous_router,
+    hunt_router,
+    brief_router,
+    stix_export_router,
     patch_router,
     policy_router,
     prevention_router,
@@ -67,6 +70,7 @@ from app.api.routes import (
     workbench_router,
 )
 from app.ingestion.scheduler import FeedScheduler
+from app.services.brief_scheduler import BriefScheduler
 from app.ml.model_registry import preload_models
 from app.services.demo_seed_service import DemoSeedService
 from app.models.v2 import (
@@ -88,6 +92,7 @@ FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 configure_logging(settings.debug)
 logger = logging.getLogger(__name__)
 feed_scheduler = FeedScheduler()
+brief_scheduler = BriefScheduler()
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -258,6 +263,7 @@ async def lifespan(app: FastAPI):
 
     # Start ingestion scheduler
     feed_scheduler.start()
+    brief_scheduler.start()
     logger.info("Feed scheduler started")
 
     yield
@@ -265,6 +271,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down application")
     feed_scheduler.shutdown()
+    brief_scheduler.shutdown()
     logger.info("Feed scheduler stopped")
 
 
@@ -355,6 +362,9 @@ app.include_router(live_run_router)
 app.include_router(ops_router)
 app.include_router(case_graph_router)
 app.include_router(autonomous_router)
+app.include_router(hunt_router)
+app.include_router(brief_router)
+app.include_router(stix_export_router)
 app.include_router(evidence_router)
 app.include_router(artifact_router)
 app.include_router(provenance_router)
