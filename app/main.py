@@ -501,25 +501,21 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """General exception handler for unexpected errors."""
+    """General exception handler for unexpected errors.
+
+    We always return a generic body — exception details are only emitted to
+    the server log, never to the client. The previous version leaked str(exc)
+    and the exception type in non-production environments, but `environment`
+    can be misconfigured (or simply unset to its dev default in a deployed
+    artifact), which would re-expose internals. Client-side debugging should
+    rely on the request_id to correlate with server logs instead.
+    """
     request_id = getattr(request.state, 'request_id', None)
     logger.exception(f"Unhandled exception (request_id={request_id}): {exc}")
 
-    # Don't expose internal errors in production
-    if settings.environment == "production":
-        content = {"error": "Internal server error", "status_code": 500}
-        if request_id:
-            content["request_id"] = request_id
-        return JSONResponse(status_code=500, content=content)
-
-    content = {
-        "error": str(exc),
-        "type": type(exc).__name__,
-        "status_code": 500
-    }
+    content = {"error": "Internal server error", "status_code": 500}
     if request_id:
         content["request_id"] = request_id
-
     return JSONResponse(status_code=500, content=content)
 
 

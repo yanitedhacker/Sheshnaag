@@ -2260,7 +2260,15 @@ class SheshnaagService:
         }
 
     def get_disclosure_bundle_archive(self, tenant: Tenant, *, bundle_id: int) -> Dict[str, str]:
-        """Return archive location details for a previously exported bundle."""
+        """Return archive location details for a previously exported bundle.
+
+        Path-containment hardening: the manifest stores the on-disk archive
+        path, but a tampered manifest (or stale row written by an earlier
+        version with weaker validation) could point at an arbitrary file. We
+        therefore require the resolved real path to live under
+        ``self.export_root`` and to be a regular file. Any deviation surfaces
+        as a 404-equivalent ValueError rather than streaming the file.
+        """
         bundle = (
             self.session.query(DisclosureBundle)
             .filter(DisclosureBundle.tenant_id == tenant.id, DisclosureBundle.id == bundle_id)
@@ -2270,9 +2278,23 @@ class SheshnaagService:
             raise ValueError("Disclosure bundle not found.")
         archive = (bundle.manifest or {}).get("archive") or {}
         path = archive.get("path")
-        if not path or not os.path.exists(path):
+        if not path:
             raise ValueError("Disclosure bundle archive is missing.")
-        return {"path": path, "filename": archive.get("filename") or os.path.basename(path)}
+
+        try:
+            root_real = Path(self.export_root).resolve(strict=False)
+            archive_real = Path(path).resolve(strict=False)
+            archive_real.relative_to(root_real)
+        except (OSError, ValueError) as exc:
+            raise ValueError("Disclosure bundle archive path is not permitted.") from exc
+
+        if not archive_real.is_file():
+            raise ValueError("Disclosure bundle archive is missing.")
+
+        return {
+            "path": str(archive_real),
+            "filename": archive.get("filename") or archive_real.name,
+        }
 
     def _build_candidate_explainability(
         self,

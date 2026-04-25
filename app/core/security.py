@@ -16,15 +16,21 @@ from pydantic import BaseModel
 
 try:
     from passlib.context import CryptContext
-except ImportError:  # pragma: no cover - environment-specific fallback
+except ImportError as _passlib_import_err:  # pragma: no cover
     CryptContext = None
+    _PASSLIB_IMPORT_ERROR: Optional[ImportError] = _passlib_import_err
+else:
+    _PASSLIB_IMPORT_ERROR = None
 
 from app.core.config import settings
 
-# Password hashing context
+# Password hashing context.
 #
 # New hashes use Argon2 to avoid bcrypt's 72-byte input ceiling, while legacy
-# bcrypt hashes remain verifiable during migration.
+# bcrypt hashes remain verifiable during migration. We deliberately refuse to
+# operate when passlib is missing — the previous code silently degraded to a
+# plaintext compare, which is a critical auth downgrade and was flagged in the
+# pre-pentest audit.
 pwd_context = (
     CryptContext(
         schemes=["argon2", "bcrypt"],
@@ -33,6 +39,16 @@ pwd_context = (
     if CryptContext is not None
     else None
 )
+
+
+def _require_pwd_context() -> "CryptContext":
+    if pwd_context is None:
+        raise RuntimeError(
+            "passlib is required for password hashing/verification — install "
+            "`passlib[argon2,bcrypt]` and `argon2-cffi`. Refusing to fall back "
+            "to plaintext comparison."
+        ) from _PASSLIB_IMPORT_ERROR
+    return pwd_context
 
 # HTTP Bearer token security scheme
 security = HTTPBearer(auto_error=False)
@@ -55,16 +71,12 @@ class Token(BaseModel):
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
-    if pwd_context is None:
-        return plain_password == hashed_password
-    return pwd_context.verify(plain_password, hashed_password)
+    return _require_pwd_context().verify(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
     """Hash a password."""
-    if pwd_context is None:
-        return password
-    return pwd_context.hash(password)
+    return _require_pwd_context().hash(password)
 
 
 def create_access_token(
@@ -132,8 +144,16 @@ def verify_token(
         HTTPException: If authentication fails
     """
     if not settings.auth_enabled:
-        # Auth disabled - return anonymous user
-        return TokenData(username="anonymous", scopes=["read", "write"])
+        # Auth disabled — return anonymous user with a scope set that depends
+        # on the deployment environment. Only `development` keeps write scope
+        # for local convenience; staging/production must enable real auth (the
+        # startup validator already rejects auth_enabled=False in production,
+        # but defense-in-depth here prevents accidental privilege handout if
+        # the validator is bypassed).
+        env = (settings.environment or "development").lower()
+        if env == "development":
+            return TokenData(username="anonymous", scopes=["read", "write"])
+        return TokenData(username="anonymous", scopes=["read"])
 
     if credentials is None:
         raise HTTPException(

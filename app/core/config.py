@@ -13,6 +13,7 @@ environment-specific logic scattered across the codebase.
 Security Enhancement: Added authentication, CORS, and rate limiting settings.
 """
 
+import os
 import secrets
 from functools import lru_cache
 from typing import List, Optional
@@ -112,15 +113,25 @@ class Settings(BaseSettings):
     @field_validator('secret_key', mode='before')
     @classmethod
     def validate_secret_key(cls, v: str, info) -> str:
-        """Validate and generate secret key if needed."""
-        # Get environment from the values being validated
-        # Note: In Pydantic v2, we can't easily access other fields during validation
-        # So we generate a random key for development if not set
-        if not v or v == "change-me-in-production":
-            # Generate a secure random key for development
-            # In production, this should be set via environment variable
-            return secrets.token_urlsafe(32)
-        return v
+        """Validate and generate secret key if needed.
+
+        Auto-generates a per-process random key only outside of production.
+        In production we refuse to auto-generate so the operator is forced to
+        provide a stable, externally-managed SECRET_KEY (rotation, multi-pod
+        consistency, audit). The env-var fallback here is intentionally read
+        directly because pydantic v2 validators cannot easily reach sibling
+        field values during initial validation.
+        """
+        if v and v != "change-me-in-production":
+            return v
+        env = (os.environ.get("ENVIRONMENT") or "development").lower()
+        if env == "production":
+            raise ValueError(
+                "SECRET_KEY must be set explicitly in production — refusing "
+                "to auto-generate an ephemeral key (would invalidate tokens "
+                "across restarts and across replicas)."
+            )
+        return secrets.token_urlsafe(32)
 
     def validate_production_settings(self) -> List[str]:
         """

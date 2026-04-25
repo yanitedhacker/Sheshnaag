@@ -11,10 +11,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
+from app.core.security import TokenData, verify_token
 from app.models.capability import AuthorizationArtifact
 from app.services.capability_policy import CapabilityPolicy, IssuanceRequest, Reviewer
 
 router = APIRouter(prefix="/api/v4/authorization", tags=["Sheshnaag V4 Authorization"])
+
+
+def _bound_actor(token_data: TokenData, fallback: str) -> str:
+    """Use the JWT subject as the authoritative actor; fall back to the body
+    field only when the token is the anonymous dev fallback. Prevents an
+    unauthenticated client from forging requester/approver/revoker identity."""
+
+    name = (token_data.username or "").strip()
+    if name and name != "anonymous":
+        return name
+    return fallback
 
 
 class AuthorizationRequest(BaseModel):
@@ -61,6 +73,7 @@ def list_authorizations(
     capability: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
     query = session.query(AuthorizationArtifact).order_by(AuthorizationArtifact.issued_at.desc())
     if capability:
@@ -74,7 +87,11 @@ def list_authorizations(
 
 
 @router.post("/request")
-def request_authorization(request: AuthorizationRequest, session: Session = Depends(get_sync_session)):
+def request_authorization(
+    request: AuthorizationRequest,
+    session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),
+):
     reviewers = [
         Reviewer(
             reviewer=str(item.get("reviewer") or item.get("name") or ""),
@@ -87,7 +104,7 @@ def request_authorization(request: AuthorizationRequest, session: Session = Depe
             IssuanceRequest(
                 capability=request.capability,
                 scope=request.scope,
-                requester=request.requester,
+                requester=_bound_actor(token_data, request.requester),
                 reason=request.reason,
                 requested_ttl=timedelta(seconds=request.requested_ttl_seconds)
                 if request.requested_ttl_seconds
@@ -104,32 +121,53 @@ def request_authorization(request: AuthorizationRequest, session: Session = Depe
 
 
 @router.post("/{artifact_id}/approve")
-def approve_authorization(artifact_id: str, request: ApproveRequest, session: Session = Depends(get_sync_session)):
+def approve_authorization(
+    artifact_id: str,
+    request: ApproveRequest,
+    session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),
+):
     artifact = session.get(AuthorizationArtifact, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="authorization_request_not_found")
     payload = _artifact_payload(artifact)
     payload["approval_status"] = "already_issued"
-    payload["approved_by"] = request.reviewer
+    payload["approved_by"] = _bound_actor(token_data, request.reviewer)
     return payload
 
 
 @router.post("/{artifact_id}/revoke")
-def revoke_authorization(artifact_id: str, request: RevokeRequest, session: Session = Depends(get_sync_session)):
+def revoke_authorization(
+    artifact_id: str,
+    request: RevokeRequest,
+    session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),
+):
     try:
-        CapabilityPolicy(session).revoke(artifact_id, actor=request.actor, reason=request.reason)
+        CapabilityPolicy(session).revoke(
+            artifact_id,
+            actor=_bound_actor(token_data, request.actor),
+            reason=request.reason,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"artifact_id": artifact_id, "revoked": True}
 
 
 @router.get("/chain/root")
-def authorization_chain_root(session: Session = Depends(get_sync_session)):
+def authorization_chain_root(
+    session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
+):
     return CapabilityPolicy(session).latest_root()
 
 
 @router.get("/chain/verify")
-def authorization_chain_verify(since: Optional[int] = Query(None), session: Session = Depends(get_sync_session)):
+def authorization_chain_verify(
+    since: Optional[int] = Query(None),
+    session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
+):
     result = CapabilityPolicy(session).verify_chain(since=since)
     return {
         "ok": result.ok,

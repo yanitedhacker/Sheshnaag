@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
+from app.core.security import TokenData, verify_token
 from app.services.capability_policy import CapabilityPolicy
 
 router = APIRouter(prefix="/api/v4/capability", tags=["Sheshnaag V4 Capability"])
@@ -32,11 +33,18 @@ def check_capability(
     scope: Optional[str] = Query(None),
     actor: str = Query("anonymous"),
     session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),
 ):
+    # Bind actor to the JWT subject when one is presented; otherwise fall back
+    # to the (untrusted) query parameter for the dev/anonymous mode. Without
+    # this, an unauthenticated client could probe capability decisions for
+    # arbitrary identities.
+    bound_username = (token_data.username or "").strip()
+    effective_actor = bound_username if bound_username and bound_username != "anonymous" else actor
     decision = CapabilityPolicy(session).evaluate(
         capability=capability,
         scope=_parse_scope(scope),
-        actor=actor,
+        actor=effective_actor,
     )
     return {
         "permitted": decision.permitted,

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
+from app.core.security import TokenData, verify_token
 from app.core.tenancy import require_writable_tenant, resolve_tenant
 from app.services.malware_lab_service import MalwareLabService
 
@@ -99,8 +100,9 @@ def download_report(
     tenant_slug: Optional[str] = Query(None),
     tenant_id: Optional[int] = Query(None),
     session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False)
     try:
         archive = MalwareLabService(session).get_report_archive(tenant, report_id=report_id)
     except ValueError as exc:

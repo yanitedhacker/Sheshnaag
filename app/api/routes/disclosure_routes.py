@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
+from app.core.security import TokenData, verify_token
 from app.core.tenancy import require_writable_tenant, resolve_tenant
 from app.services.sheshnaag_service import SheshnaagService
 
@@ -101,9 +102,10 @@ def download_disclosure_bundle(
     tenant_slug: Optional[str] = Query(None),
     tenant_id: Optional[int] = Query(None),
     session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
     """Download a previously exported disclosure bundle archive."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False)
     try:
         archive = SheshnaagService(session).get_disclosure_bundle_archive(tenant, bundle_id=bundle_id)
     except ValueError as exc:

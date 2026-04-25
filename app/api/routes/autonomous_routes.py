@@ -9,8 +9,24 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
+from app.core.security import TokenData, verify_token
 from app.core.tenancy import resolve_tenant
 from app.services.autonomous_agent import AutonomousAgent
+
+
+def _actor_from_token(token_data: TokenData, fallback: str) -> str:
+    """Bind actor identity to the JWT subject when one is present.
+
+    When auth is disabled (anonymous fallback), the body-supplied actor is
+    accepted so existing test/dev workflows keep working. When a real token
+    is presented, its subject overrides the body field — preventing actor
+    impersonation through user-controlled request data.
+    """
+
+    name = (token_data.username or "").strip()
+    if name and name != "anonymous":
+        return name
+    return fallback
 
 router = APIRouter(prefix="/api/v4/autonomous", tags=["Sheshnaag V4 Autonomous"])
 
@@ -33,9 +49,13 @@ class AutonomousRunRequest(BaseModel):
 def run_autonomous_agent(
     payload: AutonomousRunRequest = Body(...),
     session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),
 ):
     tenant = resolve_tenant(
-        session, tenant_id=payload.tenant_id, tenant_slug=payload.tenant_slug, default_to_demo=True
+        session,
+        tenant_id=payload.tenant_id,
+        tenant_slug=payload.tenant_slug,
+        default_to_demo=False,
     )
     global _AGENT
     if _AGENT is None:
@@ -45,7 +65,7 @@ def run_autonomous_agent(
     run = _AGENT.run(
         tenant,
         goal=payload.goal,
-        actor=payload.actor,
+        actor=_actor_from_token(token_data, payload.actor),
         case_id=payload.case_id,
         max_steps=payload.max_steps,
     )
@@ -57,8 +77,11 @@ def list_autonomous_runs(
     tenant_slug: Optional[str] = Query(None),
     tenant_id: Optional[int] = Query(None),
     session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — gate only
 ):
-    resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False
+    )
     global _AGENT
     if _AGENT is None:
         return {"items": [], "count": 0}
