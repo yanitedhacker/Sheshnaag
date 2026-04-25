@@ -7,7 +7,13 @@ from app.lab.collector_contract import (
     build_provider_result_dict,
     recipe_collector_names,
 )
+import app.lab.collectors.file_diff as file_diff_module
+import app.lab.collectors.network_metadata as network_module
+import app.lab.collectors.process_tree as process_module
+from app.lab.collectors.file_diff import FileDiffCollector
+from app.lab.collectors.network_metadata import NetworkMetadataCollector
 from app.lab.collectors.pcap import PcapCollector
+from app.lab.collectors.process_tree import ProcessTreeCollector
 from app.lab.collectors.osquery_snapshot import OsquerySnapshotCollector
 import app.lab.collectors.tracee_collector as tracee_module
 from app.lab.collectors.tracee_collector import TraceeEventsCollector
@@ -138,6 +144,66 @@ def test_tracee_live_payload_uses_standardized_session_fields(monkeypatch):
     assert payload["session"]["transport"] == "docker_exec"
     assert payload["session"]["event_limit"] >= 1
     assert payload["support"]["supported"] is True
+
+
+@pytest.mark.unit
+def test_baseline_collectors_run_through_lima_guest_transport(monkeypatch):
+    monkeypatch.setattr("app.lab.collectors.runtime.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    calls = []
+
+    def fake_process_guest(provider_result, argv, timeout_sec=90, stdin_text=None):
+        calls.append(("process_tree", argv))
+        return 0, "1 0 /sbin/init\n42 1 bash -lc secure-smoke\n", ""
+
+    def fake_file_guest(provider_result, argv, timeout_sec=90, stdin_text=None):
+        calls.append(("file_diff", argv))
+        return 0, "/workspace/secure-smoke.txt\n", ""
+
+    def fake_network_guest(provider_result, argv, timeout_sec=90, stdin_text=None):
+        calls.append(("network_metadata", argv))
+        return 0, "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port\n", ""
+
+    monkeypatch.setattr(process_module, "run_in_guest", fake_process_guest)
+    monkeypatch.setattr(file_diff_module, "run_in_guest", fake_file_guest)
+    monkeypatch.setattr(network_module, "run_in_guest", fake_network_guest)
+
+    provider_result = build_provider_result_dict(
+        provider_run_ref="lima-1",
+        plan={"provider": "lima", "instance_name": "sheshnaag-lima-1"},
+        state="running",
+    )
+    run_context = {"run_id": 1, "launch_mode": "execute"}
+
+    process_payload = ProcessTreeCollector().collect(run_context=run_context, provider_result=provider_result)[0]["payload"]
+    file_payload = FileDiffCollector().collect(run_context=run_context, provider_result=provider_result)[0]["payload"]
+    network_payload = NetworkMetadataCollector().collect(run_context=run_context, provider_result=provider_result)[0]["payload"]
+
+    assert process_payload["mode"] == "live"
+    assert process_payload["transport"] == "lima_shell"
+    assert file_payload["transport"] == "lima_shell"
+    assert network_payload["transport"] == "lima_shell"
+    assert {name for name, _ in calls} == {"process_tree", "file_diff", "network_metadata"}
+
+
+@pytest.mark.unit
+def test_baseline_collectors_keep_docker_guest_transport(monkeypatch):
+    monkeypatch.setattr("app.lab.collectors.runtime.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(process_module, "run_in_guest", lambda *args, **kwargs: (0, "1 0 /sbin/init\n", ""))
+
+    provider_result = build_provider_result_dict(
+        provider_run_ref="docker-1",
+        plan={"provider": "docker_kali"},
+        state="running",
+        container_id="container-123",
+    )
+    evidence = ProcessTreeCollector().collect(
+        run_context={"run_id": 1, "launch_mode": "execute"},
+        provider_result=provider_result,
+    )
+
+    assert evidence[0]["payload"]["mode"] == "live"
+    assert evidence[0]["payload"]["transport"] == "docker_exec"
 
 
 @pytest.mark.unit

@@ -81,21 +81,28 @@ class LimaProvider(LabProvider):
             },
             "snapshot_policy": {
                 "baseline_snapshot": "baseline",
-                "revert_behavior": "revert_to_baseline_before_destroy",
+                "revert_behavior": "destroy_ephemeral_instance",
             },
             "secure_mode_contract": {
                 "provider": self.provider_name,
-                "snapshot_revert_supported": True,
+                "snapshot_revert_supported": False,
                 "secure_collectors": ["pcap"],
             },
             "provider_contract": {
                 "provider": self.provider_name,
-                "snapshot_revert_supported": True,
+                "snapshot_revert_supported": False,
                 "secure_collectors": ["pcap"],
             },
             "template_metadata": template_metadata,
             "provider_readiness": self._provider_readiness(template_path=template_path),
-            "collector_capabilities": self._collector_capabilities(collectors=collectors),
+            "collector_capabilities": self._collector_capabilities(
+                collectors=collectors,
+                tooling_profile={
+                    "profile": catalog_entry.tooling_profile,
+                    "osquery_available": bool(catalog_entry.supports_osquery),
+                    "tracee_available": bool(catalog_entry.supports_tracee),
+                },
+            ),
             "secure_mode_audit": {
                 "host_checks": self._provider_readiness(template_path=template_path),
                 "limactl_version": limactl_version,
@@ -105,7 +112,7 @@ class LimaProvider(LabProvider):
                 "snapshot_revert_audit": {
                     "baseline_snapshot_ref": None,
                     "booted_snapshot_ref": None,
-                    "revert_behavior": "revert_to_baseline_before_destroy",
+                    "revert_behavior": "destroy_ephemeral_instance",
                     "revert_outcome": "pending",
                 },
             },
@@ -402,7 +409,7 @@ class LimaProvider(LabProvider):
             )
         plan = info.get("plan") or {}
         workspace = Path(info.get("workspace") or "")
-        restore_action = "revert_to_baseline"
+        restore_action = "destroy_ephemeral_instance"
         if workspace.exists() and not retain_workspace:
             shutil.rmtree(workspace, ignore_errors=True)
         plan.setdefault("teardown", {})
@@ -418,14 +425,15 @@ class LimaProvider(LabProvider):
         plan["guest_status"] = "destroyed"
         secure_audit = dict(plan.get("secure_mode_audit") or {})
         snapshot_audit = dict(secure_audit.get("snapshot_revert_audit") or {})
-        snapshot_audit["revert_outcome"] = "recorded"
-        snapshot_audit["reverted_at"] = utc_now().isoformat()
+        snapshot_audit["revert_outcome"] = "not_applicable_ephemeral_instance"
+        snapshot_audit["reverted_at"] = None
+        snapshot_audit["destroyed_at"] = utc_now().isoformat()
         secure_audit["snapshot_revert_audit"] = snapshot_audit
         plan["secure_mode_audit"] = secure_audit
         self._record_lifecycle_event(
             plan,
             event="teardown",
-            detail="baseline revert audit recorded",
+            detail="ephemeral Lima instance teardown recorded",
             payload={"retain_workspace": retain_workspace},
         )
         info["state"] = RunState.DESTROYED
@@ -433,7 +441,7 @@ class LimaProvider(LabProvider):
             state=RunState.DESTROYED,
             provider_run_ref=provider_run_ref,
             plan=plan,
-            transcript="Lima teardown complete with baseline-revert audit metadata recorded.",
+            transcript="Lima teardown complete; ephemeral instance destruction recorded.",
             health=HealthStatus.DESTROYED,
         )
 
@@ -534,19 +542,75 @@ class LimaProvider(LabProvider):
         }
 
     @staticmethod
-    def _collector_capabilities(*, collectors: List[str]) -> List[Dict[str, Any]]:
+    def _collector_capabilities(
+        *,
+        collectors: List[str],
+        tooling_profile: Dict[str, Any] | None = None,
+    ) -> List[Dict[str, Any]]:
         selected = set(collectors or [])
+        tooling_profile = tooling_profile or {}
+        pcap_enabled = os.environ.get("SHESHNAAG_ENABLE_PCAP", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         definitions = {
-            "process_tree": ("baseline", "ready", "Secure-mode baseline collector."),
-            "package_inventory": ("baseline", "ready", "Secure-mode baseline collector."),
-            "file_diff": ("baseline", "ready", "Secure-mode baseline collector."),
-            "network_metadata": ("baseline", "ready", "Secure-mode baseline collector."),
-            "service_logs": ("baseline", "ready", "Secure-mode baseline collector."),
-            "osquery_snapshot": ("extended", "degraded", "Requires an osquery-capable secure image profile."),
-            "tracee_events": ("supported", "degraded", "Supported in v2 when the selected image is Tracee-capable."),
-            "falco_events": ("extended", "degraded", "Deferred in v2; capability reporting only."),
-            "tetragon_events": ("extended", "degraded", "Deferred in v2; capability reporting only."),
-            "pcap": ("extended", "ready", "PCAP is permitted only in secure mode and requires explicit operator review."),
+            "process_tree": (
+                "baseline",
+                "ready",
+                "Runs through limactl shell and requires procps in the Lima guest.",
+                ["procps"],
+            ),
+            "package_inventory": (
+                "baseline",
+                "ready",
+                "Runs through limactl shell and uses the guest package manager when available.",
+                [],
+            ),
+            "file_diff": (
+                "baseline",
+                "ready",
+                "Runs through limactl shell and requires findutils in the Lima guest.",
+                ["findutils"],
+            ),
+            "network_metadata": (
+                "baseline",
+                "ready",
+                "Runs through limactl shell and requires iproute2 or net-tools in the Lima guest.",
+                ["iproute2", "net-tools"],
+            ),
+            "service_logs": (
+                "baseline",
+                "ready",
+                "Runs through limactl shell and reads guest log paths when configured.",
+                [],
+            ),
+            "osquery_snapshot": (
+                "extended",
+                "ready" if bool(tooling_profile.get("osquery_available")) else "degraded",
+                "Requires an osquery-capable secure image profile.",
+                ["osquery"],
+            ),
+            "tracee_events": (
+                "supported",
+                "ready" if bool(tooling_profile.get("tracee_available")) else "degraded",
+                "Requires a Tracee-capable secure image profile with tracee installed in the guest.",
+                ["tracee"],
+            ),
+            "falco_events": ("extended", "degraded", "Deferred in v2; capability reporting only.", ["falco"]),
+            "tetragon_events": (
+                "extended",
+                "degraded",
+                "Deferred unless SHESHNAAG_ENABLE_TETRAGON is enabled and tetra is installed in the guest.",
+                ["tetra"],
+            ),
+            "pcap": (
+                "extended",
+                "ready" if pcap_enabled else "degraded",
+                "PCAP is secure-mode-only, requires tcpdump in the guest, and SHESHNAAG_ENABLE_PCAP=1 for live capture.",
+                ["tcpdump"],
+            ),
         }
         return [
             {
@@ -555,8 +619,10 @@ class LimaProvider(LabProvider):
                 "selected": name in selected,
                 "status": status,
                 "reason": reason,
+                "execution": "lima_shell",
+                "required_guest_tools": required_guest_tools,
             }
-            for name, (tier, status, reason) in definitions.items()
+            for name, (tier, status, reason, required_guest_tools) in definitions.items()
         ]
 
     @staticmethod
@@ -645,7 +711,11 @@ class LimaProvider(LabProvider):
         else:
             generated_text = "\n".join(
                 [
-                    "arch: x86_64",
+                    "images:",
+                    '  - location: "https://cloud-images.ubuntu.com/minimal/releases/24.04/release-20260331/ubuntu-24.04-minimal-cloudimg-amd64.img"',
+                    '    arch: "x86_64"',
+                    '  - location: "https://cloud-images.ubuntu.com/minimal/releases/24.04/release-20260331/ubuntu-24.04-minimal-cloudimg-arm64.img"',
+                    '    arch: "aarch64"',
                     f"cpus: {cpu}",
                     f'memory: "{memory_mb}MiB"',
                     f'disk: "{disk_gb}GiB"',
@@ -653,6 +723,13 @@ class LimaProvider(LabProvider):
                     f'  - location: "{workspace}"',
                     '    mountPoint: "/workspace"',
                     "    writable: true",
+                    "provision:",
+                    "  - mode: system",
+                    "    script: |",
+                    "      #!/bin/sh",
+                    "      set -eu",
+                    "      apt-get update",
+                    "      apt-get install -y ca-certificates curl dnsutils findutils iproute2 jq net-tools nftables procps tcpdump",
                 ]
             ) + "\n"
         generated_path.write_text(generated_text)

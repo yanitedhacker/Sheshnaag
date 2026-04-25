@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional Lima-backed secure-mode smoke for Sheshnaag."""
+"""Optional direct Lima-backed secure-mode smoke for Sheshnaag."""
 
 from __future__ import annotations
 
@@ -14,15 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
-from app.core.database import Base
-from app.models import Asset
-from app.services.auth_service import AuthService
-from app.services.demo_seed_service import DemoSeedService
-from app.services.sheshnaag_service import SheshnaagService
+from app.lab.collector_contract import build_provider_result_dict
+from app.lab.collectors import instantiate_collectors
+from app.lab.interfaces import RunState
+from app.lab.lima_provider import LimaProvider
 
 
 def lima_ready() -> bool:
@@ -43,104 +38,92 @@ def main() -> int:
         print("SKIP: limactl unavailable; secure-mode smoke not run.")
         return 0
 
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base.metadata.create_all(bind=engine)
-    session = session_factory()
-
+    provider = LimaProvider()
+    provider_run_ref = ""
     try:
-        DemoSeedService(session).seed()
-        auth = AuthService(session)
-        onboard = auth.onboard_private_tenant(
-            tenant_name="Sheshnaag Secure Smoke",
-            tenant_slug="secure-smoke-private",
-            admin_email="secure@sheshnaag.local",
-            admin_password="supersecure123",
-            admin_name="Secure Smoke",
+        revision_content = {
+            "provider": "lima",
+            "image_profile": "secure_lima",
+            "execution_policy": {"secure_mode_required": True},
+            "command": [
+                "bash",
+                "-lc",
+                "echo secure-smoke > /workspace/secure-smoke.txt && (getent hosts example.invalid || true) && sleep 1",
+            ],
+            "network_policy": {"allow_egress_hosts": []},
+            "collectors": ["process_tree", "file_diff", "network_metadata", "pcap"],
+        }
+        run_context = {
+            "run_id": "secure-smoke",
+            "tenant_slug": "secure-smoke-private",
+            "analyst_name": "Secure Smoke",
+            "launch_mode": "execute",
+            "recipe_content": revision_content,
+            "provider": "lima",
+        }
+        result = provider.launch(
+            revision_content=revision_content,
+            run_context=run_context,
         )
-        tenant = auth.resolve_private_tenant(token_data=None, tenant_id=onboard["tenant"]["id"])
-        session.add(
-            Asset(
-                tenant_id=tenant.id,
-                name="secure-smoke-api",
-                asset_type="application",
-                environment="production",
-                criticality="high",
-                business_criticality="high",
-                installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
-            )
+        provider_run_ref = result.provider_run_ref
+
+        if result.state == RunState.BLOCKED:
+            payload = {
+                "provider_run_ref": provider_run_ref,
+                "state": result.state.value,
+                "transcript": result.transcript,
+                "error": result.error,
+                "provider_readiness": result.plan.get("provider_readiness"),
+            }
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(json.dumps(payload, indent=2, sort_keys=True))
+            print(f"SKIP: secure-mode smoke blocked: {result.error or result.transcript}")
+            return 0
+        if result.state not in {RunState.RUNNING, RunState.COMPLETED}:
+            raise RuntimeError(f"secure smoke failed: state={result.state.value} transcript={result.transcript}")
+
+        provider_result = build_provider_result_dict(
+            provider_run_ref=result.provider_run_ref,
+            plan=result.plan,
+            state=result.state.value,
         )
-        session.commit()
+        evidence = []
+        for collector in instantiate_collectors(revision_content["collectors"]):
+            evidence.extend(collector.collect(run_context=run_context, provider_result=provider_result))
 
-        service = SheshnaagService(session)
-        candidate = service.list_candidates(tenant, limit=1)["items"][0]
-        recipe = service.create_recipe(
-            tenant,
-            candidate_id=candidate["id"],
-            name="Secure mode smoke recipe",
-            objective="Verify secure-mode Lima lifecycle and secure collector packaging.",
-            created_by="Secure Smoke",
-            content={
-                "provider": "lima",
-                "image_profile": "secure_lima",
-                "execution_policy": {"secure_mode_required": True},
-                "command": ["bash", "-lc", "echo secure-smoke > /workspace/secure-smoke.txt && sleep 3"],
-                "network_policy": {"allow_egress_hosts": []},
-                "collectors": ["process_tree", "pcap"],
-            },
-        )
-        service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
-        run = service.launch_run(
-            tenant,
-            recipe_id=recipe["id"],
-            revision_number=1,
-            analyst_name="Secure Smoke",
-            workstation={"hostname": "secure-smoke", "os_family": "macOS", "architecture": "arm64", "fingerprint": "secure-smoke-fp"},
-            launch_mode="execute",
-            acknowledge_sensitive=False,
-        )
+        kinds = {row["artifact_kind"] for row in evidence}
+        expected = {"process_tree", "file_diff", "network_metadata", "pcap"}
+        missing = sorted(expected - kinds)
+        if missing:
+            raise RuntimeError(f"secure smoke missing evidence kinds: {missing}")
 
-        if run["provider"] != "lima":
-            raise RuntimeError(f"secure smoke launched unexpected provider: {run['provider']}")
-        if run["state"] not in {"running", "completed", "blocked"}:
-            raise RuntimeError(f"secure smoke failed: state={run['state']} transcript={run.get('run_transcript')}")
-
-        evidence = service.list_evidence(tenant, run_id=run["id"])
-        pcap_rows = [row for row in evidence["items"] if row["artifact_kind"] == "pcap"]
-        if run["state"] != "blocked" and not pcap_rows:
-            raise RuntimeError("secure smoke captured no pcap evidence row")
-
-        manifest = run.get("manifest") or {}
-        secure_audit = manifest.get("secure_mode_audit") or {}
+        secure_audit = result.plan.get("secure_mode_audit") or {}
         execute_result = secure_audit.get("execute_result") or {}
-        if run["state"] != "blocked":
-            if not execute_result:
-                raise RuntimeError("secure smoke missing execute_result audit")
-            if execute_result.get("exit_code") != 0:
-                raise RuntimeError(f"secure smoke guest command failed: {execute_result}")
-            lifecycle = secure_audit.get("lifecycle") or []
-            if not any(item.get("event") == "booted" for item in lifecycle):
-                raise RuntimeError("secure smoke missing boot lifecycle audit")
-            if not any(item.get("event") == "executed" for item in lifecycle):
-                raise RuntimeError("secure smoke missing execute lifecycle audit")
+        if not execute_result:
+            raise RuntimeError("secure smoke missing execute_result audit")
+        if execute_result.get("exit_code") != 0:
+            raise RuntimeError(f"secure smoke guest command failed: {execute_result}")
+        lifecycle = secure_audit.get("lifecycle") or []
+        if not any(item.get("event") == "booted" for item in lifecycle):
+            raise RuntimeError("secure smoke missing boot lifecycle audit")
+        if not any(item.get("event") == "executed" for item in lifecycle):
+            raise RuntimeError("secure smoke missing execute lifecycle audit")
 
-        destroyed = service.destroy_run(tenant, run_id=run["id"])
-        destroyed_manifest = destroyed.get("manifest") or {}
-        destroyed_audit = destroyed_manifest.get("secure_mode_audit") or {}
-        if destroyed["state"] != "destroyed":
-            raise RuntimeError(f"secure smoke destroy failed: {destroyed['state']}")
+        destroyed_ref = provider_run_ref
+        destroyed = provider.destroy(provider_run_ref=destroyed_ref)
+        provider_run_ref = ""
+        destroyed_audit = destroyed.plan.get("secure_mode_audit") or {}
+        if destroyed.state != RunState.DESTROYED:
+            raise RuntimeError(f"secure smoke destroy failed: {destroyed.state.value}")
         if not any(item.get("event") in {"deleted", "teardown"} for item in (destroyed_audit.get("lifecycle") or [])):
             raise RuntimeError("secure smoke missing teardown/delete lifecycle audit")
 
         payload = {
-            "run_id": run["id"],
-            "initial_state": run["state"],
-            "destroyed_state": destroyed["state"],
-            "pcap_rows": len(pcap_rows),
+            "provider_run_ref": destroyed_ref,
+            "initial_state": result.state.value,
+            "destroyed_state": destroyed.state.value,
+            "evidence_kinds": sorted(kinds),
             "secure_mode_audit": destroyed_audit,
             "execute_result": execute_result,
         }
@@ -148,10 +131,14 @@ def main() -> int:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(payload, indent=2, sort_keys=True))
 
-        print(f"PASS: secure-mode smoke run #{run['id']} finished in state {destroyed['state']}.")
+        print(f"PASS: secure-mode smoke {destroyed_ref} finished in state {destroyed.state.value}.")
         return 0
     finally:
-        session.close()
+        if provider_run_ref:
+            try:
+                provider.destroy(provider_run_ref=provider_run_ref)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

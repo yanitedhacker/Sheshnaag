@@ -14,7 +14,7 @@ from app.lab.collectors.common import (
     truncate_text,
     utc_iso,
 )
-from app.lab.collectors.runtime import is_executable_guest_context, resolve_container_id, run_in_container
+from app.lab.collectors.runtime import guest_transport, is_executable_guest_context, run_in_guest
 
 MAX_OUTPUT_BYTES = 512_000
 
@@ -35,11 +35,10 @@ class ProcessTreeCollector(Collector):
                     collector_version=self.collector_version,
                 )
             ]
-        cid = resolve_container_id(provider_result)
-        assert cid
         started = utc_iso()
-        code, out, err = run_in_container(
-            cid,
+        transport = guest_transport(provider_result)
+        code, out, err = run_in_guest(
+            provider_result,
             [
                 "sh",
                 "-c",
@@ -86,6 +85,7 @@ class ProcessTreeCollector(Collector):
         payload = {
             "collector": self.collector_name,
             "mode": "live",
+            "transport": transport,
             "processes": rows,
             "truncated": trunc,
             "stderr": (err or "")[:2000],
