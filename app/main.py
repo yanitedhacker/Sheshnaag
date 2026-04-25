@@ -130,6 +130,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # Always advertise Origin-dependent caching so shared caches don't
+        # serve a CORS-allowed response to a request from a denied origin.
+        # CORSMiddleware only sets this when the origin matches the allowlist.
+        existing_vary = response.headers.get("Vary", "")
+        vary_parts = [p.strip() for p in existing_vary.split(",") if p.strip()]
+        if "Origin" not in vary_parts:
+            vary_parts.append("Origin")
+            response.headers["Vary"] = ", ".join(vary_parts)
 
         # HSTS header (only in production with HTTPS)
         if settings.environment == "production":
@@ -176,18 +184,32 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class MetricsAuthMiddleware(BaseHTTPMiddleware):
-    """Protect /metrics endpoint when enabled."""
+    """Protect /metrics endpoint when enabled.
+
+    Live pentest finding: /metrics was reachable unauthenticated in staging
+    because metrics_require_auth defaults to False. Prometheus scrape data
+    leaks process internals (gc counters, request paths via labels). We now
+    enforce auth in any non-development environment regardless of the flag,
+    so the only way to expose /metrics openly is to explicitly run with
+    ENVIRONMENT=development.
+    """
 
     async def dispatch(self, request: Request, call_next):
-        if settings.metrics_enabled and settings.metrics_require_auth and request.url.path == "/metrics":
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer "):
-                return JSONResponse(status_code=401, content={"detail": "Authentication required"})
-            token = auth_header.split(" ", 1)[1].strip()
-            try:
-                decode_token(token)
-            except HTTPException as exc:
-                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        if (
+            settings.metrics_enabled
+            and request.url.path in {"/metrics", "/metrics/"}
+        ):
+            env = (settings.environment or "development").lower()
+            require_auth = settings.metrics_require_auth or env != "development"
+            if require_auth:
+                auth_header = request.headers.get("Authorization", "")
+                if not auth_header.startswith("Bearer "):
+                    return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+                token = auth_header.split(" ", 1)[1].strip()
+                try:
+                    decode_token(token)
+                except HTTPException as exc:
+                    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
         return await call_next(request)
 
@@ -266,8 +288,13 @@ app = FastAPI(
     """,
     version=settings.app_version,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    # Live pentest finding: /docs and /openapi.json fully enumerate the
+    # route surface (paths, schemas, auth requirements). Useful for
+    # development discovery, but a recon win for an attacker on a deployed
+    # box. Only expose them under ENVIRONMENT=development.
+    docs_url="/docs" if (settings.environment or "development").lower() == "development" else None,
+    redoc_url="/redoc" if (settings.environment or "development").lower() == "development" else None,
+    openapi_url="/openapi.json" if (settings.environment or "development").lower() == "development" else None,
 )
 
 # Wire OpenTelemetry tracing when an exporter endpoint is configured.
