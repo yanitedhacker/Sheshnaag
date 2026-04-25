@@ -51,6 +51,7 @@ from app.api.routes import (
     hunt_router,
     brief_router,
     stix_export_router,
+    similarity_router,
     patch_router,
     policy_router,
     prevention_router,
@@ -365,6 +366,7 @@ app.include_router(autonomous_router)
 app.include_router(hunt_router)
 app.include_router(brief_router)
 app.include_router(stix_export_router)
+app.include_router(similarity_router)
 app.include_router(evidence_router)
 app.include_router(artifact_router)
 app.include_router(provenance_router)
