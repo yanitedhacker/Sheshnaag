@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     signing_key_backend: str = "local-file"
     signing_key_backup_dir: Optional[str] = None
     release_metadata_dir: str = "./data/release_metadata"
+    sheshnaag_audit_signer: str = "hmac"
+
+    # V4 beta runtime gates
+    object_store_backend: str = "filesystem"
+    otel_exporter_otlp_endpoint: Optional[str] = None
+    sheshnaag_require_beta_health: bool = False
 
     # External APIs
     nvd_api_key: Optional[str] = None
@@ -141,11 +147,20 @@ class Settings(BaseSettings):
             if "sqlite" in self.database_url.lower():
                 errors.append("SQLite should not be used in production")
 
-        if self.deployment_profile in {"shared_server", "release_verification"}:
+        beta_profiles = {"design_partner_beta", "full_v4_beta", "release_verification"}
+        if self.deployment_profile in {"shared_server", *beta_profiles}:
             if self.signing_key_dir.startswith("/tmp"):
-                errors.append("SIGNING_KEY_DIR must not use /tmp for shared_server or release_verification profiles")
+                errors.append("SIGNING_KEY_DIR must not use /tmp for shared_server or beta/release profiles")
             if self.signing_key_backend not in {"local-file", "mounted-secret"}:
                 errors.append("SIGNING_KEY_BACKEND must be 'local-file' or 'mounted-secret'")
+
+        if self.deployment_profile in beta_profiles or self.sheshnaag_require_beta_health:
+            if self.sheshnaag_audit_signer.strip().lower() != "cosign":
+                errors.append("SHESHNAAG_AUDIT_SIGNER must be 'cosign' for beta/release profiles")
+            if self.object_store_backend.strip().lower() != "minio":
+                errors.append("OBJECT_STORE_BACKEND must be 'minio' for beta/release profiles")
+            if not self.otel_exporter_otlp_endpoint:
+                errors.append("OTEL_EXPORTER_OTLP_ENDPOINT must be set for beta/release profiles")
 
         return errors
 

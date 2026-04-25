@@ -164,6 +164,8 @@ order:
   — upgrade an existing V3 deployment, including the MinIO migration step.
 - [`docs/SHESHNAAG_V4_BETA_OPERATOR_RUNBOOK.md`](docs/SHESHNAAG_V4_BETA_OPERATOR_RUNBOOK.md)
   — daily checklist, on-call playbooks, escalation, backup cadence.
+- [`docs/SHESHNAAG_V4_DESIGN_PARTNER_BETA_RUNBOOK.md`](docs/SHESHNAAG_V4_DESIGN_PARTNER_BETA_RUNBOOK.md)
+  — full V4 PRD beta launch checklist for restricted design-partner cohorts.
 - [`docs/SHESHNAAG_V4_TROUBLESHOOTING.md`](docs/SHESHNAAG_V4_TROUBLESHOOTING.md)
   — symptom-to-cause table for the most common V4 failure modes.
 - [`docs/LOG_SCHEMA.md`](docs/LOG_SCHEMA.md) — structured JSON log

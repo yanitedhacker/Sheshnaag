@@ -1,7 +1,7 @@
 # Sheshnaag V4 Beta Gap Closure
 
 **Audience:** senior engineers taking Sheshnaag V4 from current working tree to beta.
-**Status:** refreshed after Pass 3 — all previously open code/docs gaps now have a deliverable; the remaining items are infrastructure (Sigstore install, Linux KVM host, MinIO cluster) that must be wired in the production environment.
+**Status:** refreshed for the full V4 PRD design-partner beta bar. The narrow V4 infrastructure beta is close, but the full PRD beta still has hard launch blockers until the proof artifacts in §7 are captured.
 **Last refreshed:** 2026-04-25
 **Companion docs:** `SHESHNAAG_V4_PRD.md`, `SHESHNAAG_V4_ARCHITECTURE.md`, `SHESHNAAG_V4_ROADMAP.md`, `SHESHNAAG_V4_CAPABILITY_POLICY.md`, `SHESHNAAG_V4_DEPLOYMENT.md`, `SHESHNAAG_V3_TO_V4_UPGRADE.md`, `SHESHNAAG_V4_BETA_OPERATOR_RUNBOOK.md`, `SHESHNAAG_V4_TROUBLESHOOTING.md`, `LOG_SCHEMA.md`.
 
@@ -9,7 +9,7 @@
 
 ## 0. How to read this document
 
-This file is the live gap ledger. Items marked **Done** are represented in the working tree and exercised by tests. Items marked **Done (infra-pending)** have full code + docs deliverables but require an operator to wire the matching infrastructure (Sigstore identity, Linux KVM host, MinIO cluster, OTel collector). Items marked **Partial** are usable but still have a follow-up.
+This file is the live gap ledger. Items marked **Done** are represented in the working tree and exercised by tests. Items marked **Done (infra-pending)** have full code + docs deliverables but require an operator to wire the matching infrastructure (Sigstore identity, Linux KVM host, MinIO cluster, OTel collector). Items marked **PRD-blocked** are required for the full V4 PRD beta bar and must have proof artifacts before design-partner access opens.
 
 Ground rule: do not rewrite green behavior. Existing tests are the canary. If a change makes a previously green lane fail, treat it as a regression unless this document explicitly calls out the failure.
 
@@ -19,15 +19,15 @@ Ground rule: do not rewrite green behavior. Existing tests are the canary. If a 
 
 | Gate | Status | Check |
 |---|---:|---|
-| **G1. Feature completeness** | Done (infra-pending) | Authorization, ATT&CK, Run SSE, CapabilityGate, CaseGraph, AISidebar, GroundingInspector, Autonomous Agent all ship. Real detonation needs a hardened host. |
+| **G1. Feature completeness** | PRD-blocked | The narrowed beta surfaces ship, but full PRD beta additionally requires behavior similarity, detection copilot, NL hunt/briefs, live provider proof, and durable autonomous-agent report approval. |
 | **G2. Analyst can drive the system without a Python REPL** | Done | Authorization Center, Run Console SSE, ATT&CK Coverage, Case Graph, Autonomous Agent, AI sidebar / grounding inspector are all in the operator UI. |
-| **G3. One real end-to-end detonation has succeeded** | Done (infra-pending) | `tests/e2e/test_real_detonation.sh` ships and is documented; an operator must run it on a Linux KVM host with the dependency installer applied. |
+| **G3. One real end-to-end detonation has succeeded** | PRD-blocked | `tests/e2e/test_real_detonation.sh` ships; a real Linux/KVM run must pass and be archived before beta. |
 | **G4. V3 to V4 upgrade is documented and scripted** | Done | `docs/SHESHNAAG_V3_TO_V4_UPGRADE.md` + `scripts/v4/upgrade_from_v3.sh` cover migrations, MinIO migration, smoke. |
-| **G5. Ops hardening minimum met** | Done (infra-pending) | MinIO quarantine, Sigstore CosignSigner with Rekor anchor, structured JSON logs, OpenTelemetry hook, supervised sandbox process pool, ops health endpoint with all dependencies. Sigstore + OTel exporter + MinIO cluster need to be provisioned in production. |
+| **G5. Ops hardening minimum met** | PRD-blocked | Docker Compose must pass with MinIO, Redis, Postgres+pgvector, OTel collector, cosign/Sigstore, and `/api/v4/ops/health beta.status=ok`. |
 | **G6. Known V3 regression fixed** | Done | `tests/integration/test_malware_lab_routes.py` setup commits seeded recipe data. |
-| **G7. Autonomous Analyst Agent ships** | Done | `app/services/autonomous_agent.py`, `app/api/routes/autonomous_routes.py`, `frontend/src/pages/AutonomousAgentPage.tsx` are wired and gated by the `autonomous_agent_run` capability. |
+| **G7. Autonomous Analyst Agent ships** | PRD-blocked | Current agent UI/API exists; full beta requires durable persisted runs, reviewer approval, report generation, and a cosign-verifiable chain-of-custody manifest. |
 
-Deferred to GA: behavior-embedding similarity, detection copilot, NL hunt and scheduled briefs, multi-host orchestration.
+No full-PRD feature is deferred from this design-partner beta. Multi-host orchestration remains V5.
 
 ---
 
@@ -60,12 +60,19 @@ Deferred to GA: behavior-embedding similarity, detection copilot, NL hunt and sc
 ### Partial
 
 - Sandbox-worker process pool — supervised mode is implemented; production load validation should still happen on the target host before opening the cohort.
-- Detection validator and YARA live scanner remain post-beta.
-- Behavior-embedding similarity remains GA, not beta.
+- Detection validator and YARA live scanner are beta-blocking for the full V4 PRD bar.
+- Behavior-embedding similarity and variant diff are beta-blocking for the full V4 PRD bar.
+- NL hunt and scheduled briefs are beta-blocking for the full V4 PRD bar.
+- Autonomous Agent run storage is process-local today; durable replay, reviewer approval, report generation, and cosign manifest proof remain beta-blocking.
 
 ### Open
 
-(empty — all previously open items either Done or Done (infra-pending))
+- Archive `tests/e2e/test_real_detonation.sh` output from the target Linux/KVM host.
+- Archive the AI provider proof matrix for Anthropic, OpenAI, Gemini, Azure OpenAI, Bedrock, and local Ollama/vLLM.
+- Replace remaining AI tool registry stubs with service-backed implementations or produce proof that each tool reaches the relevant service.
+- Persist TAXII ingest/status data instead of using process-local stores.
+- Ship behavior similarity / variant diff, Detection Copilot, and NL Hunt / scheduled briefs.
+- Run `scripts/sheshnaag_beta_acceptance.py` and resolve every blocker it reports.
 
 ---
 

@@ -50,8 +50,7 @@ passlib>=1.7.4
 argon2-cffi>=23.1.0
 bcrypt>=4.0.1,<5.0.0
 cryptography>=42
-# sigstore is optional (used only when SHESHNAAG_AUDIT_SIGNER=cosign):
-# pip install 'sigstore>=3.0'
+sigstore>=3.0
 
 # ===========================================
 # Caching & Queues
@@ -61,8 +60,7 @@ redis>=5.0.0
 # ===========================================
 # Object Storage (V4 quarantine)
 # ===========================================
-# minio is optional; activate via OBJECT_STORE_BACKEND=minio.
-# pip install 'minio>=7.2'
+minio>=7.2
 
 # ===========================================
 # Monitoring & Utilities
@@ -72,12 +70,15 @@ structlog>=24.1.0
 apscheduler>=3.10.4
 alembic>=1.13.2
 ortools>=9.10.4067
-# OpenTelemetry is optional; activate by setting OTEL_EXPORTER_OTLP_ENDPOINT.
-# pip install 'opentelemetry-sdk>=1.27' 'opentelemetry-exporter-otlp-proto-http>=1.27' \
-#   'opentelemetry-instrumentation-fastapi>=0.48b0' \
-#   'opentelemetry-instrumentation-sqlalchemy>=0.48b0' \
-#   'opentelemetry-instrumentation-redis>=0.48b0' \
-#   'opentelemetry-instrumentation-requests>=0.48b0'
+stix2>=3.0.1
+volatility3>=2.7.0
+yara-python>=4.5.0
+opentelemetry-sdk>=1.27
+opentelemetry-exporter-otlp-proto-http>=1.27
+opentelemetry-instrumentation-fastapi>=0.48b0
+opentelemetry-instrumentation-sqlalchemy>=0.48b0
+opentelemetry-instrumentation-redis>=0.48b0
+opentelemetry-instrumentation-requests>=0.48b0
 
 # ===========================================
 # AI Providers (V4 native adapters)

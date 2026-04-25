@@ -5,7 +5,8 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 # Set work directory
 WORKDIR /app
@@ -14,7 +15,19 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    libmagic1 \
+    libpcap0.8 \
     curl \
+    dnsmasq \
+    git \
+    iproute2 \
+    iptables \
+    jq \
+    nftables \
+    qemu-utils \
+    tcpdump \
+    tshark \
+    yara \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --project tsconfig.json --noEmit && vite build",
-    "smoke:routes": "python ../scripts/sheshnaag_frontend_smoke.py",
+    "smoke:routes": "python3 ../scripts/sheshnaag_frontend_smoke.py",
     "preview": "vite preview"
   },
   "dependencies": {

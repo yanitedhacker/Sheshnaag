@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ===========================================
 # Project Sheshnaag - Small-Team Server Topology
 # ===========================================
@@ -10,7 +8,7 @@ version: '3.8'
 services:
   # PostgreSQL Database
   db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: sheshnaag-db
     environment:
       # Use environment variables for credentials
@@ -21,7 +19,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     # Port not exposed to host - access via internal network only
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cve_radar}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sheshnaag} -d ${POSTGRES_DB:-sheshnaag}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -115,6 +113,8 @@ services:
       LOG_JSON: ${LOG_JSON:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-sheshnaag-api}
+      SHESHNAAG_REQUIRE_BETA_HEALTH: ${SHESHNAAG_REQUIRE_BETA_HEALTH:-false}
+      SHESHNAAG_EGRESS_ENFORCE: ${SHESHNAAG_EGRESS_ENFORCE:-0}
 
       # Audit signing (set to "cosign" with sigstore installed in production)
       SHESHNAAG_AUDIT_SIGNER: ${SHESHNAAG_AUDIT_SIGNER:-hmac}
@@ -127,10 +127,12 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     volumes:
       - model_data:/app/models
       - ./data:/app/data
-      - ${SIGNING_KEY_DIR}:${SIGNING_KEY_DIR}
+      - ./data/signing_keys:${SIGNING_KEY_DIR}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -168,7 +170,10 @@ services:
       MINIO_SECURE: ${MINIO_SECURE:-false}
       LOG_JSON: ${LOG_JSON:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-sheshnaag-worker}
+      OTEL_SERVICE_NAME: ${OTEL_WORKER_SERVICE_NAME:-sheshnaag-worker}
+      SHESHNAAG_AUDIT_SIGNER: ${SHESHNAAG_AUDIT_SIGNER:-hmac}
+      SHESHNAAG_REQUIRE_BETA_HEALTH: ${SHESHNAAG_REQUIRE_BETA_HEALTH:-false}
+      SHESHNAAG_EGRESS_ENFORCE: ${SHESHNAAG_EGRESS_ENFORCE:-0}
       SHESHNAAG_SANDBOX_WORKER_CONCURRENCY: ${SHESHNAAG_SANDBOX_WORKER_CONCURRENCY:-2}
     depends_on:
       db:
@@ -177,10 +182,12 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     volumes:
       - model_data:/app/models
       - ./data:/app/data
-      - ${SIGNING_KEY_DIR}:${SIGNING_KEY_DIR}
+      - ./data/signing_keys:${SIGNING_KEY_DIR}
     networks:
       - sheshnaag-network
     restart: unless-stopped
@@ -211,6 +218,19 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+    networks:
+      - sheshnaag-network
+    restart: unless-stopped
+
+  # OpenTelemetry collector for beta trace export.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.99.0
+    container_name: sheshnaag-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
     networks:
       - sheshnaag-network
     restart: unless-stopped

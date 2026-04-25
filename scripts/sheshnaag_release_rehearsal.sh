@@ -3,18 +3,19 @@ set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 
 declare -a STEPS=(
-  "Environment metadata [deployment]|python scripts/sheshnaag_release_metadata.py"
-  "Backend smoke [runtime-execution]|python scripts/sheshnaag_api_smoke.py"
-  "Frontend route smoke [deployment]|python scripts/sheshnaag_frontend_smoke.py"
-  "Targeted pytest [integration]|PYTHONPATH=. RUN_INTEGRATION_TESTS=1 pytest -q tests/unit/test_recipe_schema.py tests/unit/test_sheshnaag_service.py tests/unit/test_collectors_framework.py tests/unit/test_sheshnaag_parity.py tests/integration/test_lab_lifecycle.py tests/integration/test_evidence_collectors.py tests/integration/test_provenance_and_disclosure_routes.py"
+  "Environment metadata [deployment]|${PYTHON_BIN} scripts/sheshnaag_release_metadata.py"
+  "Backend smoke [runtime-execution]|${PYTHON_BIN} scripts/sheshnaag_api_smoke.py"
+  "Frontend route smoke [deployment]|${PYTHON_BIN} scripts/sheshnaag_frontend_smoke.py"
+  "Targeted pytest [integration]|PYTHONPATH=. RUN_INTEGRATION_TESTS=1 ${PYTHON_BIN} -m pytest -q tests/unit/test_recipe_schema.py tests/unit/test_sheshnaag_service.py tests/unit/test_collectors_framework.py tests/unit/test_sheshnaag_parity.py tests/integration/test_lab_lifecycle.py tests/integration/test_evidence_collectors.py tests/integration/test_provenance_and_disclosure_routes.py"
   "Build osquery image [image]|bash scripts/build_sheshnaag_osquery_image.sh"
   "Build Tracee image [image]|bash scripts/build_sheshnaag_tracee_image.sh"
-  "Execute smoke [runtime-execution]|python scripts/sheshnaag_execute_smoke.py"
-  "osquery smoke [runtime-execution]|python scripts/sheshnaag_osquery_smoke.py"
-  "Tracee smoke [runtime-execution]|python scripts/sheshnaag_tracee_smoke.py"
-  "Secure-mode smoke [secure-mode]|python scripts/sheshnaag_secure_mode_smoke.py"
+  "Execute smoke [runtime-execution]|${PYTHON_BIN} scripts/sheshnaag_execute_smoke.py"
+  "osquery smoke [runtime-execution]|${PYTHON_BIN} scripts/sheshnaag_osquery_smoke.py"
+  "Tracee smoke [runtime-execution]|${PYTHON_BIN} scripts/sheshnaag_tracee_smoke.py"
+  "Secure-mode smoke [secure-mode]|${PYTHON_BIN} scripts/sheshnaag_secure_mode_smoke.py"
   "Frontend build [deployment]|npm --prefix frontend run build"
 )
 

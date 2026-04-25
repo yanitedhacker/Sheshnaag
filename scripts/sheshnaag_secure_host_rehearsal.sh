@@ -7,15 +7,16 @@ cd "$ROOT_DIR"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ARCHIVE_DIR="${SHESHNAAG_RELEASE_ARCHIVE_DIR:-/tmp/sheshnaag-release-host-lane/${STAMP}}"
 mkdir -p "$ARCHIVE_DIR"
+PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 
 declare -a STEPS=(
-  "Release metadata|python scripts/sheshnaag_release_metadata.py --output ${ARCHIVE_DIR}/release-metadata.json"
-  "Migration rehearsal|python scripts/sheshnaag_migration_rehearsal.py --output ${ARCHIVE_DIR}/migration-rehearsal.json"
-  "Execute smoke|python scripts/sheshnaag_execute_smoke.py"
-  "osquery smoke|python scripts/sheshnaag_osquery_smoke.py"
-  "Tracee smoke|python scripts/sheshnaag_tracee_smoke.py"
-  "Secure-mode smoke|python scripts/sheshnaag_secure_mode_smoke.py --output ${ARCHIVE_DIR}/secure-mode-smoke.json"
-  "Frontend route smoke|python scripts/sheshnaag_frontend_smoke.py"
+  "Release metadata|${PYTHON_BIN} scripts/sheshnaag_release_metadata.py --output ${ARCHIVE_DIR}/release-metadata.json"
+  "Migration rehearsal|${PYTHON_BIN} scripts/sheshnaag_migration_rehearsal.py --output ${ARCHIVE_DIR}/migration-rehearsal.json"
+  "Execute smoke|${PYTHON_BIN} scripts/sheshnaag_execute_smoke.py"
+  "osquery smoke|${PYTHON_BIN} scripts/sheshnaag_osquery_smoke.py"
+  "Tracee smoke|${PYTHON_BIN} scripts/sheshnaag_tracee_smoke.py"
+  "Secure-mode smoke|${PYTHON_BIN} scripts/sheshnaag_secure_mode_smoke.py --output ${ARCHIVE_DIR}/secure-mode-smoke.json"
+  "Frontend route smoke|${PYTHON_BIN} scripts/sheshnaag_frontend_smoke.py"
   "Frontend build|npm --prefix frontend run build"
 )
 

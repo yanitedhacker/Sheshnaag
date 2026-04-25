@@ -28,10 +28,13 @@ artifact before any byte leaves the building.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path as FsPath
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request, status
@@ -52,15 +55,39 @@ TAXII_SPEC_VERSION = "2.1"
 
 router = APIRouter(prefix="/taxii2", tags=["Sheshnaag V4 TAXII 2.1"])
 
-# In-process ephemeral store for POST-ingested bundles. A production
-# deployment would persist these into the domain model; for Slice 3 of V4
-# we hold the objects in memory so the server round-trips correctly and
-# operators can validate the wire shape end-to-end. The key is the
-# collection_id, the value is a dict keyed by STIX object id.
+# File-backed store for POST-ingested bundles/status reports. It keeps TAXII
+# round-trips durable across API restarts without introducing another table
+# migration in the beta cleanup lane. The key is collection_id; values are
+# keyed by STIX object/status ID.
+_STORE_PATH = FsPath(os.getenv("SHESHNAAG_TAXII_STORE_PATH", "./data/taxii_ingest_store.json"))
 _INGEST_STORE: Dict[str, Dict[str, Dict[str, Any]]] = {}
-
-# In-process Status registry for POST operations so clients can follow up.
 _STATUS_STORE: Dict[str, Dict[str, Any]] = {}
+_STORE_LOADED = False
+
+
+def _load_store() -> None:
+    global _STORE_LOADED, _INGEST_STORE, _STATUS_STORE
+    if _STORE_LOADED:
+        return
+    _STORE_LOADED = True
+    try:
+        if _STORE_PATH.exists():
+            raw = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+            _INGEST_STORE = dict(raw.get("objects") or {})
+            _STATUS_STORE = dict(raw.get("statuses") or {})
+    except Exception:
+        logger.warning("Failed to load TAXII ingest store from %s", _STORE_PATH, exc_info=True)
+
+
+def _save_store() -> None:
+    try:
+        _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _STORE_PATH.write_text(
+            json.dumps({"objects": _INGEST_STORE, "statuses": _STATUS_STORE}, sort_keys=True),
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.warning("Failed to persist TAXII ingest store to %s", _STORE_PATH, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +194,7 @@ def _collect_tenant_objects(session: Session, tenant: Tenant, label: str) -> Lis
     listing and fetch-by-id.
     """
 
+    _load_store()
     exporter = StixExporter(session)
     seen_ids: set[str] = set()
     aggregated: List[Dict[str, Any]] = []
@@ -411,6 +439,7 @@ def add_objects(
     if tenant is None or label is None:
         raise HTTPException(status_code=404, detail=f"collection_not_found: {collection_id}")
 
+    _load_store()
     objects = body.get("objects")
     if not isinstance(objects, list):
         raise HTTPException(status_code=422, detail="envelope must contain 'objects' array")
@@ -475,6 +504,7 @@ def add_objects(
         "pendings": pending,
     }
     _STATUS_STORE[status_id] = report
+    _save_store()
     return _taxii_json(report, status_code=202)
 
 
