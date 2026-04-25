@@ -14,7 +14,7 @@ from app.lab.collectors.common import (
     truncate_text,
     utc_iso,
 )
-from app.lab.collectors.runtime import is_executable_guest_context, resolve_container_id, run_in_container
+from app.lab.collectors.runtime import guest_transport, is_executable_guest_context, run_in_guest
 
 MAX_OUTPUT_BYTES = 400_000
 MAX_FILES = 8000
@@ -36,16 +36,15 @@ class FileDiffCollector(Collector):
                     collector_version=self.collector_version,
                 )
             ]
-        cid = resolve_container_id(provider_result)
-        assert cid
         plan = provider_result.get("plan") or {}
         workdir = plan.get("workdir") or "/workspace"
         started = utc_iso()
+        transport = guest_transport(provider_result)
         inner = (
             f"find {workdir} -xdev -type f 2>/dev/null | "
             f"head -n {MAX_FILES + 1} | sort"
         )
-        code, out, err = run_in_container(cid, ["sh", "-c", inner], timeout_sec=120)
+        code, out, err = run_in_guest(provider_result, ["sh", "-c", inner], timeout_sec=120)
         ended = utc_iso()
         if code != 0 and not out.strip():
             return [
@@ -84,6 +83,7 @@ class FileDiffCollector(Collector):
         payload = {
             "collector": self.collector_name,
             "mode": "live",
+            "transport": transport,
             "workdir": workdir,
             "paths": paths,
             "path_count": len(paths),
