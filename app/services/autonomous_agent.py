@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.core.event_bus import EventBus, run_event_stream
 from app.core.time import utc_now
 from app.models.malware_lab import AnalysisCase, BehaviorFinding, IndicatorArtifact
+from app.models.sheshnaag import AutonomousAgentRun
 from app.models.v2 import Tenant
 from app.services.ai_provider_harness import AIProviderHarness
 
@@ -84,7 +85,10 @@ class AutonomousAgent:
         self.session = session
         self.ai = ai or AIProviderHarness()
         self._bus = event_bus
-        self._runs: List[AgentRun] = []  # in-memory log; mirrored in event bus
+        # Runs are now persisted in the autonomous_agent_runs table; we keep
+        # a per-instance cache of the most recently produced runs so the API
+        # can return them even if a flush failed mid-request.
+        self._recent: List[AgentRun] = []
 
     @property
     def bus(self) -> EventBus:
@@ -186,7 +190,7 @@ class AutonomousAgent:
 
         if denial and not denial.startswith("policy_unavailable"):
             run = AgentRun(run_id=run_id, goal=goal, status="denied", reason=denial, steps=[], final_summary="")
-            self._runs.append(run)
+            self._persist(tenant=tenant, run=run, actor=actor, case_id=case_id)
             return run
 
         max_steps = max_steps or self.DEFAULT_MAX_STEPS
@@ -242,7 +246,7 @@ class AutonomousAgent:
             steps=steps,
             final_summary=synthesis["summary"],
         )
-        self._runs.append(run)
+        self._persist(tenant=tenant, run=run, actor=actor, case_id=case_id)
         self._publish(run_id, "agent_done", {"summary": synthesis["summary"]})
         return run
 
@@ -307,10 +311,85 @@ class AutonomousAgent:
             logger.warning("autonomous synthesis failed: %s", exc)
             return deterministic
 
+    # ------------------------------------------------------------- persistence
+
+    def _persist(
+        self,
+        *,
+        tenant: Tenant,
+        run: AgentRun,
+        actor: str,
+        case_id: Optional[int],
+    ) -> None:
+        """Insert the run into autonomous_agent_runs and cache it locally."""
+
+        self._recent.append(run)
+        try:
+            row = AutonomousAgentRun(
+                tenant_id=tenant.id,
+                run_id=run.run_id,
+                goal=run.goal,
+                status=run.status,
+                reason=run.reason,
+                actor=actor,
+                case_id=case_id,
+                final_summary=run.final_summary,
+                steps=[step.__dict__ for step in run.steps],
+                completed_at=utc_now() if run.status != "denied" else None,
+            )
+            self.session.add(row)
+            self.session.flush()
+        except Exception as exc:  # pragma: no cover - persistence is best-effort
+            logger.warning("autonomous run persistence failed (run_id=%s): %s", run.run_id, exc)
+            try:
+                self.session.rollback()
+            except Exception:  # pragma: no cover
+                pass
+
     # ------------------------------------------------------------- replay log
 
-    def list_runs(self) -> List[Dict[str, Any]]:
-        return [run.to_dict() for run in self._runs]
+    def list_runs(
+        self,
+        *,
+        tenant: Optional[Tenant] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Return persisted runs, newest first.
+
+        When ``tenant`` is supplied we scope to it (the route layer should
+        always pass one); without a tenant we return the in-process recent
+        cache so legacy tests that don't seed the table still see runs they
+        just produced.
+        """
+
+        if tenant is None:
+            return [run.to_dict() for run in self._recent]
+        try:
+            rows = (
+                self.session.query(AutonomousAgentRun)
+                .filter(AutonomousAgentRun.tenant_id == tenant.id)
+                .order_by(AutonomousAgentRun.created_at.desc())
+                .limit(max(1, min(limit, 500)))
+                .all()
+            )
+        except Exception as exc:  # pragma: no cover - degraded mode
+            logger.warning("autonomous run listing failed: %s", exc)
+            return [run.to_dict() for run in self._recent]
+        return [
+            {
+                "run_id": row.run_id,
+                "goal": row.goal,
+                "status": row.status,
+                "reason": row.reason,
+                "actor": row.actor,
+                "case_id": row.case_id,
+                "final_summary": row.final_summary,
+                "steps": row.steps or [],
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+            }
+            for row in rows
+        ]
 
 
 __all__ = ["AgentRun", "AgentStep", "AutonomousAgent"]

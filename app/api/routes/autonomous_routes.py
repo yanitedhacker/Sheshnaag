@@ -79,11 +79,13 @@ def list_autonomous_runs(
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — gate only
 ):
-    resolve_tenant(
+    tenant = resolve_tenant(
         session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False
     )
     global _AGENT
     if _AGENT is None:
-        return {"items": [], "count": 0}
-    runs = _AGENT.list_runs()
+        _AGENT = AutonomousAgent(session)
+    else:
+        _AGENT.session = session
+    runs = _AGENT.list_runs(tenant=tenant)
     return {"items": runs, "count": len(runs)}

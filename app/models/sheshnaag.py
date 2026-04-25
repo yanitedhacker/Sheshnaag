@@ -535,3 +535,32 @@ class CandidateScoreRecalculationRun(Base):
     summary = Column(JSON, default=dict)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class AutonomousAgentRun(Base):
+    """Durable record of a V4 autonomous-agent ReAct run.
+
+    Replaces the prior in-memory `AutonomousAgent._runs` list so runs survive
+    process restarts and are visible across replicas. The ``steps`` column
+    stores the full AgentStep sequence (thought, tool, tool_input,
+    tool_output, citations) as JSON so reviewers can replay the trajectory
+    without joining a separate steps table.
+    """
+
+    __tablename__ = "autonomous_agent_runs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "run_id", name="uq_autonomous_agent_run_tenant_runid"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(String(120), nullable=False, index=True)
+    goal = Column(Text, nullable=False)
+    status = Column(String(40), nullable=False, index=True)  # completed | denied | failed
+    reason = Column(Text)
+    actor = Column(String(200))
+    case_id = Column(Integer, index=True)  # soft FK; case may be deleted, run history persists
+    final_summary = Column(Text)
+    steps = Column(JSON, default=list, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    completed_at = Column(DateTime)

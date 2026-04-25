@@ -265,7 +265,23 @@ class AIAgentLoop:
                 }
 
         try:
-            result = tool.callable(**args) if isinstance(args, dict) else tool.callable(args)
+            kwargs = dict(args) if isinstance(args, dict) else {}
+            if getattr(tool, "requires_context", False):
+                # Phase B: real tool implementations need DB context. Spin up a
+                # short-lived sync session for the tool call and tear it down
+                # so the loop doesn't hold a long-running DB connection across
+                # an LLM round-trip.
+                from app.core.database import SessionLocal
+
+                with SessionLocal() as session:
+                    kwargs["_context"] = {
+                        "session": session,
+                        "tenant_id": tenant_id,
+                        "actor": actor,
+                    }
+                    result = tool.callable(**kwargs)
+            else:
+                result = tool.callable(**kwargs) if isinstance(args, dict) else tool.callable(args)
         except TypeError as exc:
             return {
                 "tool_use_id": tu_id,
