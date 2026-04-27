@@ -69,7 +69,14 @@ jobs:
       - name: Route smoke
         run: python3 scripts/sheshnaag_frontend_smoke.py
       - name: Frontend build
-        run: npm --prefix frontend run build
+        run: |
+          set -o pipefail
+          mkdir -p data/release_metadata
+          npm --prefix frontend run build 2>&1 | tee data/release_metadata/frontend-build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-summary
+          path: data/release_metadata/frontend-build.log
 
   codeql:
     runs-on: ubuntu-latest
@@ -136,4 +143,11 @@ jobs:
       - name: Release rehearsal
         env:
           PYTHON_BIN: python
-        run: bash scripts/sheshnaag_release_rehearsal.sh
+        run: python scripts/sheshnaag_release_rehearsal.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-rehearsal-proof
+          path: |
+            data/release_metadata/release-metadata.json
+            data/release_metadata/maintainer-demo-assessment.json

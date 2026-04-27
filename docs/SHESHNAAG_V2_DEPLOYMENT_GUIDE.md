@@ -43,7 +43,7 @@ bash scripts/build_sheshnaag_tracee_image.sh
 Use `.env.release.example` for rehearsals and run:
 
 ```bash
-bash scripts/sheshnaag_release_rehearsal.sh
+python scripts/sheshnaag_release_rehearsal.sh
 ```
 
 The default rehearsal emits environment metadata, image verification steps, Docker-backed smokes, and frontend/build checks.
