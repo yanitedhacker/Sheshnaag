@@ -83,7 +83,7 @@ opentelemetry-instrumentation-requests>=0.48b0
 # ===========================================
 # AI Providers (V4 native adapters)
 # ===========================================
-anthropic>=0.50
+anthropic>=0.97.0
 openai>=1.50
 google-generativeai>=0.8
 boto3>=1.35
