@@ -73,7 +73,7 @@ jobs:
           set -o pipefail
           mkdir -p data/release_metadata
           npm --prefix frontend run build 2>&1 | tee data/release_metadata/frontend-build.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: frontend-build-summary
           path: data/release_metadata/frontend-build.log
@@ -115,7 +115,7 @@ jobs:
           path: .
           format: cyclonedx-json
           output-file: sheshnaag-sbom.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sheshnaag-sbom
           path: sheshnaag-sbom.cdx.json
@@ -144,7 +144,7 @@ jobs:
         env:
           PYTHON_BIN: python
         run: python scripts/sheshnaag_release_rehearsal.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: release-rehearsal-proof
