@@ -2,32 +2,138 @@ name: sheshnaag-v2
 
 on:
   push:
-    branches: ["main", "codex/**"]
+    branches: ["main", "codex/**", "yanitedhacker/**"]
   pull_request:
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
-  unit-and-integration:
+  backend-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+          cache: "pip"
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci
-      - name: Targeted verification
-        run: PYTHONPATH=. RUN_INTEGRATION_TESTS=1 pytest -q tests/unit/test_recipe_schema.py tests/unit/test_sheshnaag_service.py tests/unit/test_collectors_framework.py tests/integration/test_lab_lifecycle.py tests/integration/test_provenance_and_disclosure_routes.py
-      - name: Frontend build
-        run: npm --prefix frontend run build
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Backend unit and focused integration tests
+        run: >
+          PYTHONPATH=. RUN_INTEGRATION_TESTS=1 python -m pytest -q
+          tests/unit/test_recipe_schema.py
+          tests/unit/test_sheshnaag_service.py
+          tests/unit/test_collectors_framework.py
+          tests/unit/test_sheshnaag_parity.py
+          tests/unit/test_maintainer_assessment.py
+          tests/integration/test_lab_lifecycle.py
+          tests/integration/test_provenance_and_disclosure_routes.py
 
-  release-rehearsal:
+  dependency-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Release metadata
-        run: python scripts/sheshnaag_release_metadata.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Python dependency audit
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          python -m pip_audit -r requirements.txt
+      - name: Frontend dependency audit
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend audit --audit-level=moderate
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Route smoke
+        run: python3 scripts/sheshnaag_frontend_smoke.py
+      - name: Frontend build
+        run: npm --prefix frontend run build
+
+  codeql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python,javascript-typescript
+      - uses: github/codeql-action/analyze@v3
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -f Dockerfile -t sheshnaag-api:ci .
+      - name: Build frontend image
+        run: docker build -f Dockerfile.frontend -t sheshnaag-frontend:ci .
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sheshnaag-sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sheshnaag-sbom
+          path: sheshnaag-sbom.cdx.json
+
+  release-rehearsal:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, dependency-audit, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          pip install -r requirements.txt
+          npm --prefix frontend ci
+      - name: Release rehearsal
+        env:
+          PYTHON_BIN: python
+        run: bash scripts/sheshnaag_release_rehearsal.sh

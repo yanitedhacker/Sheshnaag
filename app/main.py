@@ -44,10 +44,12 @@ from app.api.routes import (
     intel_router,
     ledger_router,
     live_run_router,
+    maintainer_router,
     model_router,
     ops_router,
     case_graph_router,
     autonomous_router,
+    blast_radius_router,
     hunt_router,
     brief_router,
     stix_export_router,
@@ -362,6 +364,8 @@ app.include_router(capability_router)
 app.include_router(live_run_router)
 app.include_router(ops_router)
 app.include_router(case_graph_router)
+app.include_router(blast_radius_router)
+app.include_router(maintainer_router)
 app.include_router(autonomous_router)
 app.include_router(hunt_router)
 app.include_router(brief_router)

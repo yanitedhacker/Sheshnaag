@@ -14,8 +14,13 @@ from pathlib import Path
 
 import sqlalchemy as sa
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.core.database import Base
+import app.models  # noqa: F401
+from app.models.sheshnaag import MaintainerAssessment
 
 
 def create_baseline_db(path: Path) -> None:
@@ -97,46 +102,78 @@ def fetch_table_info(path: Path, table: str) -> list[dict[str, object]]:
     return [{"cid": row[0], "name": row[1], "type": row[2], "notnull": row[3], "default": row[4], "pk": row[5]} for row in rows]
 
 
+def table_exists(path: Path, table: str) -> bool:
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+    return row is not None
+
+
+def create_current_schema(path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
+
+def drop_maintainer_assessment_table(path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{path}")
+    MaintainerAssessment.__table__.drop(engine, checkfirst=True)
+    engine.dispose()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=None, help="Optional path to write the rehearsal summary JSON.")
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="sheshnaag-migration-rehearsal-") as temp_dir:
-        db_path = Path(temp_dir) / "rehearsal.sqlite3"
-        db_url = f"sqlite:///{db_path}"
-        create_baseline_db(db_path)
+        temp_root = Path(temp_dir)
 
-        upgrade = run_alembic(db_url, ["upgrade", "head"])
+        fresh_db_path = temp_root / "fresh-bootstrap.sqlite3"
+        create_current_schema(fresh_db_path)
+        fresh_maintainer_columns = fetch_table_info(fresh_db_path, "maintainer_assessments")
+
+        v4_db_path = temp_root / "v4a04-rehearsal.sqlite3"
+        v4_db_url = f"sqlite:///{v4_db_path}"
+        create_current_schema(v4_db_path)
+        drop_maintainer_assessment_table(v4_db_path)
+
+        stamp = run_alembic(v4_db_url, ["stamp", "v4a03"])
+        if stamp.returncode != 0:
+            raise RuntimeError(f"Alembic stamp failed:\nSTDOUT:\n{stamp.stdout}\nSTDERR:\n{stamp.stderr}")
+
+        upgrade = run_alembic(v4_db_url, ["upgrade", "head"])
         if upgrade.returncode != 0:
-            raise RuntimeError(f"Alembic upgrade failed:\nSTDOUT:\n{upgrade.stdout}\nSTDERR:\n{upgrade.stderr}")
+            raise RuntimeError(f"Alembic v4a04 upgrade failed:\nSTDOUT:\n{upgrade.stdout}\nSTDERR:\n{upgrade.stderr}")
 
-        advisory_columns = fetch_table_info(db_path, "advisory_records")
-        version_range_columns = fetch_table_info(db_path, "version_ranges")
-        recalc_columns = fetch_table_info(db_path, "candidate_score_recalculation_runs")
-        link_columns = fetch_table_info(db_path, "advisory_package_links")
+        maintainer_columns = fetch_table_info(v4_db_path, "maintainer_assessments")
 
-        downgrade = run_alembic(db_url, ["downgrade", "base"])
+        downgrade = run_alembic(v4_db_url, ["downgrade", "v4a03"])
         if downgrade.returncode != 0:
-            raise RuntimeError(f"Alembic downgrade failed:\nSTDOUT:\n{downgrade.stdout}\nSTDERR:\n{downgrade.stderr}")
+            raise RuntimeError(f"Alembic v4a04 downgrade failed:\nSTDOUT:\n{downgrade.stdout}\nSTDERR:\n{downgrade.stderr}")
+
+        maintainer_exists_after_downgrade = table_exists(v4_db_path, "maintainer_assessments")
 
         payload = {
-            "database_url": db_url,
+            "fresh_bootstrap_database_url": f"sqlite:///{fresh_db_path}",
+            "v4a04_rehearsal_database_url": v4_db_url,
+            "stamp_stdout": stamp.stdout,
+            "stamp_stderr": stamp.stderr,
             "upgrade_stdout": upgrade.stdout,
             "upgrade_stderr": upgrade.stderr,
             "downgrade_stdout": downgrade.stdout,
             "downgrade_stderr": downgrade.stderr,
             "validated_tables": {
-                "advisory_records": advisory_columns,
-                "version_ranges": version_range_columns,
-                "candidate_score_recalculation_runs": recalc_columns,
-                "advisory_package_links": link_columns,
+                "fresh_bootstrap_maintainer_assessments": fresh_maintainer_columns,
+                "v4a04_maintainer_assessments": maintainer_columns,
             },
             "checks": {
-                "advisory_records_has_canonical_id": any(col["name"] == "canonical_id" for col in advisory_columns),
-                "version_ranges_has_normalized_bounds": any(col["name"] == "normalized_bounds" for col in version_range_columns),
-                "recalc_runs_table_created": bool(recalc_columns),
-                "advisory_package_links_table_created": bool(link_columns),
+                "fresh_bootstrap_creates_maintainer_assessments": bool(fresh_maintainer_columns),
+                "v4a03_to_v4a04_creates_maintainer_assessments": bool(maintainer_columns),
+                "v4a04_downgrade_removes_maintainer_assessments": not maintainer_exists_after_downgrade,
+                "maintainer_assessments_has_report_id": any(col["name"] == "report_id" for col in maintainer_columns),
             },
         }
 

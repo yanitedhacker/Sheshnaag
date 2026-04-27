@@ -234,6 +234,37 @@ class RawKnowledgeSource(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class MaintainerAssessment(Base):
+    """OSS maintainer repository assessment generated from SBOM/VEX context."""
+
+    __tablename__ = "maintainer_assessments"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "repository_url",
+            "sbom_sha256",
+            "vex_sha256",
+            name="uq_maintainer_assessment_input",
+        ),
+        Index("ix_maintainer_assessments_tenant_repo", "tenant_id", "repository_url"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    repository_url = Column(Text, nullable=False)
+    repository_name = Column(String(255))
+    status = Column(String(40), nullable=False, default="completed", index=True)
+    summary = Column(JSON, default=dict, nullable=False)
+    source_refs = Column(JSON, default=list, nullable=False)
+    sbom_sha256 = Column(String(64), nullable=False, index=True)
+    vex_sha256 = Column(String(64), nullable=False, default="", index=True)
+    analysis_case_id = Column(Integer, ForeignKey("analysis_cases.id", ondelete="SET NULL"), index=True)
+    report_id = Column(Integer, ForeignKey("malware_reports.id", ondelete="SET NULL"), index=True)
+    created_by = Column(String(200), nullable=False)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
 class KnowledgeWikiPage(Base):
     """Curated wiki layer linked back to raw-source records."""
 

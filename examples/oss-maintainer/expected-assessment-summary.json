@@ -1,0 +1,19 @@
+{
+  "repository": {
+    "url": "https://github.com/example/edge-gateway",
+    "name": "edge-gateway"
+  },
+  "matched_findings_count": 1,
+  "top_findings": [
+    {
+      "cve_id": "CVE-2024-10001",
+      "package_name": "edge-gateway",
+      "status": "queued"
+    }
+  ],
+  "safety": {
+    "defensive_only": true,
+    "live_exploitation_performed": false,
+    "source": "SBOM/VEX/advisory correlation"
+  }
+}

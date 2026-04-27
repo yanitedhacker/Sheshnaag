@@ -87,6 +87,21 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
     }
     missing_proofs = [name for name, path in required_proofs.items() if not path or not Path(path).exists()]
     blockers.extend(f"missing_proof.{name}" for name in missing_proofs)
+    real_detonation_proof = required_proofs.get("real_detonation")
+    if real_detonation_proof and Path(real_detonation_proof).exists():
+        proof_text = Path(real_detonation_proof).read_text(encoding="utf-8", errors="replace")
+        required_markers = [
+            "PASS: V4 real detonation E2E completed",
+            "snapshot",
+            "egress",
+            "pcap",
+            "zeek",
+        ]
+        missing_markers = [marker for marker in required_markers if marker.lower() not in proof_text.lower()]
+        if missing_markers:
+            blockers.append("proof.real_detonation_incomplete")
+    else:
+        missing_markers = []
 
     return {
         "generated_at_epoch": int(time.time()),
@@ -104,6 +119,7 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
         "ops_health": health if health is not None else {"error": health_error},
         "required_proofs": required_proofs,
         "missing_proofs": missing_proofs,
+        "real_detonation_required_markers_missing": missing_markers,
     }
 
 

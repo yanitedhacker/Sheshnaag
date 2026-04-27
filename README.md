@@ -16,6 +16,7 @@ This repo contains Project Sheshnaag, a defensive validation platform with opera
   - `/api/provenance/*`
   - `/api/ledger/*`
   - `/api/disclosures/*`
+  - `/api/maintainer/*`
 - Constrained `docker_kali` validation provider abstraction with room for a future VM-backed provider.
 - New Sheshnaag domain models for candidates, recipes, runs, evidence, artifacts, attestations, disclosure bundles, and ledger entries.
 - React operator console for the core Sheshnaag workflows plus the product narrative and safety posture pages.
@@ -25,7 +26,7 @@ This repo contains Project Sheshnaag, a defensive validation platform with opera
 
 Sheshnaag now has a real control plane and operator surface:
 
-- live intel, candidate triage, recipe management, run orchestration, evidence listing, artifact review, provenance, ledger, and disclosure routes
+- live intel, candidate triage, recipe management, run orchestration, evidence listing, artifact review, provenance, ledger, maintainer assessment, and disclosure routes
 - signed run and bundle attestations using tenant-scoped Ed25519 keys
 - real archive export for disclosure bundles
 - a constrained Docker-backed execute path for the baseline collectors:
@@ -142,6 +143,30 @@ bash scripts/sheshnaag_secure_host_rehearsal.sh
 - `npm --prefix frontend run smoke:routes` verifies that every operator page is still wired into the route map and top-level nav.
 - `scripts/sheshnaag_release_rehearsal.sh` runs backend smoke, route smoke, targeted unit/integration pytest, the execute-mode smoke scripts, and the frontend build in one repeatable pass. Docker-backed smoke steps self-skip when Docker is unavailable.
 - `scripts/sheshnaag_secure_host_rehearsal.sh` is the dedicated release lane for a `limactl`-capable host and archives release metadata, migration rehearsal output, smoke logs, and secure-mode evidence summaries.
+
+## For OSS Maintainers
+
+Sheshnaag now includes a maintainer-focused defensive workflow for public open-source projects. It accepts maintainer-supplied SBOM/VEX context, correlates it with existing Sheshnaag advisory and candidate scoring data, and can export a safe report for release or advisory review.
+
+```bash
+python scripts/sheshnaag_maintainer.py assess \
+  --base-url http://127.0.0.1:8000 \
+  --tenant-slug <tenant-slug> \
+  --repo-url https://github.com/example/edge-gateway \
+  --sbom examples/oss-maintainer/demo-sbom.json \
+  --vex examples/oss-maintainer/demo-vex.json \
+  --export-report
+```
+
+The API surface is available under `/api/maintainer/assessments`:
+
+- `POST /api/maintainer/assessments` creates an assessment from SBOM/VEX input.
+- `GET /api/maintainer/assessments/{id}` returns a persisted assessment.
+- `POST /api/maintainer/assessments/{id}/export` creates or returns an approved report export.
+
+The demo corpus in `examples/oss-maintainer/` is synthetic and safe for public distribution. It contains no malware, exploit code, credentials, or third-party target data.
+
+OpenAI API credits or Codex access would be used for maintainer automation: grounded advisory summaries, PR/security review assistance, release-note drafting, safe report generation, and repetitive triage/release workflow support.
 
 ## Implementation Notes
 

@@ -88,7 +88,16 @@ def process_sandbox_work(message: dict[str, Any], *, bus: Optional[EventBus] = N
         bus.publish(run_event_stream(run_id), started)
         session.commit()
 
-        result = MalwareLabService(session).materialize_run_outputs(tenant, run=run)
+        lab_service = MalwareLabService(session)
+        preflight_fn = getattr(lab_service, "enforce_run_execution_preflight", None)
+        if callable(preflight_fn):
+            preflight = preflight_fn(
+                tenant,
+                run=run,
+                actor=str(message.get("actor") or "sandbox_worker"),
+            )
+            run.manifest = {**dict(run.manifest or {}), "detonation_preflight": preflight}
+        result = lab_service.materialize_run_outputs(tenant, run=run)
         run.state = "completed"
         run.ended_at = utc_now()
         completed = _event(run_id, "run_completed", payload=result)

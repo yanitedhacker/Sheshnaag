@@ -1,0 +1,18 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "CVE-2024-10001",
+      "status": "affected",
+      "analysis": {
+        "state": "affected",
+        "detail": "Synthetic maintainer demo statement: edge-gateway 4.2.1 is still under remediation review."
+      },
+      "affects": [
+        {
+          "name": "edge-gateway",
+          "version": "4.2.1"
+        }
+      ]
+    }
+  ]
+}

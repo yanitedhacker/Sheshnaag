@@ -49,6 +49,8 @@ from app.api.routes.hunt_routes import router as hunt_router
 from app.api.routes.brief_routes import router as brief_router
 from app.api.routes.stix_export_routes import router as stix_export_router
 from app.api.routes.similarity_routes import router as similarity_router
+from app.api.routes.blast_radius_routes import router as blast_radius_router
+from app.api.routes.maintainer_routes import router as maintainer_router
 
 __all__ = [
     "cve_router",
@@ -100,4 +102,6 @@ __all__ = [
     "brief_router",
     "stix_export_router",
     "similarity_router",
+    "blast_radius_router",
+    "maintainer_router",
 ]

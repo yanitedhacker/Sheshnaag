@@ -92,3 +92,69 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
     assert stored.state == "completed"
     assert {"run_started", "run_completed"}.issubset(set(event_types))
     assert [event["type"] for _, event in published] == ["run_started", "run_completed"]
+
+
+def test_sandbox_worker_marks_run_errored_when_preflight_fails(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    session = TestingSession()
+    tenant = Tenant(slug="worker-preflight", name="Worker Preflight")
+    session.add(tenant)
+    session.flush()
+    recipe = LabRecipe(tenant_id=tenant.id, name="Worker recipe", provider="docker_kali", current_revision_number=1)
+    session.add(recipe)
+    session.flush()
+    revision = RecipeRevision(recipe_id=recipe.id, revision_number=1, approval_state="approved", content={})
+    session.add(revision)
+    session.flush()
+    run = LabRun(
+        tenant_id=tenant.id,
+        recipe_revision_id=revision.id,
+        provider="lima",
+        launch_mode="execute",
+        state="queued",
+        manifest={"analysis_mode": "url_analysis", "specimen_ids": [99]},
+    )
+    session.add(run)
+    session.commit()
+    run_id = run.id
+    tenant_id = tenant.id
+    session.close()
+
+    class FakeService:
+        def __init__(self, session):
+            self.session = session
+
+        def enforce_run_execution_preflight(self, tenant, *, run, actor):
+            raise ValueError("capability_required:dynamic_detonation")
+
+        def materialize_run_outputs(self, tenant, *, run):  # pragma: no cover
+            raise AssertionError("materialization must not run")
+
+    published = []
+
+    class FakeBus:
+        def publish(self, stream, event):
+            published.append((stream, event))
+            return "1-0"
+
+    monkeypatch.setattr(sandbox_worker, "SessionLocal", TestingSession)
+    monkeypatch.setattr(sandbox_worker, "MalwareLabService", FakeService)
+
+    try:
+        sandbox_worker.process_sandbox_work(
+            {"run_id": run_id, "tenant_id": tenant_id, "actor": "analyst", "correlation_id": "abc"},
+            bus=FakeBus(),
+        )
+    except ValueError:
+        pass
+
+    verify = TestingSession()
+    stored = verify.get(LabRun, run_id)
+    event_types = [row.event_type for row in verify.query(RunEvent).filter(RunEvent.run_id == run_id).all()]
+    verify.close()
+
+    assert stored.state == "errored"
+    assert "run_failed" in event_types
+    assert [event["type"] for _, event in published] == ["run_started", "run_failed"]

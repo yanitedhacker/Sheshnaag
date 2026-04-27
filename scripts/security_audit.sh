@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+PYTHON_BIN="${PYTHON_BIN:-${VIRTUAL_ENV:+${VIRTUAL_ENV}/bin/python}}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 printf "Security audit starting in %s\n" "$ROOT_DIR"
 
@@ -34,7 +36,7 @@ fi
 
 # 3) Dependency vulnerability scan (pip-audit)
 printf "\n[3/3] Dependency vulnerability scan (pip-audit)...\n"
-if python3 -m pip_audit -r requirements.txt; then
+if "$PYTHON_BIN" -m pip_audit -r requirements.txt; then
   printf "pip-audit completed.\n"
 else
   printf "pip-audit not available or failed.\n"

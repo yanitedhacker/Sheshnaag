@@ -1166,6 +1166,28 @@ class SheshnaagService:
                 acknowledgement_recorded=acknowledge_sensitive,
             )
             self._persist_v3_run_context(run, v3_context=v3_context)
+            from app.services.malware_lab_service import MalwareLabService
+
+            try:
+                preflight = MalwareLabService(self.session).enforce_run_execution_preflight(
+                    tenant,
+                    run=run,
+                    actor=analyst_name,
+                )
+                run.manifest = {**dict(run.manifest or {}), "detonation_preflight": preflight}
+            except ValueError as exc:
+                run.state = RunState.BLOCKED.value
+                run.ended_at = utc_now()
+                run.manifest = {
+                    **dict(run.manifest or {}),
+                    "detonation_preflight": {
+                        "status": "blocked",
+                        "blockers": [item for item in str(exc).split(";") if item],
+                    },
+                }
+                self._add_run_event(run, "run_blocked", queued_result, level="error", message=str(exc))
+                self.session.flush()
+                raise
             self._persist_run_acknowledgement(
                 tenant=tenant,
                 run=run,

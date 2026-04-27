@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 
 import redis
@@ -98,6 +99,18 @@ def _object_store_status() -> dict:
         return {"status": "missing", "error": str(exc)}
 
 
+def _kvm_status() -> str:
+    if platform.system() != "Linux":
+        return "unsupported_os"
+    if os.path.exists("/dev/kvm"):
+        return "ok"
+    return "missing"
+
+
+def _runtime_flag_status(name: str) -> str:
+    return "on" if _truthy(os.getenv(name)) else "off"
+
+
 @router.get("/health")
 def ops_health(response: Response, session: Session = Depends(get_sync_session)):
     try:
@@ -121,6 +134,12 @@ def ops_health(response: Response, session: Session = Depends(get_sync_session))
         "vol": _binary_status("vol"),
         "zeek": _binary_status("zeek"),
         "tetragon": _binary_status("tetragon"),
+        "kvm": _kvm_status(),
+    }
+    detonation_runtime = {
+        "egress_enforce": _runtime_flag_status("SHESHNAAG_EGRESS_ENFORCE"),
+        "pcap": _runtime_flag_status("SHESHNAAG_ENABLE_PCAP"),
+        "require_memory_dump": _runtime_flag_status("SHESHNAAG_REQUIRE_MEMORY_DUMP"),
     }
     ai_providers = {
         "anthropic": _provider_status("ANTHROPIC_API_KEY"),
@@ -140,6 +159,7 @@ def ops_health(response: Response, session: Session = Depends(get_sync_session))
         "audit_signer": audit_signer,
         "telemetry": telemetry,
         "lab_deps": lab_deps,
+        "detonation_runtime": detonation_runtime,
         "ai_providers": ai_providers,
     }
 
@@ -159,7 +179,13 @@ def ops_health(response: Response, session: Session = Depends(get_sync_session))
             blockers.append("audit_signer_cosign")
         if telemetry["otel"] != "configured":
             blockers.append("otel")
-        required_lab = {"nft", "dnsmasq", "virsh", "vol", "zeek"}
+        if detonation_runtime["egress_enforce"] != "on":
+            blockers.append("detonation_runtime.egress_enforce")
+        if detonation_runtime["pcap"] != "on":
+            blockers.append("detonation_runtime.pcap")
+        required_lab = {"nft", "dnsmasq", "virsh", "zeek", "kvm"}
+        if detonation_runtime["require_memory_dump"] == "on":
+            required_lab.add("vol")
         blockers.extend(f"lab_deps.{name}" for name in sorted(required_lab) if lab_deps.get(name) != "ok")
         for provider, provider_status in ai_providers.items():
             if provider_status != "configured":
