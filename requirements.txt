@@ -68,6 +68,15 @@ minio>=7.2
 jsonschema>=4.20
 
 # ===========================================
+# OIDC SSO (V5 W1a)
+# ===========================================
+# authlib v1.3+ ships discovery (.well-known), JWKS rotation, PKCE,
+# and ID-token validation. python-jose remains pinned in the Security
+# section above and is used elsewhere; authlib uses its own JWT impl
+# for the OIDC verification path.
+authlib>=1.3,<2
+
+# ===========================================
 # Monitoring & Utilities
 # ===========================================
 prometheus-client>=0.20.0
