@@ -79,6 +79,7 @@ from app.models.embeddings import (
     VECTOR_DIM,
 )
 from app.models.capability import AuditLogEntry, AuthorizationArtifact
+from app.models.rbac import Permission, Role, RolePermission
 
 __all__ = [
     "CVE",
@@ -163,4 +164,7 @@ __all__ = [
     "VECTOR_DIM",
     "AuditLogEntry",
     "AuthorizationArtifact",
+    "Role",
+    "Permission",
+    "RolePermission",
 ]

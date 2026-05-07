@@ -51,6 +51,7 @@ from app.api.routes.stix_export_routes import router as stix_export_router
 from app.api.routes.similarity_routes import router as similarity_router
 from app.api.routes.blast_radius_routes import router as blast_radius_router
 from app.api.routes.maintainer_routes import router as maintainer_router
+from app.api.routes.admin_roles import router as admin_roles_router
 
 __all__ = [
     "cve_router",
@@ -104,4 +105,5 @@ __all__ = [
     "similarity_router",
     "blast_radius_router",
     "maintainer_router",
+    "admin_roles_router",
 ]

@@ -45,6 +45,7 @@ from app.api.routes import (
     ledger_router,
     live_run_router,
     maintainer_router,
+    admin_roles_router,
     model_router,
     ops_router,
     case_graph_router,
@@ -389,6 +390,7 @@ app.include_router(auth_router)
 app.include_router(tenant_router)
 app.include_router(supply_chain_router)
 app.include_router(template_router)
+app.include_router(admin_roles_router)
 
 # Mount static files for frontend
 if FRONTEND_DIST_DIR.exists():

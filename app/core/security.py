@@ -60,6 +60,7 @@ class TokenData(BaseModel):
     user_id: Optional[int] = None
     scopes: List[str] = []
     memberships: List[dict] = []
+    roles: List[str] = []
 
 
 class Token(BaseModel):
@@ -173,11 +174,35 @@ def verify_token(
         )
 
     scopes = payload.get("scopes", [])
+    memberships = payload.get("memberships", [])
+
+    # Roles can arrive in two shapes:
+    #   1) A top-level ``roles: ["analyst", ...]`` claim (post-OIDC,
+    #      W1a-onward, or service-to-service tokens).
+    #   2) Embedded as ``role`` on each membership dict (the v2-era
+    #      shape — TenantMembership.role per tenant).
+    # We union both so this dependency works for tokens minted by either
+    # path. Order: explicit ``roles`` claim wins on ordering, then the
+    # union with membership-derived roles, deduplicated.
+    explicit_roles = payload.get("roles", []) or []
+    membership_roles = [
+        m.get("role")
+        for m in memberships
+        if isinstance(m, dict) and m.get("role")
+    ]
+    seen: set[str] = set()
+    roles: List[str] = []
+    for r in list(explicit_roles) + membership_roles:
+        if r and r not in seen:
+            seen.add(r)
+            roles.append(r)
+
     return TokenData(
         username=username,
         user_id=payload.get("user_id"),
         scopes=scopes,
-        memberships=payload.get("memberships", []),
+        memberships=memberships,
+        roles=roles,
     )
 
 
@@ -213,6 +238,70 @@ def require_scope(required_scope: str):
             )
         return token_data
     return scope_checker
+
+
+def require_role(*allowed_roles: str):
+    """V5 RBAC dependency: require the caller to hold one of the named roles.
+
+    The ``lab_lead`` role implicitly satisfies any role check (superuser).
+    When auth is disabled in development, the anonymous user passes
+    automatically — matching the existing ``require_scope`` semantics so
+    local dev is not blocked by RBAC.
+
+    Usage::
+
+        @router.post(
+            "/admin/users/{user_id}/role",
+            dependencies=[Depends(require_role("lab_lead"))],
+        )
+    """
+
+    if not allowed_roles:
+        raise ValueError("require_role() needs at least one role name")
+
+    allowed = set(allowed_roles)
+
+    def _dep(token_data: TokenData = Depends(verify_token)) -> TokenData:
+        # Dev mode: verify_token returns anonymous when auth is disabled.
+        # We don't enforce role gating in that path; the deployment
+        # validator already blocks auth_enabled=False in production.
+        if not settings.auth_enabled:
+            return token_data
+        held = set(token_data.roles)
+        if "lab_lead" in held or held & allowed:
+            return token_data
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"role_required: one of {sorted(allowed)}",
+        )
+
+    return _dep
+
+
+def require_permission(permission: str):
+    """V5 RBAC dependency: require the caller's role(s) to grant the permission.
+
+    Resolves the caller's roles from the JWT, then asks the RBAC service
+    whether any of those roles grants ``permission``. Returns 403 if not.
+    """
+
+    def _dep(
+        token_data: TokenData = Depends(verify_token),
+        session: "Session" = Depends(_session_dep),
+    ) -> TokenData:
+        if not settings.auth_enabled:
+            return token_data
+        from app.services.rbac import RbacService  # lazy: avoid import cycle
+
+        rbac = RbacService(session)
+        if rbac.has_any_permission(token_data.roles, permission):
+            return token_data
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"permission_required: {permission}",
+        )
+
+    return _dep
 
 
 def require_capability(capability: str):
