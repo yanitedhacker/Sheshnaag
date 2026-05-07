@@ -28,6 +28,7 @@ import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { RunConsolePage } from "./pages/RunConsolePage";
 import { SandboxProfilesPage } from "./pages/SandboxProfilesPage";
 import { SpecimenIntakePage } from "./pages/SpecimenIntakePage";
+import { TeamAnalyticsPage } from "./pages/TeamAnalyticsPage";
 import { WorkerFleetPage } from "./pages/WorkerFleetPage";
 
 import type { ReactNode } from "react";
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="ai-sessions" element={gated("ai-sessions", <AISessionsPage />)} />
         <Route path="policy" element={gated("policy", <PolicyCenterPage />)} />
         <Route path="workers" element={gated("workers", <WorkerFleetPage />)} />
+        <Route path="analytics" element={gated("analytics", <TeamAnalyticsPage />)} />
         <Route path="not-authorized" element={<NotAuthorizedPage />} />
         <Route path="*" element={gated("intel", <IntelDashboardPage />)} />
       </Route>

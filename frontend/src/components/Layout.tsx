@@ -38,6 +38,7 @@ const operatorNavItems: NavItem[] = [
   { to: "/ai-sessions", label: "AI Drafts", permissionKey: "ai-sessions" },
   { to: "/policy", label: "Policy", permissionKey: "policy" },
   { to: "/workers", label: "Workers", permissionKey: "workers" },
+  { to: "/analytics", label: "Analytics", permissionKey: "analytics" },
 ];
 
 export function Layout() {

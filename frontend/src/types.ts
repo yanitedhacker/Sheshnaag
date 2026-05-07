@@ -1406,3 +1406,64 @@ export type CaseTransitionResponse = {
   role_at_transition: string;
   occurred_at: string;
 };
+
+// ===== V5 W3a team analytics =====
+
+export type AnalyticsBucketStats = {
+  count: number;
+  mean_seconds: number;
+  p50_seconds: number;
+  p95_seconds: number;
+};
+
+export type MttrResponse = {
+  window_start: string;
+  window_end: string;
+  sample_count: number;
+  overall_mean_seconds: number | null;
+  overall_p50_seconds: number | null;
+  overall_p95_seconds: number | null;
+  by_analyst: Record<string, AnalyticsBucketStats>;
+};
+
+export type ReviewLatencyResponse = {
+  window_start: string;
+  window_end: string;
+  sample_count: number;
+  overall_mean_seconds: number | null;
+  overall_p50_seconds: number | null;
+  overall_p95_seconds: number | null;
+  by_reviewer: Record<string, AnalyticsBucketStats>;
+};
+
+export type AttackDriftResponse = {
+  window_seconds: number;
+  current_window: string[];
+  prior_window: string[];
+  new_in_current: string[];
+  dropped_from_prior: string[];
+};
+
+export type CapabilityUsageResponse = {
+  window_start: string;
+  window_end: string;
+  by_capability: Record<string, number>;
+  by_actor: Record<string, Record<string, number>>;
+  distinct_actors: number;
+};
+
+export type QueueAgingResponse = {
+  generated_at: string;
+  bucket_boundaries_days: number[];
+  bucket_labels: string[];
+  state_buckets: Record<CaseLifecycleState, number[]>;
+};
+
+export type AnalyticsSummaryResponse = {
+  tenant_id: number;
+  window_days: number;
+  mttr: MttrResponse;
+  review_latency: ReviewLatencyResponse;
+  queue_aging: QueueAgingResponse;
+  ai_session_volume: Record<string, number>;
+};

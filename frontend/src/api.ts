@@ -66,6 +66,12 @@ import type {
   CaseLifecycleState,
   CaseQueueResponse,
   CaseTransitionResponse,
+  MttrResponse,
+  ReviewLatencyResponse,
+  AttackDriftResponse,
+  CapabilityUsageResponse,
+  QueueAgingResponse,
+  AnalyticsSummaryResponse,
 } from "./types";
 
 const API_BASE = "";
@@ -428,4 +434,28 @@ export const api = {
       `/api/v5/workers/${workerId}/drain`,
       { method: "POST" }
     ),
+
+  // V5 W3a team analytics
+  analyticsSummary: (windowDays = 30) =>
+    fetchTenantJson<AnalyticsSummaryResponse>(
+      `/api/v5/analytics/summary?window_days=${windowDays}`
+    ),
+  analyticsMttr: (windowDays = 30) =>
+    fetchTenantJson<MttrResponse>(
+      `/api/v5/analytics/mttr?window_days=${windowDays}`
+    ),
+  analyticsReviewLatency: (windowDays = 30) =>
+    fetchTenantJson<ReviewLatencyResponse>(
+      `/api/v5/analytics/review-latency?window_days=${windowDays}`
+    ),
+  analyticsAttackDrift: (windowDays = 30) =>
+    fetchTenantJson<AttackDriftResponse>(
+      `/api/v5/analytics/attack-drift?window_days=${windowDays}`
+    ),
+  analyticsCapabilityUsage: (windowDays = 30) =>
+    fetchTenantJson<CapabilityUsageResponse>(
+      `/api/v5/analytics/capability-usage?window_days=${windowDays}`
+    ),
+  analyticsQueueAging: () =>
+    fetchTenantJson<QueueAgingResponse>(`/api/v5/analytics/queue-aging`),
 };
