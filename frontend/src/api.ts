@@ -61,6 +61,8 @@ import type {
   V3SpecimenListResponse,
   V3SpecimenRevisionListResponse,
   WorkbenchSummary,
+  WorkerSummary,
+  EnrollmentTokenResponse,
 } from "./types";
 
 const API_BASE = "";
@@ -390,4 +392,17 @@ export const api = {
   listPolicies: () => fetchTenantJson<V3PolicyListResponse>("/api/policy"),
   createPolicy: async (payload: Record<string, unknown>) =>
     fetchJson("/api/policy", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  // V5 W1b worker pool
+  listWorkers: () => fetchJson<WorkerSummary[]>("/api/v5/workers"),
+  getWorker: (workerId: number) => fetchJson<WorkerSummary>(`/api/v5/workers/${workerId}`),
+  issueEnrollmentToken: () =>
+    fetchJson<EnrollmentTokenResponse>("/api/v5/workers/enrollment-tokens", {
+      method: "POST",
+    }),
+  drainWorker: (workerId: number) =>
+    fetchJson<{ worker_id: number; state: string }>(
+      `/api/v5/workers/${workerId}/drain`,
+      { method: "POST" }
+    ),
 };

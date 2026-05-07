@@ -1350,3 +1350,21 @@ export type DisclosureListResponse = {
   count: number;
   items: DisclosureBundleRecord[];
 };
+
+// ===== V5 W1b worker pool =====
+
+export type WorkerSummary = {
+  id: number;
+  worker_uuid: string;
+  cert_fingerprint: string;
+  capability_flags: string[];
+  state: "online" | "offline" | "draining";
+  last_heartbeat: string | null;
+  enrolled_at: string;
+  enrolled_by: string;
+};
+
+export type EnrollmentTokenResponse = {
+  token: string;
+  expires_at: string;
+};

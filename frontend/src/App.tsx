@@ -24,6 +24,7 @@ import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { RunConsolePage } from "./pages/RunConsolePage";
 import { SandboxProfilesPage } from "./pages/SandboxProfilesPage";
 import { SpecimenIntakePage } from "./pages/SpecimenIntakePage";
+import { WorkerFleetPage } from "./pages/WorkerFleetPage";
 
 export default function App() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="reports" element={<MalwareReportsPage />} />
         <Route path="ai-sessions" element={<AISessionsPage />} />
         <Route path="policy" element={<PolicyCenterPage />} />
+        <Route path="workers" element={<WorkerFleetPage />} />
         <Route path="*" element={<IntelDashboardPage />} />
       </Route>
     </Routes>

@@ -28,6 +28,7 @@ const operatorNavItems = [
   { to: "/reports", label: "Reports" },
   { to: "/ai-sessions", label: "AI Drafts" },
   { to: "/policy", label: "Policy" },
+  { to: "/workers", label: "Workers" },
 ];
 
 export function Layout() {
