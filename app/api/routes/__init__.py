@@ -52,6 +52,7 @@ from app.api.routes.similarity_routes import router as similarity_router
 from app.api.routes.blast_radius_routes import router as blast_radius_router
 from app.api.routes.maintainer_routes import router as maintainer_router
 from app.api.routes.admin_roles import router as admin_roles_router
+from app.api.routes.workers import router as workers_router
 
 __all__ = [
     "cve_router",
@@ -106,4 +107,5 @@ __all__ = [
     "blast_radius_router",
     "maintainer_router",
     "admin_roles_router",
+    "workers_router",
 ]

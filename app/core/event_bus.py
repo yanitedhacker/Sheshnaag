@@ -86,4 +86,43 @@ def run_event_stream(run_id: int) -> str:
     return f"sheshnaag:run:{run_id}:events"
 
 
+def sandbox_return_stream(run_id: int) -> str:
+    """Stream where workers publish signed-artifact return payloads."""
+    return f"sheshnaag:sandbox:returns:{run_id}"
+
+
 SANDBOX_WORK_STREAM = "sheshnaag:sandbox:work"
+
+
+def build_tls_redis_client(
+    redis_url: str,
+    *,
+    ssl_certfile: str,
+    ssl_keyfile: str,
+    ssl_ca_certs: str,
+    socket_connect_timeout: int = 5,
+    socket_timeout: int = 30,
+) -> redis.Redis:
+    """V5 W1b helper: redis-py client over a `rediss://` URL with mTLS.
+
+    The control plane keeps using stock loopback `redis://` (lower
+    overhead, no cert management). Sandbox workers connect via this
+    helper using their enrolled cert as the TLS client identity.
+
+    Raises ``ValueError`` for non-``rediss://`` URLs so a misconfigured
+    worker fails loudly rather than silently downgrading to plaintext.
+    """
+
+    if not redis_url.startswith("rediss://"):
+        raise ValueError(
+            f"build_tls_redis_client requires rediss:// URL, got {redis_url!r}"
+        )
+    return redis.from_url(
+        redis_url,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+        ssl_ca_certs=ssl_ca_certs,
+        ssl_cert_reqs="required",
+        socket_connect_timeout=socket_connect_timeout,
+        socket_timeout=socket_timeout,
+    )
