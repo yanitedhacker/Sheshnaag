@@ -56,13 +56,32 @@ _DEFAULT_TTL = timedelta(days=30)
 
 @dataclass(frozen=True)
 class Capability:
-    """A named risky action declared by the capability taxonomy."""
+    """A named risky action declared by the capability taxonomy.
+
+    ``requester_roles`` (V5+) names the V5 roles permitted to *originate*
+    an issuance request for this capability. ``None`` means "any
+    authenticated caller may request" — the V4 default behavior. A
+    populated set means the issuance flow will reject requesters whose
+    roles do not intersect this set. The V5 W0c slice ships this as
+    pure data; the runtime gate is wired in V6 when the
+    AuthorizationCenter UI flow lands. The helper
+    :meth:`CapabilityPolicy.permitted_requester_for` is provided now so
+    callers can adopt voluntarily.
+    """
 
     name: str
     default: str  # "off" | "admin_per_tenant" | "tenant_default"
     review_kind: str  # "single" | "dual" | "dual_plus_admin"
     max_ttl: timedelta
     requires_engagement_doc: bool = False
+    requester_roles: Optional[frozenset[str]] = None
+
+
+# V5 role-tier shortcuts. lab_lead is implicit in both tiers as the
+# canonical superuser; explicit listing keeps the kill-criteria red-team
+# test honest (no silent superuser bypass — it's spelled out).
+_SENIOR_PLUS = frozenset({"senior_analyst", "lab_lead"})
+_ANALYST_PLUS = frozenset({"analyst", "senior_analyst", "lab_lead"})
 
 
 def _cap(
@@ -72,6 +91,7 @@ def _cap(
     max_ttl: timedelta,
     *,
     requires_engagement_doc: bool = False,
+    requester_roles: Optional[frozenset[str]] = None,
 ) -> tuple[str, Capability]:
     return name, Capability(
         name=name,
@@ -79,6 +99,7 @@ def _cap(
         review_kind=review_kind,
         max_ttl=max_ttl,
         requires_engagement_doc=requires_engagement_doc,
+        requester_roles=requester_roles,
     )
 
 
@@ -87,32 +108,115 @@ def _cap(
 # capability-policy specifications.
 CAPABILITIES: dict[str, Capability] = dict(
     [
-        _cap("dynamic_detonation", "admin_per_tenant", "single", timedelta(days=30)),
-        _cap("external_disclosure", "off", "dual_plus_admin", timedelta(hours=72)),
-        _cap("specimen_exfil", "off", "dual_plus_admin", timedelta(days=30)),
-        _cap("destructive_defang", "off", "dual", timedelta(days=30)),
-        _cap("cloud_ai_provider_use", "tenant_default", "single", timedelta(days=30)),
-        _cap("autonomous_agent_run", "off", "single", timedelta(days=30)),
-        _cap("exploit_validation", "off", "dual", timedelta(days=14)),
-        _cap("red_team_emulation", "off", "dual", timedelta(days=14)),
+        _cap(
+            "dynamic_detonation",
+            "admin_per_tenant",
+            "single",
+            timedelta(days=30),
+            requester_roles=_ANALYST_PLUS,
+        ),
+        _cap(
+            "external_disclosure",
+            "off",
+            "dual_plus_admin",
+            timedelta(hours=72),
+            requester_roles=_SENIOR_PLUS,
+        ),
+        _cap(
+            "specimen_exfil",
+            "off",
+            "dual_plus_admin",
+            timedelta(days=30),
+            requester_roles=_SENIOR_PLUS,
+        ),
+        _cap(
+            "destructive_defang",
+            "off",
+            "dual",
+            timedelta(days=30),
+            requester_roles=_SENIOR_PLUS,
+        ),
+        _cap(
+            "cloud_ai_provider_use",
+            "tenant_default",
+            "single",
+            timedelta(days=30),
+            requester_roles=_ANALYST_PLUS,
+        ),
+        _cap(
+            "autonomous_agent_run",
+            "off",
+            "single",
+            timedelta(days=30),
+            requester_roles=_ANALYST_PLUS,
+        ),
+        _cap(
+            "exploit_validation",
+            "off",
+            "dual",
+            timedelta(days=14),
+            requester_roles=_ANALYST_PLUS,
+        ),
+        _cap(
+            "red_team_emulation",
+            "off",
+            "dual",
+            timedelta(days=14),
+            requester_roles=_SENIOR_PLUS,
+        ),
         _cap(
             "offensive_research",
             "off",
             "dual_plus_admin",
             timedelta(days=7),
             requires_engagement_doc=True,
+            requester_roles=_SENIOR_PLUS,
         ),
-        _cap("network_egress_open", "off", "dual_plus_admin", timedelta(hours=24)),
-        _cap("memory_exfil_to_host", "admin_per_tenant", "single", timedelta(days=30)),
+        _cap(
+            "network_egress_open",
+            "off",
+            "dual_plus_admin",
+            timedelta(hours=24),
+            requester_roles=_SENIOR_PLUS,
+        ),
+        _cap(
+            "memory_exfil_to_host",
+            "admin_per_tenant",
+            "single",
+            timedelta(days=30),
+            requester_roles=_ANALYST_PLUS,
+        ),
         _cap(
             "kernel_driver_load",
             "off",
             "dual",
             timedelta(days=14),
             requires_engagement_doc=True,
+            requester_roles=_SENIOR_PLUS,
         ),
     ]
 )
+
+
+# ---------------------------------------------------------------------------
+# RESERVED_FOR_V7 — capability hooks for the "Output Chain" milestone.
+#
+# These four names are reserved by the V5-V8 expansion PRD
+# (docs/superpowers/specs/2026-05-07-sheshnaag-expansion-design.md, V7).
+# They are NOT live entries: adding them to CAPABILITIES now would surface
+# UI elements in the AuthorizationCenter that gate nothing, which
+# operators and auditors find confusing. V7 kickoff plugs them in here
+# with their actual `default` / `review_kind` / `max_ttl` /
+# `requester_roles` settings.
+#
+#   cve_coordination     — CVE/CNA disclosure workflow gate
+#   vendor_disclosure    — vendor-coordinated embargo + bundle export gate
+#   public_intel_publish — MISP/OTX publisher-side + blog publish gate
+#   dataset_publish      — Zenodo / academic publication gate
+#
+# Cross-reference: frontend/src/permissions.ts will hold a matching
+# RESERVED_FOR_V7 constant once W2c lands.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +500,32 @@ class CapabilityPolicy:
         self._signer: Signer = signer or build_signer()
 
     # ---- public API -------------------------------------------------------
+
+    @staticmethod
+    def permitted_requester_for(
+        capability: str, roles: Iterable[str]
+    ) -> bool:
+        """Return True if any of ``roles`` may originate an issuance request.
+
+        V5 W0c data hook. Used by V6 AuthorizationCenter to gate the
+        "Request capability" form: the request button is disabled when
+        this returns False.
+
+        Returns ``True`` for any capability whose ``requester_roles`` is
+        ``None`` (V4 default — anyone authenticated may request) and for
+        any capability where one of the caller's roles is in the
+        ``requester_roles`` set.
+
+        Returns ``False`` for an unknown capability — fail-closed so an
+        operator does not accidentally allow a typo'd capability.
+        """
+
+        cap = CAPABILITIES.get(capability)
+        if cap is None:
+            return False
+        if cap.requester_roles is None:
+            return True
+        return bool(set(roles) & cap.requester_roles)
 
     def evaluate(self, *, capability: str, scope: dict, actor: str) -> Decision:
         """Resolve ``(capability, scope, actor)`` against the active artifacts."""
