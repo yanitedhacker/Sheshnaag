@@ -82,6 +82,7 @@ from app.models.embeddings import (
 )
 from app.models.capability import AuditLogEntry, AuthorizationArtifact
 from app.models.rbac import Permission, Role, RolePermission
+from app.models.worker_pool import Worker, WorkerCaKey, WorkerEnrollmentToken
 
 __all__ = [
     "CVE",
@@ -171,4 +172,7 @@ __all__ = [
     "Role",
     "Permission",
     "RolePermission",
+    "Worker",
+    "WorkerCaKey",
+    "WorkerEnrollmentToken",
 ]
