@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { CandidateRecalculationRun, CandidateRecalculationResponse, ReviewQueueItem } from "../types";
+import { CaseLifecycleQueue } from "../components/CaseLifecycleQueue";
 
 export function ReviewQueuePage() {
   const [items, setItems] = useState<ReviewQueueItem[]>([]);
@@ -63,6 +64,8 @@ export function ReviewQueuePage() {
       </div>
 
       {error ? <div className="panel error-panel">{error}</div> : null}
+
+      <CaseLifecycleQueue />
 
       <section className="panel">
         <div className="panel-header">

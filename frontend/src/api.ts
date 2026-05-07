@@ -63,6 +63,9 @@ import type {
   WorkbenchSummary,
   WorkerSummary,
   EnrollmentTokenResponse,
+  CaseLifecycleState,
+  CaseQueueResponse,
+  CaseTransitionResponse,
 } from "./types";
 
 const API_BASE = "";
@@ -392,6 +395,26 @@ export const api = {
   listPolicies: () => fetchTenantJson<V3PolicyListResponse>("/api/policy"),
   createPolicy: async (payload: Record<string, unknown>) =>
     fetchJson("/api/policy", { method: "POST", body: JSON.stringify(await withActiveTenant(payload)) }),
+
+  // V5 W2a case queue
+  getCaseQueue: (lifecycleState?: CaseLifecycleState, limit = 100) => {
+    const params = new URLSearchParams();
+    if (lifecycleState) params.set("lifecycle_state", lifecycleState);
+    params.set("limit", String(limit));
+    return fetchJson<CaseQueueResponse>(`/api/v5/cases/queue?${params}`);
+  },
+  transitionCase: (
+    caseId: number,
+    toState: CaseLifecycleState,
+    reason?: string
+  ) =>
+    fetchJson<CaseTransitionResponse>(
+      `/api/v5/cases/queue/${caseId}/transition`,
+      {
+        method: "POST",
+        body: JSON.stringify({ to_state: toState, reason }),
+      }
+    ),
 
   // V5 W1b worker pool
   listWorkers: () => fetchJson<WorkerSummary[]>("/api/v5/workers"),

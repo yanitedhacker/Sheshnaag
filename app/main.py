@@ -48,6 +48,7 @@ from app.api.routes import (
     admin_roles_router,
     workers_router,
     auth_oidc_router,
+    case_queue_router,
     model_router,
     ops_router,
     case_graph_router,
@@ -395,6 +396,7 @@ app.include_router(template_router)
 app.include_router(admin_roles_router)
 app.include_router(workers_router)
 app.include_router(auth_oidc_router)
+app.include_router(case_queue_router)
 
 # Mount static files for frontend
 if FRONTEND_DIST_DIR.exists():

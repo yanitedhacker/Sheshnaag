@@ -54,6 +54,7 @@ from app.api.routes.maintainer_routes import router as maintainer_router
 from app.api.routes.admin_roles import router as admin_roles_router
 from app.api.routes.workers import router as workers_router
 from app.api.routes.auth_oidc import router as auth_oidc_router
+from app.api.routes.case_queue_routes import router as case_queue_router
 
 __all__ = [
     "cve_router",
@@ -110,4 +111,5 @@ __all__ = [
     "admin_roles_router",
     "workers_router",
     "auth_oidc_router",
+    "case_queue_router",
 ]

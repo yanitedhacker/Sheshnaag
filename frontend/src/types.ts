@@ -1368,3 +1368,41 @@ export type EnrollmentTokenResponse = {
   token: string;
   expires_at: string;
 };
+
+// ===== V5 W2a case queue =====
+
+export type CaseLifecycleState =
+  | "triage"
+  | "analysis"
+  | "review"
+  | "ready_to_ship"
+  | "shipped"
+  | "archived";
+
+export type CaseQueueItem = {
+  case_id: number;
+  title: string;
+  summary: string | null;
+  lifecycle_state: CaseLifecycleState;
+  state_changed_at: string | null;
+  state_changed_by: string | null;
+  priority: string;
+  analyst_name: string;
+  legal_transitions_for_caller: CaseLifecycleState[];
+  last_transition_actor: string | null;
+};
+
+export type CaseQueueResponse = {
+  count: number;
+  state_counts: Record<CaseLifecycleState, number>;
+  items: CaseQueueItem[];
+};
+
+export type CaseTransitionResponse = {
+  case_id: number;
+  from_state: CaseLifecycleState;
+  to_state: CaseLifecycleState;
+  actor: string;
+  role_at_transition: string;
+  occurred_at: string;
+};
