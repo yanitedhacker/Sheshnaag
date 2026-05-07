@@ -84,6 +84,7 @@ from app.models.capability import AuditLogEntry, AuthorizationArtifact
 from app.models.rbac import Permission, Role, RolePermission
 from app.models.worker_pool import Worker, WorkerCaKey, WorkerEnrollmentToken
 from app.models.oidc import OidcProvider
+from app.models.integrations import CaseIntegrationLink
 
 __all__ = [
     "CVE",
@@ -177,4 +178,5 @@ __all__ = [
     "WorkerCaKey",
     "WorkerEnrollmentToken",
     "OidcProvider",
+    "CaseIntegrationLink",
 ]
