@@ -1,5 +1,8 @@
 import { Routes, Route } from "react-router-dom";
 import { Layout } from "./components/Layout";
+import { RoleGate } from "./components/RoleGate";
+import { ROUTE_PERMISSIONS } from "./permissions";
+import type { PermissionSlug } from "./permissions";
 import { AnalystLedgerPage } from "./pages/AnalystLedgerPage";
 import { AISessionsPage } from "./pages/AISessionsPage";
 import { AnalysisCasesPage } from "./pages/AnalysisCasesPage";
@@ -16,6 +19,7 @@ import { EvidenceExplorerPage } from "./pages/EvidenceExplorerPage";
 import { IntelDashboardPage } from "./pages/IntelDashboardPage";
 import { IndicatorForgeV3Page } from "./pages/IndicatorForgeV3Page";
 import { MalwareReportsPage } from "./pages/MalwareReportsPage";
+import { NotAuthorizedPage } from "./pages/NotAuthorizedPage";
 import { PolicyCenterPage } from "./pages/PolicyCenterPage";
 import { PreventionForgeV3Page } from "./pages/PreventionForgeV3Page";
 import { ProvenanceCenterPage } from "./pages/ProvenanceCenterPage";
@@ -26,37 +30,51 @@ import { SandboxProfilesPage } from "./pages/SandboxProfilesPage";
 import { SpecimenIntakePage } from "./pages/SpecimenIntakePage";
 import { WorkerFleetPage } from "./pages/WorkerFleetPage";
 
+import type { ReactNode } from "react";
+
+
+function gated(path: keyof typeof ROUTE_PERMISSIONS, element: ReactNode): ReactNode {
+  const permission: PermissionSlug = ROUTE_PERMISSIONS[path];
+  return (
+    <RoleGate permission={permission} fallback={<NotAuthorizedPage />}>
+      {element}
+    </RoleGate>
+  );
+}
+
+
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<IntelDashboardPage />} />
-        <Route path="intel" element={<IntelDashboardPage />} />
-        <Route path="review" element={<ReviewQueuePage />} />
-        <Route path="candidates" element={<CandidateQueuePage />} />
-        <Route path="recipes" element={<RecipeBuilderPage />} />
-        <Route path="runs" element={<RunConsolePage />} />
-        <Route path="authorization" element={<AuthorizationCenterPage />} />
-        <Route path="attack-coverage" element={<AttackCoveragePage />} />
-        <Route path="case-graph" element={<CaseGraphPage />} />
-        <Route path="autonomous" element={<AutonomousAgentPage />} />
-        <Route path="evidence" element={<EvidenceExplorerPage />} />
-        <Route path="artifacts" element={<ArtifactForgePage />} />
-        <Route path="provenance" element={<ProvenanceCenterPage />} />
-        <Route path="ledger" element={<AnalystLedgerPage />} />
-        <Route path="disclosures" element={<DisclosureBundlesPage />} />
-        <Route path="specimens" element={<SpecimenIntakePage />} />
-        <Route path="analysis-cases" element={<AnalysisCasesPage />} />
-        <Route path="sandbox-profiles" element={<SandboxProfilesPage />} />
-        <Route path="findings" element={<BehaviorFindingsPage />} />
-        <Route path="indicators" element={<IndicatorForgeV3Page />} />
-        <Route path="prevention-v3" element={<PreventionForgeV3Page />} />
-        <Route path="defang" element={<DefangQueuePage />} />
-        <Route path="reports" element={<MalwareReportsPage />} />
-        <Route path="ai-sessions" element={<AISessionsPage />} />
-        <Route path="policy" element={<PolicyCenterPage />} />
-        <Route path="workers" element={<WorkerFleetPage />} />
-        <Route path="*" element={<IntelDashboardPage />} />
+        <Route index element={gated("intel", <IntelDashboardPage />)} />
+        <Route path="intel" element={gated("intel", <IntelDashboardPage />)} />
+        <Route path="review" element={gated("review", <ReviewQueuePage />)} />
+        <Route path="candidates" element={gated("candidates", <CandidateQueuePage />)} />
+        <Route path="recipes" element={gated("recipes", <RecipeBuilderPage />)} />
+        <Route path="runs" element={gated("runs", <RunConsolePage />)} />
+        <Route path="authorization" element={gated("authorization", <AuthorizationCenterPage />)} />
+        <Route path="attack-coverage" element={gated("attack-coverage", <AttackCoveragePage />)} />
+        <Route path="case-graph" element={gated("case-graph", <CaseGraphPage />)} />
+        <Route path="autonomous" element={gated("autonomous", <AutonomousAgentPage />)} />
+        <Route path="evidence" element={gated("evidence", <EvidenceExplorerPage />)} />
+        <Route path="artifacts" element={gated("artifacts", <ArtifactForgePage />)} />
+        <Route path="provenance" element={gated("provenance", <ProvenanceCenterPage />)} />
+        <Route path="ledger" element={gated("ledger", <AnalystLedgerPage />)} />
+        <Route path="disclosures" element={gated("disclosures", <DisclosureBundlesPage />)} />
+        <Route path="specimens" element={gated("specimens", <SpecimenIntakePage />)} />
+        <Route path="analysis-cases" element={gated("analysis-cases", <AnalysisCasesPage />)} />
+        <Route path="sandbox-profiles" element={gated("sandbox-profiles", <SandboxProfilesPage />)} />
+        <Route path="findings" element={gated("findings", <BehaviorFindingsPage />)} />
+        <Route path="indicators" element={gated("indicators", <IndicatorForgeV3Page />)} />
+        <Route path="prevention-v3" element={gated("prevention-v3", <PreventionForgeV3Page />)} />
+        <Route path="defang" element={gated("defang", <DefangQueuePage />)} />
+        <Route path="reports" element={gated("reports", <MalwareReportsPage />)} />
+        <Route path="ai-sessions" element={gated("ai-sessions", <AISessionsPage />)} />
+        <Route path="policy" element={gated("policy", <PolicyCenterPage />)} />
+        <Route path="workers" element={gated("workers", <WorkerFleetPage />)} />
+        <Route path="not-authorized" element={<NotAuthorizedPage />} />
+        <Route path="*" element={gated("intel", <IntelDashboardPage />)} />
       </Route>
     </Routes>
   );

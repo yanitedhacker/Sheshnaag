@@ -2,33 +2,42 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { api, getActiveTenantSlug, storeWorkspaceSlug } from "../api";
 import type { TenantWorkspace } from "../types";
+import { ROUTE_PERMISSIONS, type PermissionSlug } from "../permissions";
+import { useCurrentRole } from "../hooks/useCurrentRole";
 
-const operatorNavItems = [
-  { to: "/intel", label: "Intel" },
-  { to: "/review", label: "Review" },
-  { to: "/candidates", label: "Candidates" },
-  { to: "/recipes", label: "Recipes" },
-  { to: "/runs", label: "Runs" },
-  { to: "/authorization", label: "Auth" },
-  { to: "/attack-coverage", label: "ATT&CK" },
-  { to: "/case-graph", label: "Graph" },
-  { to: "/autonomous", label: "Agent" },
-  { to: "/evidence", label: "Evidence" },
-  { to: "/artifacts", label: "Artifacts" },
-  { to: "/provenance", label: "Provenance" },
-  { to: "/ledger", label: "Ledger" },
-  { to: "/disclosures", label: "Bundles" },
-  { to: "/specimens", label: "Specimens" },
-  { to: "/analysis-cases", label: "Cases" },
-  { to: "/sandbox-profiles", label: "Profiles" },
-  { to: "/findings", label: "Findings" },
-  { to: "/indicators", label: "Indicators" },
-  { to: "/prevention-v3", label: "Prevention" },
-  { to: "/defang", label: "Defang" },
-  { to: "/reports", label: "Reports" },
-  { to: "/ai-sessions", label: "AI Drafts" },
-  { to: "/policy", label: "Policy" },
-  { to: "/workers", label: "Workers" },
+type NavItem = {
+  to: string;
+  label: string;
+  /** Path key into ROUTE_PERMISSIONS (no leading slash). */
+  permissionKey: keyof typeof ROUTE_PERMISSIONS;
+};
+
+const operatorNavItems: NavItem[] = [
+  { to: "/intel", label: "Intel", permissionKey: "intel" },
+  { to: "/review", label: "Review", permissionKey: "review" },
+  { to: "/candidates", label: "Candidates", permissionKey: "candidates" },
+  { to: "/recipes", label: "Recipes", permissionKey: "recipes" },
+  { to: "/runs", label: "Runs", permissionKey: "runs" },
+  { to: "/authorization", label: "Auth", permissionKey: "authorization" },
+  { to: "/attack-coverage", label: "ATT&CK", permissionKey: "attack-coverage" },
+  { to: "/case-graph", label: "Graph", permissionKey: "case-graph" },
+  { to: "/autonomous", label: "Agent", permissionKey: "autonomous" },
+  { to: "/evidence", label: "Evidence", permissionKey: "evidence" },
+  { to: "/artifacts", label: "Artifacts", permissionKey: "artifacts" },
+  { to: "/provenance", label: "Provenance", permissionKey: "provenance" },
+  { to: "/ledger", label: "Ledger", permissionKey: "ledger" },
+  { to: "/disclosures", label: "Bundles", permissionKey: "disclosures" },
+  { to: "/specimens", label: "Specimens", permissionKey: "specimens" },
+  { to: "/analysis-cases", label: "Cases", permissionKey: "analysis-cases" },
+  { to: "/sandbox-profiles", label: "Profiles", permissionKey: "sandbox-profiles" },
+  { to: "/findings", label: "Findings", permissionKey: "findings" },
+  { to: "/indicators", label: "Indicators", permissionKey: "indicators" },
+  { to: "/prevention-v3", label: "Prevention", permissionKey: "prevention-v3" },
+  { to: "/defang", label: "Defang", permissionKey: "defang" },
+  { to: "/reports", label: "Reports", permissionKey: "reports" },
+  { to: "/ai-sessions", label: "AI Drafts", permissionKey: "ai-sessions" },
+  { to: "/policy", label: "Policy", permissionKey: "policy" },
+  { to: "/workers", label: "Workers", permissionKey: "workers" },
 ];
 
 export function Layout() {
@@ -65,15 +74,18 @@ export function Layout() {
         </NavLink>
 
         <nav className="operator-nav" aria-label="Operator">
-          {operatorNavItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => `operator-link${isActive ? " is-active" : ""}`}
-            >
-              {item.label}
-            </NavLink>
-          ))}
+          {operatorNavItems.map((item) => {
+            const requiredPermission: PermissionSlug =
+              ROUTE_PERMISSIONS[item.permissionKey];
+            return (
+              <RoleAwareNavLink
+                key={item.to}
+                to={item.to}
+                label={item.label}
+                permission={requiredPermission}
+              />
+            );
+          })}
         </nav>
 
         <div className="marketing-actions">
@@ -115,5 +127,33 @@ export function Layout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+
+function RoleAwareNavLink({
+  to,
+  label,
+  permission,
+}: {
+  to: string;
+  label: string;
+  permission: PermissionSlug;
+}) {
+  const { hasPermission, isAuthenticated } = useCurrentRole();
+  // V5 dev: when no token is present (auth_enabled=False on the
+  // backend, anonymous fallthrough), keep the nav fully visible so
+  // local development is not blocked. Real deployments will always
+  // have a token.
+  if (isAuthenticated && !hasPermission(permission)) {
+    return null;
+  }
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) => `operator-link${isActive ? " is-active" : ""}`}
+    >
+      {label}
+    </NavLink>
   );
 }
