@@ -47,6 +47,10 @@ from app.models.worker_pool import (
     WorkerEnrollmentToken,
 )
 
+KNOWN_WORKER_CAPABILITY_FLAGS = frozenset(
+    {"docker", "lima", "windows-vm", "secure-mode"}
+)
+
 _KEK_HKDF_INFO = b"v5/worker-pool-ca/kek"
 _AES_GCM_KEY_LEN = 32  # 256-bit
 _AES_GCM_NONCE_LEN = 12

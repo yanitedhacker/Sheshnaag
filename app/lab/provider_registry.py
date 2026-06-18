@@ -7,8 +7,9 @@ from collections.abc import Iterable
 from app.lab.docker_kali_provider import DockerKaliProvider
 from app.lab.interfaces import LabProvider
 from app.lab.lima_provider import LimaProvider
+from app.lab.providers.libvirt_provider import LibvirtWindowsProvider
 
-SUPPORTED_PROVIDER_NAMES = ("docker_kali", "lima")
+SUPPORTED_PROVIDER_NAMES = ("docker_kali", "lima", "libvirt")
 
 
 class ProviderRegistry:
@@ -37,4 +38,5 @@ def build_default_provider_registry() -> ProviderRegistry:
     registry = ProviderRegistry()
     registry.register(DockerKaliProvider)
     registry.register(LimaProvider)
+    registry.register(LibvirtWindowsProvider)
     return registry

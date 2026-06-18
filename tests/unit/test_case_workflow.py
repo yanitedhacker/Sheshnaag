@@ -45,7 +45,6 @@ def _new_case(session, *, state="triage") -> int:
         tenant_id=1,
         title="t",
         analyst_name="alice",
-        status="open",
         lifecycle_state=state,
     )
     session.add(case)

@@ -324,6 +324,8 @@ export const api = {
     fetchJson<CapabilityCheckResponse>(
       streamUrl("/api/v4/capability/check", { capability, scope: JSON.stringify(scope), actor }),
     ),
+  getCapabilityRegistry: () =>
+    fetchJson<{ items: Array<Record<string, unknown>>; count: number }>("/api/v4/capability/registry"),
   getAttackCoverage: (params?: Record<string, string | number | boolean | undefined>) =>
     fetchTenantJson<AttackCoverageResponse>("/api/v4/attack/coverage", params),
   getAttackTechniqueFindings: (techniqueId: string) =>

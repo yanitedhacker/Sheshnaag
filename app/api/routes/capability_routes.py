@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.security import TokenData, verify_token
-from app.services.capability_policy import CapabilityPolicy
+from app.services.capability_policy import CAPABILITIES, CapabilityPolicy
 
 router = APIRouter(prefix="/api/v4/capability", tags=["Sheshnaag V4 Capability"])
 
@@ -24,6 +24,26 @@ def _parse_scope(scope: str | None) -> dict:
     if not isinstance(parsed, dict):
         raise HTTPException(status_code=400, detail="scope_must_be_object")
     return parsed
+
+
+@router.get("/registry")
+def capability_registry(
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
+):
+    """Return the live capability taxonomy for AuthorizationCenter UI."""
+    items = []
+    for name, cap in sorted(CAPABILITIES.items()):
+        items.append(
+            {
+                "name": name,
+                "default": cap.default,
+                "review_kind": cap.review_kind,
+                "max_ttl_seconds": int(cap.max_ttl.total_seconds()),
+                "requires_engagement_doc": cap.requires_engagement_doc,
+                "requester_roles": sorted(cap.requester_roles) if cap.requester_roles else None,
+            }
+        )
+    return {"items": items, "count": len(items)}
 
 
 @router.get("/check")

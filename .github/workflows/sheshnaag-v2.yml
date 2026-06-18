@@ -151,3 +151,21 @@ jobs:
           path: |
             data/release_metadata/release-metadata.json
             data/release_metadata/maintainer-demo-assessment.json
+
+  v6-adversary-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: V6 capability policy adversary harness
+        run: >
+          PYTHONPATH=. python -m pytest -q
+          tests/red_team/test_capability_escapes.py
+          tests/v6/test_auth_issue_enforcement.py

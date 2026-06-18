@@ -42,6 +42,8 @@ export const PERMISSIONS = [
   "policy.write",
   "admin.roles.assign",
   "analytics.read",
+  "purple.replay",
+  "research.write",
 ] as const;
 
 export type PermissionSlug = (typeof PERMISSIONS)[number];
@@ -79,6 +81,8 @@ export const ROUTE_PERMISSIONS: Record<string, PermissionSlug> = {
   policy: "policy.write",
   workers: "admin.roles.assign", // worker fleet management is lab_lead-only
   analytics: "analytics.read",
+  "purple-team": "purple.replay",
+  research: "research.write",
 };
 
 /**
@@ -133,6 +137,8 @@ export const ROLE_PERMISSIONS: Record<V5Role, ReadonlySet<PermissionSlug>> = {
     "autonomous.run",
     "ledger.read",
     "analytics.read",
+    "purple.replay",
+    "research.write",
   ]),
   reviewer: new Set([
     "intel.read",

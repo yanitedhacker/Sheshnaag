@@ -10,6 +10,7 @@ from app.models.embeddings import (
     VectorOrJSON,
 )
 from app.models.exploit import Exploit
+from app.models.exploit_validation import ExploitValidationRun
 from app.models.integrations import CaseIntegrationLink
 from app.models.malware_lab import (
     AISession,
@@ -91,6 +92,7 @@ __all__ = [
     "CVEReference",
     "AffectedProduct",
     "Exploit",
+    "ExploitValidationRun",
     "RiskScore",
     "RiskHistory",
     "Asset",

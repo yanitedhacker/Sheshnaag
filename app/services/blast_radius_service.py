@@ -71,7 +71,7 @@ class BlastRadiusService:
             "case": {
                 "id": case.id,
                 "title": case.title,
-                "status": case.status,
+                "status": case.lifecycle_state,
                 "priority": case.priority,
             },
             "affected_assets": affected_assets,

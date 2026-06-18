@@ -127,7 +127,7 @@ class AutonomousAgent:
             getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
         )
         return {
-            "case": {"id": case.id, "name": case_label, "status": case.status},
+            "case": {"id": case.id, "name": case_label, "status": case.lifecycle_state},
             "finding_count": len(findings),
             "indicator_count": len(indicators),
             "top_findings": [

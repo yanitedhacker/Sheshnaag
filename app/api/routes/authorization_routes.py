@@ -111,6 +111,7 @@ def request_authorization(
                 else None,
                 engagement_ref=request.engagement_ref,
                 is_admin_approved=request.is_admin_approved,
+                requester_roles=list(token_data.roles or []),
                 extra=request.extra,
             ),
             reviewers,

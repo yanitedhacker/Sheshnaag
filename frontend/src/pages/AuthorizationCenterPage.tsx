@@ -1,16 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { useCurrentRole } from "../hooks/useCurrentRole";
 import type { AuthorizationArtifact, AuthorizationChainRootResponse, AuthorizationChainVerifyResponse } from "../types";
 
-const CAPABILITIES = [
-  "autonomous_agent_run",
-  "external_disclosure",
-  "dynamic_detonation",
-  "cloud_ai_provider_use",
-  "network_egress_open",
-  "memory_exfil_to_host",
-  "offensive_research",
-];
+type CapabilityMeta = {
+  name: string;
+  review_kind: string;
+  requires_engagement_doc: boolean;
+  requester_roles: string[] | null;
+};
 
 function parseScope(scopeText: string): Record<string, unknown> {
   if (!scopeText.trim()) {
@@ -19,9 +17,23 @@ function parseScope(scopeText: string): Record<string, unknown> {
   return JSON.parse(scopeText) as Record<string, unknown>;
 }
 
+function rolesPermitted(meta: CapabilityMeta | undefined, roles: string[]): boolean {
+  if (!meta) return false;
+  if (!meta.requester_roles?.length) return true;
+  return roles.some((r) => meta.requester_roles!.includes(r));
+}
+
+function requiredReviewers(reviewKind: string): number {
+  return reviewKind === "single" ? 1 : 2;
+}
+
 export function AuthorizationCenterPage() {
+  const { roles } = useCurrentRole();
+  const [registry, setRegistry] = useState<CapabilityMeta[]>([]);
   const [items, setItems] = useState<AuthorizationArtifact[]>([]);
-  const [capability, setCapability] = useState(new URLSearchParams(window.location.search).get("capability") ?? "autonomous_agent_run");
+  const [capability, setCapability] = useState(
+    new URLSearchParams(window.location.search).get("capability") ?? "autonomous_agent_run",
+  );
   const [stateFilter, setStateFilter] = useState("");
   const [scopeText, setScopeText] = useState("{}");
   const [requester, setRequester] = useState("Demo Analyst");
@@ -33,6 +45,28 @@ export function AuthorizationCenterPage() {
   const [root, setRoot] = useState<AuthorizationChainRootResponse | null>(null);
   const [verify, setVerify] = useState<AuthorizationChainVerifyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedMeta = useMemo(
+    () => registry.find((item) => item.name === capability),
+    [registry, capability],
+  );
+  const canRequest = rolesPermitted(selectedMeta, roles);
+  const needsDual = selectedMeta ? requiredReviewers(selectedMeta.review_kind) >= 2 : false;
+  const needsAdmin = selectedMeta?.review_kind === "dual_plus_admin";
+  const needsEngagement = Boolean(selectedMeta?.requires_engagement_doc);
+
+  useEffect(() => {
+    api
+      .getCapabilityRegistry()
+      .then((resp) => {
+        const items = resp.items as CapabilityMeta[];
+        setRegistry(items);
+        if (items.length && !items.some((i) => i.name === capability)) {
+          setCapability(items[0].name);
+        }
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load capability registry."));
+  }, []);
 
   async function load() {
     const [auths, chainRoot, chainVerify] = await Promise.all([
@@ -52,7 +86,7 @@ export function AuthorizationCenterPage() {
   async function requestAuthorization() {
     try {
       const reviewers = [{ reviewer: reviewerOne, decision: "approve" }];
-      if (["external_disclosure", "offensive_research", "network_egress_open"].includes(capability)) {
+      if (needsDual) {
         reviewers.push({ reviewer: reviewerTwo, decision: "approve" });
       }
       await api.requestAuthorization({
@@ -63,7 +97,7 @@ export function AuthorizationCenterPage() {
         reviewers,
         requested_ttl_seconds: 3600 * 24,
         engagement_ref: engagementRef || undefined,
-        is_admin_approved: isAdminApproved,
+        is_admin_approved: needsAdmin ? isAdminApproved : false,
       });
       setError(null);
       await load();
@@ -87,7 +121,9 @@ export function AuthorizationCenterPage() {
         <div>
           <p className="eyebrow">Authorization Center</p>
           <h1>Signed capability artifacts and audit-chain verification</h1>
-          <p className="page-copy">Issue, inspect, and revoke scoped V4 authorization artifacts without leaving the operator console.</p>
+          <p className="page-copy">
+            Issue, inspect, and revoke scoped authorization artifacts. Quorum follows each capability&apos;s review_kind.
+          </p>
         </div>
       </div>
 
@@ -101,21 +137,34 @@ export function AuthorizationCenterPage() {
           </div>
           <div className="form-grid">
             <select value={capability} onChange={(event) => setCapability(event.target.value)}>
-              {CAPABILITIES.map((item) => (
-                <option key={item} value={item}>{item}</option>
+              {registry.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name} ({item.review_kind})
+                </option>
               ))}
             </select>
             <input value={requester} onChange={(event) => setRequester(event.target.value)} placeholder="Requester" />
-            <input value={reviewerOne} onChange={(event) => setReviewerOne(event.target.value)} placeholder="Reviewer" />
-            <input value={reviewerTwo} onChange={(event) => setReviewerTwo(event.target.value)} placeholder="Second reviewer" />
-            <input value={engagementRef} onChange={(event) => setEngagementRef(event.target.value)} placeholder="Engagement digest or URL" />
-            <label className="checkbox-row">
-              <input type="checkbox" checked={isAdminApproved} onChange={(event) => setIsAdminApproved(event.target.checked)} />
-              Admin co-signature recorded
-            </label>
+            <input value={reviewerOne} onChange={(event) => setReviewerOne(event.target.value)} placeholder="Reviewer 1" />
+            {needsDual ? (
+              <input value={reviewerTwo} onChange={(event) => setReviewerTwo(event.target.value)} placeholder="Reviewer 2" />
+            ) : null}
+            {needsEngagement ? (
+              <input value={engagementRef} onChange={(event) => setEngagementRef(event.target.value)} placeholder="Engagement digest or URL" />
+            ) : null}
+            {needsAdmin ? (
+              <label className="checkbox-row">
+                <input type="checkbox" checked={isAdminApproved} onChange={(event) => setIsAdminApproved(event.target.checked)} />
+                Admin co-signature recorded
+              </label>
+            ) : null}
             <textarea value={scopeText} onChange={(event) => setScopeText(event.target.value)} rows={4} />
             <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={4} />
-            <button className="primary-button" onClick={() => void requestAuthorization()}>Issue artifact</button>
+            {!canRequest ? (
+              <p className="muted">Your role cannot request this capability ({roles.join(", ") || "none"}).</p>
+            ) : null}
+            <button className="primary-button" disabled={!canRequest} onClick={() => void requestAuthorization()}>
+              Issue artifact
+            </button>
           </div>
         </section>
 
@@ -160,7 +209,9 @@ export function AuthorizationCenterPage() {
               <div>
                 <strong>{item.artifact_id}</strong>
                 <p>{item.capability} · expires {item.expires_at ? new Date(item.expires_at).toLocaleString() : "n/a"}</p>
-                <p className="muted">Approval status: already issued · reviewers {(item.reviewers ?? []).map((reviewer) => String(reviewer.reviewer)).join(", ") || "none"}</p>
+                <p className="muted">
+                  Reviewers {(item.reviewers ?? []).map((reviewer) => String(reviewer.reviewer)).join(", ") || "none"}
+                </p>
                 <pre className="code-card">{JSON.stringify(item.scope, null, 2)}</pre>
               </div>
               <div className="button-row">

@@ -1,0 +1,342 @@
+[
+  {
+    "technique_id": "T1000",
+    "name": "ART technique 0"
+  },
+  {
+    "technique_id": "T1001",
+    "name": "ART technique 1"
+  },
+  {
+    "technique_id": "T1002",
+    "name": "ART technique 2"
+  },
+  {
+    "technique_id": "T1003",
+    "name": "ART technique 3"
+  },
+  {
+    "technique_id": "T1004",
+    "name": "ART technique 4"
+  },
+  {
+    "technique_id": "T1005",
+    "name": "ART technique 5"
+  },
+  {
+    "technique_id": "T1006",
+    "name": "ART technique 6"
+  },
+  {
+    "technique_id": "T1007",
+    "name": "ART technique 7"
+  },
+  {
+    "technique_id": "T1008",
+    "name": "ART technique 8"
+  },
+  {
+    "technique_id": "T1009",
+    "name": "ART technique 9"
+  },
+  {
+    "technique_id": "T1010",
+    "name": "ART technique 10"
+  },
+  {
+    "technique_id": "T1011",
+    "name": "ART technique 11"
+  },
+  {
+    "technique_id": "T1012",
+    "name": "ART technique 12"
+  },
+  {
+    "technique_id": "T1013",
+    "name": "ART technique 13"
+  },
+  {
+    "technique_id": "T1014",
+    "name": "ART technique 14"
+  },
+  {
+    "technique_id": "T1015",
+    "name": "ART technique 15"
+  },
+  {
+    "technique_id": "T1016",
+    "name": "ART technique 16"
+  },
+  {
+    "technique_id": "T1017",
+    "name": "ART technique 17"
+  },
+  {
+    "technique_id": "T1018",
+    "name": "ART technique 18"
+  },
+  {
+    "technique_id": "T1019",
+    "name": "ART technique 19"
+  },
+  {
+    "technique_id": "T1020",
+    "name": "ART technique 20"
+  },
+  {
+    "technique_id": "T1021",
+    "name": "ART technique 21"
+  },
+  {
+    "technique_id": "T1022",
+    "name": "ART technique 22"
+  },
+  {
+    "technique_id": "T1023",
+    "name": "ART technique 23"
+  },
+  {
+    "technique_id": "T1024",
+    "name": "ART technique 24"
+  },
+  {
+    "technique_id": "T1025",
+    "name": "ART technique 25"
+  },
+  {
+    "technique_id": "T1026",
+    "name": "ART technique 26"
+  },
+  {
+    "technique_id": "T1027",
+    "name": "ART technique 27"
+  },
+  {
+    "technique_id": "T1028",
+    "name": "ART technique 28"
+  },
+  {
+    "technique_id": "T1029",
+    "name": "ART technique 29"
+  },
+  {
+    "technique_id": "T1030",
+    "name": "ART technique 30"
+  },
+  {
+    "technique_id": "T1031",
+    "name": "ART technique 31"
+  },
+  {
+    "technique_id": "T1032",
+    "name": "ART technique 32"
+  },
+  {
+    "technique_id": "T1033",
+    "name": "ART technique 33"
+  },
+  {
+    "technique_id": "T1034",
+    "name": "ART technique 34"
+  },
+  {
+    "technique_id": "T1035",
+    "name": "ART technique 35"
+  },
+  {
+    "technique_id": "T1036",
+    "name": "ART technique 36"
+  },
+  {
+    "technique_id": "T1037",
+    "name": "ART technique 37"
+  },
+  {
+    "technique_id": "T1038",
+    "name": "ART technique 38"
+  },
+  {
+    "technique_id": "T1039",
+    "name": "ART technique 39"
+  },
+  {
+    "technique_id": "T1040",
+    "name": "ART technique 40"
+  },
+  {
+    "technique_id": "T1041",
+    "name": "ART technique 41"
+  },
+  {
+    "technique_id": "T1042",
+    "name": "ART technique 42"
+  },
+  {
+    "technique_id": "T1043",
+    "name": "ART technique 43"
+  },
+  {
+    "technique_id": "T1044",
+    "name": "ART technique 44"
+  },
+  {
+    "technique_id": "T1045",
+    "name": "ART technique 45"
+  },
+  {
+    "technique_id": "T1046",
+    "name": "ART technique 46"
+  },
+  {
+    "technique_id": "T1047",
+    "name": "ART technique 47"
+  },
+  {
+    "technique_id": "T1048",
+    "name": "ART technique 48"
+  },
+  {
+    "technique_id": "T1049",
+    "name": "ART technique 49"
+  },
+  {
+    "technique_id": "T1050",
+    "name": "ART technique 50"
+  },
+  {
+    "technique_id": "T1051",
+    "name": "ART technique 51"
+  },
+  {
+    "technique_id": "T1052",
+    "name": "ART technique 52"
+  },
+  {
+    "technique_id": "T1053",
+    "name": "ART technique 53"
+  },
+  {
+    "technique_id": "T1054",
+    "name": "ART technique 54"
+  },
+  {
+    "technique_id": "T1055",
+    "name": "ART technique 55"
+  },
+  {
+    "technique_id": "T1056",
+    "name": "ART technique 56"
+  },
+  {
+    "technique_id": "T1057",
+    "name": "ART technique 57"
+  },
+  {
+    "technique_id": "T1058",
+    "name": "ART technique 58"
+  },
+  {
+    "technique_id": "T1059",
+    "name": "ART technique 59"
+  },
+  {
+    "technique_id": "T1060",
+    "name": "ART technique 60"
+  },
+  {
+    "technique_id": "T1061",
+    "name": "ART technique 61"
+  },
+  {
+    "technique_id": "T1062",
+    "name": "ART technique 62"
+  },
+  {
+    "technique_id": "T1063",
+    "name": "ART technique 63"
+  },
+  {
+    "technique_id": "T1064",
+    "name": "ART technique 64"
+  },
+  {
+    "technique_id": "T1065",
+    "name": "ART technique 65"
+  },
+  {
+    "technique_id": "T1066",
+    "name": "ART technique 66"
+  },
+  {
+    "technique_id": "T1067",
+    "name": "ART technique 67"
+  },
+  {
+    "technique_id": "T1068",
+    "name": "ART technique 68"
+  },
+  {
+    "technique_id": "T1069",
+    "name": "ART technique 69"
+  },
+  {
+    "technique_id": "T1070",
+    "name": "ART technique 70"
+  },
+  {
+    "technique_id": "T1071",
+    "name": "ART technique 71"
+  },
+  {
+    "technique_id": "T1072",
+    "name": "ART technique 72"
+  },
+  {
+    "technique_id": "T1073",
+    "name": "ART technique 73"
+  },
+  {
+    "technique_id": "T1074",
+    "name": "ART technique 74"
+  },
+  {
+    "technique_id": "T1075",
+    "name": "ART technique 75"
+  },
+  {
+    "technique_id": "T1076",
+    "name": "ART technique 76"
+  },
+  {
+    "technique_id": "T1077",
+    "name": "ART technique 77"
+  },
+  {
+    "technique_id": "T1078",
+    "name": "ART technique 78"
+  },
+  {
+    "technique_id": "T1079",
+    "name": "ART technique 79"
+  },
+  {
+    "technique_id": "T1080",
+    "name": "ART technique 80"
+  },
+  {
+    "technique_id": "T1081",
+    "name": "ART technique 81"
+  },
+  {
+    "technique_id": "T1082",
+    "name": "ART technique 82"
+  },
+  {
+    "technique_id": "T1083",
+    "name": "ART technique 83"
+  },
+  {
+    "technique_id": "T1084",
+    "name": "ART technique 84"
+  }
+]

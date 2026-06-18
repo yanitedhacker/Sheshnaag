@@ -9,9 +9,10 @@ from app.lab.provider_registry import build_default_provider_registry
 @pytest.mark.unit
 def test_provider_registry_exposes_supported_v2_providers():
     registry = build_default_provider_registry()
-    assert tuple(sorted(registry.supported())) == ("docker_kali", "lima")
+    assert tuple(sorted(registry.supported())) == ("docker_kali", "libvirt", "lima")
     assert registry.create("docker_kali").provider_name == "docker_kali"
     assert registry.create("lima").provider_name == "lima"
+    assert registry.create("libvirt").provider_name == "libvirt"
 
 
 @pytest.mark.unit

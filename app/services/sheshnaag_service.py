@@ -1631,6 +1631,7 @@ class SheshnaagService:
         status: str | None = None,
         run_id: int | None = None,
         reviewer: str | None = None,
+        assignee_role: str | None = None,
         needs_attention: bool | None = None,
     ) -> dict[str, Any]:
         """Aggregate reviewable runs, evidence, artifacts, and bundles into one operator queue."""
@@ -1830,6 +1831,21 @@ class SheshnaagService:
             ]
         if reviewer:
             items = [item for item in items if item.get("last_reviewer") == reviewer]
+        if assignee_role:
+            from app.models.v2 import TenantMembership, TenantUser
+
+            role_rows = (
+                self.session.query(TenantUser.email, TenantMembership.role)
+                .join(TenantMembership, TenantMembership.user_id == TenantUser.id)
+                .filter(TenantMembership.tenant_id == tenant.id)
+                .all()
+            )
+            emails_for_role = {email for email, role in role_rows if role == assignee_role}
+            items = [
+                item
+                for item in items
+                if not item.get("assignee") or item.get("assignee") in emails_for_role
+            ]
         if needs_attention is not None:
             items = [item for item in items if bool(item["needs_attention_now"]) is needs_attention]
         items.sort(

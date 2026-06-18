@@ -30,6 +30,8 @@ import { SandboxProfilesPage } from "./pages/SandboxProfilesPage";
 import { SpecimenIntakePage } from "./pages/SpecimenIntakePage";
 import { TeamAnalyticsPage } from "./pages/TeamAnalyticsPage";
 import { WorkerFleetPage } from "./pages/WorkerFleetPage";
+import { PurpleTeamPage } from "./pages/PurpleTeamPage";
+import { ResearchWorkbenchPage } from "./pages/ResearchWorkbenchPage";
 
 import type { ReactNode } from "react";
 
@@ -75,6 +77,8 @@ export default function App() {
         <Route path="policy" element={gated("policy", <PolicyCenterPage />)} />
         <Route path="workers" element={gated("workers", <WorkerFleetPage />)} />
         <Route path="analytics" element={gated("analytics", <TeamAnalyticsPage />)} />
+        <Route path="purple-team" element={gated("purple-team", <PurpleTeamPage />)} />
+        <Route path="research" element={gated("research", <ResearchWorkbenchPage />)} />
         <Route path="not-authorized" element={<NotAuthorizedPage />} />
         <Route path="*" element={gated("intel", <IntelDashboardPage />)} />
       </Route>
