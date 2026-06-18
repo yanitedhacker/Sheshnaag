@@ -70,6 +70,7 @@ from app.api.routes import (
     tenant_router,
     workbench_router,
     workers_router,
+    v6_router,
 )
 from app.core.config import settings, validate_settings_for_startup
 from app.core.database import Base, SessionLocal, engine
@@ -403,6 +404,7 @@ app.include_router(auth_oidc_router)
 app.include_router(case_queue_router)
 app.include_router(integrations_webhook_router)
 app.include_router(team_analytics_router)
+app.include_router(v6_router)
 
 # Mount static files for frontend
 if FRONTEND_DIST_DIR.exists():

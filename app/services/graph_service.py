@@ -1312,7 +1312,7 @@ class ExposureGraphService:
             "label": case_label,
             "metadata": {
                 "case_id": case.id,
-                "status": case.status,
+                "status": case.lifecycle_state,
                 "priority": getattr(case, "priority", None),
             },
         }
@@ -1333,7 +1333,7 @@ class ExposureGraphService:
             "case": {
                 "id": case.id,
                 "name": case_label,
-                "status": case.status,
+                "status": case.lifecycle_state,
                 "indicator_count": len(indicators),
                 "finding_count": len(findings),
             },

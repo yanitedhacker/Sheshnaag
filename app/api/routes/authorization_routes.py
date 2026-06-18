@@ -82,7 +82,7 @@ def _artifact_payload(row: AuthorizationArtifact) -> dict[str, Any]:
 def _request_payload(
     row: AuthorizationRequestRecord,
     *,
-    decisions: Optional[list[AuthorizationDecisionRecord]] = None,
+    decisions: list[AuthorizationDecisionRecord] | None = None,
 ) -> dict[str, Any]:
     return {
         "request_id": row.request_id,
@@ -159,8 +159,8 @@ def list_authorizations(
 
 @router.get("/requests")
 def list_authorization_requests(
-    capability: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
+    capability: str | None = Query(None),
+    state: str | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 - auth gate
 ):

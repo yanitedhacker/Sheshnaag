@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { useCurrentRole } from "../hooks/useCurrentRole";
 import type {
   AuthorizationArtifact,
   AuthorizationChainRootResponse,
@@ -7,15 +8,12 @@ import type {
   AuthorizationRequestRecord,
 } from "../types";
 
-const CAPABILITIES = [
-  "autonomous_agent_run",
-  "external_disclosure",
-  "dynamic_detonation",
-  "cloud_ai_provider_use",
-  "network_egress_open",
-  "memory_exfil_to_host",
-  "offensive_research",
-];
+type CapabilityMeta = {
+  name: string;
+  review_kind: string;
+  requires_engagement_doc: boolean;
+  requester_roles: string[] | null;
+};
 
 const DEFAULT_ACTION_ARGUMENTS = JSON.stringify(
   {
@@ -36,7 +34,15 @@ function parseActionArguments(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function rolesPermitted(meta: CapabilityMeta | undefined, roles: string[]): boolean {
+  if (!meta) return false;
+  if (!meta.requester_roles?.length) return true;
+  return roles.some((r) => meta.requester_roles!.includes(r));
+}
+
 export function AuthorizationCenterPage() {
+  const { roles } = useCurrentRole();
+  const [registry, setRegistry] = useState<CapabilityMeta[]>([]);
   const [artifacts, setArtifacts] = useState<AuthorizationArtifact[]>([]);
   const [requests, setRequests] = useState<AuthorizationRequestRecord[]>([]);
   const [capability, setCapability] = useState(
@@ -52,6 +58,26 @@ export function AuthorizationCenterPage() {
   const [root, setRoot] = useState<AuthorizationChainRootResponse | null>(null);
   const [verify, setVerify] = useState<AuthorizationChainVerifyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedMeta = useMemo(
+    () => registry.find((item) => item.name === capability),
+    [registry, capability],
+  );
+  const canRequest = rolesPermitted(selectedMeta, roles);
+  const needsEngagement = Boolean(selectedMeta?.requires_engagement_doc);
+
+  useEffect(() => {
+    api
+      .getCapabilityRegistry()
+      .then((resp) => {
+        const items = resp.items as CapabilityMeta[];
+        setRegistry(items);
+        if (items.length && !items.some((i) => i.name === capability)) {
+          setCapability(items[0].name);
+        }
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load capability registry."));
+  }, []);
 
   async function load() {
     const [authorizationArtifacts, authorizationRequests, chainRoot, chainVerify] = await Promise.all([
@@ -129,7 +155,7 @@ export function AuthorizationCenterPage() {
           <p className="eyebrow">Authorization Center</p>
           <h1>Independent exact-action approvals</h1>
           <p className="page-copy">
-            Request one action, review its server-derived digest, and issue a signed artifact only after an independent decision.
+            Request one action, review its server-derived digest, and issue a signed artifact only after the server-enforced independent quorum approves it.
           </p>
         </div>
       </div>
@@ -144,12 +170,16 @@ export function AuthorizationCenterPage() {
           </div>
           <div className="form-grid">
             <select value={capability} onChange={(event) => setCapability(event.target.value)}>
-              {CAPABILITIES.map((item) => (
-                <option key={item} value={item}>{item}</option>
+              {registry.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name} ({item.review_kind})
+                </option>
               ))}
             </select>
             <input value={requester} onChange={(event) => setRequester(event.target.value)} placeholder="Requester fallback for local development" />
-            <input value={engagementRef} onChange={(event) => setEngagementRef(event.target.value)} placeholder="Engagement digest or URL when required" />
+            {needsEngagement ? (
+              <input value={engagementRef} onChange={(event) => setEngagementRef(event.target.value)} placeholder="Engagement digest or URL" />
+            ) : null}
             <label>
               Exact action arguments
               <textarea value={actionArgumentsText} onChange={(event) => setActionArgumentsText(event.target.value)} rows={8} />
@@ -158,7 +188,12 @@ export function AuthorizationCenterPage() {
               Reason
               <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={4} />
             </label>
-            <button className="primary-button" onClick={() => void requestAuthorization()}>Submit request</button>
+            {!canRequest ? (
+              <p className="muted">Your role cannot request this capability ({roles.join(", ") || "none"}).</p>
+            ) : null}
+            <button className="primary-button" disabled={!canRequest} onClick={() => void requestAuthorization()}>
+              Submit request
+            </button>
           </div>
         </section>
 
@@ -250,7 +285,9 @@ export function AuthorizationCenterPage() {
               <div>
                 <strong>{item.artifact_id}</strong>
                 <p>{item.capability} · expires {item.expires_at ? new Date(item.expires_at).toLocaleString() : "n/a"}</p>
-                <p className="muted">Reviewers {(item.reviewers ?? []).map((reviewer) => String(reviewer.reviewer)).join(", ") || "none"}</p>
+                <p className="muted">
+                  Reviewers {(item.reviewers ?? []).map((reviewer) => String(reviewer.reviewer)).join(", ") || "none"}
+                </p>
                 <pre className="code-card">{JSON.stringify(item.scope, null, 2)}</pre>
               </div>
               <div className="button-row">

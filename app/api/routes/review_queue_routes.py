@@ -18,6 +18,7 @@ def list_review_queue(
     status: str | None = Query(None),
     run_id: int | None = Query(None),
     reviewer: str | None = Query(None),
+    assignee_role: str | None = Query(None),
     needs_attention: bool | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
@@ -31,5 +32,6 @@ def list_review_queue(
         status=status,
         run_id=run_id,
         reviewer=reviewer,
+        assignee_role=assignee_role,
         needs_attention=needs_attention,
     )

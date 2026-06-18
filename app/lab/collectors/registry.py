@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.lab.collectors.sysmon import SysmonEventsCollector
+from app.lab.collectors.etw import EtwEventsCollector
 from app.lab.collectors.falco_collector import FalcoEventsCollector
 from app.lab.collectors.file_diff import FileDiffCollector
 from app.lab.collectors.network_metadata import NetworkMetadataCollector
@@ -26,6 +28,8 @@ COLLECTOR_REGISTRY: dict[str, type[Collector]] = {
     "pcap": PcapCollector,
     "falco_events": FalcoEventsCollector,
     "tetragon_events": TetragonEventsCollector,
+    "sysmon_events": SysmonEventsCollector,
+    "etw_events": EtwEventsCollector,
 }
 
 

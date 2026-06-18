@@ -57,6 +57,7 @@ from app.api.routes.template_routes import router as template_router
 from app.api.routes.tenant_routes import router as tenant_router
 from app.api.routes.workbench_routes import router as workbench_router
 from app.api.routes.workers import router as workers_router
+from app.api.routes.v6_routes import router as v6_router
 
 __all__ = [
     "cve_router",
@@ -116,4 +117,5 @@ __all__ = [
     "case_queue_router",
     "integrations_webhook_router",
     "team_analytics_router",
+    "v6_router",
 ]

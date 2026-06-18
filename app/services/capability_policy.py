@@ -261,6 +261,7 @@ class IssuanceRequest:
     requested_ttl: timedelta | None = None
     engagement_ref: str | None = None  # sha256 or URL for the engagement doc
     is_admin_approved: bool = False  # set to True when an admin co-signs
+    requester_roles: list[str] | None = None  # V6 W1 — caller's V5 roles
     extra: dict = field(default_factory=dict)
 
 
@@ -900,6 +901,10 @@ class CapabilityPolicy:
         cap = CAPABILITIES.get(request.capability)
         if cap is None:
             raise ValueError(f"unknown_capability:{request.capability}")
+
+        if request.requester_roles is not None:
+            if not self.permitted_requester_for(request.capability, request.requester_roles):
+                raise ValueError("requester_role_denied")
 
         approving = [r for r in reviewers if r.decision == "approve"]
         names = {r.reviewer for r in approving}
