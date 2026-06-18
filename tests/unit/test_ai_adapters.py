@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import json
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 import httpx
@@ -19,7 +20,6 @@ from app.services.ai_adapters import (
     OpenAIAdapter,
     collect_stream,
 )
-
 
 # -- Helpers ------------------------------------------------------------------
 
@@ -46,7 +46,7 @@ class _FakeClient:
     def __init__(self, lines: Iterable[str], status_code: int = 200) -> None:
         self._lines = list(lines)
         self._status = status_code
-        self.last_request: Dict[str, Any] = {}
+        self.last_request: dict[str, Any] = {}
 
     @contextlib.contextmanager
     def stream(self, method: str, url: str, headers=None, json=None):
@@ -63,7 +63,7 @@ class _FakeClient:
         pass
 
 
-def _sse(event: Dict[str, Any]) -> str:
+def _sse(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event)}"
 
 
@@ -86,22 +86,63 @@ def test_anthropic_adapter_health_configured(monkeypatch):
 
 def test_anthropic_adapter_streams_text_and_stops():
     lines = [
-        _sse({"type": "message_start", "message": {"id": "msg_1", "model": "claude-3-5-sonnet", "usage": {"input_tokens": 9}}}),
-        _sse({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
-        _sse({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}),
-        _sse({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": " world"}}),
+        _sse(
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_1",
+                    "model": "claude-3-5-sonnet",
+                    "usage": {"input_tokens": 9},
+                },
+            }
+        ),
+        _sse(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            }
+        ),
+        _sse(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Hello"},
+            }
+        ),
+        _sse(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": " world"},
+            }
+        ),
         _sse({"type": "content_block_stop", "index": 0}),
-        _sse({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}}),
+        _sse(
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 2},
+            }
+        ),
         _sse({"type": "message_stop"}),
     ]
     client = _FakeClient(lines)
     adapter = AnthropicAdapter(api_key="sk-ant-test", http_client=client)
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x", "summary": "y"}]},
-        tools=[{"name": "query_knowledge", "description": "rag", "input_schema": {"type": "object"}}],
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x", "summary": "y"}]},
+            tools=[
+                {
+                    "name": "query_knowledge",
+                    "description": "rag",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        )
+    )
     result = collect_stream(events)
     assert "Hello world" in result["text"]
     assert result["stop_reason"] == "end_turn"
@@ -114,20 +155,46 @@ def test_anthropic_adapter_streams_text_and_stops():
 def test_anthropic_adapter_parses_tool_use():
     lines = [
         _sse({"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 1}}}),
-        _sse({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "tu_1", "name": "query_knowledge"}}),
-        _sse({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"query\": "}}),
-        _sse({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "\"malware\"}"}}),
+        _sse(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "tool_use", "id": "tu_1", "name": "query_knowledge"},
+            }
+        ),
+        _sse(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"query": '},
+            }
+        ),
+        _sse(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '"malware"}'},
+            }
+        ),
         _sse({"type": "content_block_stop", "index": 0}),
-        _sse({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 7}}),
+        _sse(
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use"},
+                "usage": {"output_tokens": 7},
+            }
+        ),
         _sse({"type": "message_stop"}),
     ]
     client = _FakeClient(lines)
     adapter = AnthropicAdapter(api_key="x", http_client=client)
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+        )
+    )
     agg = collect_stream(events)
     assert agg["stop_reason"] == "tool_use"
     assert len(agg["tool_uses"]) == 1
@@ -157,12 +224,20 @@ def test_openai_adapter_streams_text_and_stops():
     ]
     client = _FakeClient(lines)
     adapter = OpenAIAdapter(api_key="sk-test", http_client=client)
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-        tools=[{"name": "query_knowledge", "description": "rag", "input_schema": {"type": "object"}}],
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+            tools=[
+                {
+                    "name": "query_knowledge",
+                    "description": "rag",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        )
+    )
     agg = collect_stream(events)
     assert agg["text"] == "Hello"
     assert agg["stop_reason"] == "end_turn"
@@ -174,22 +249,53 @@ def test_openai_adapter_streams_text_and_stops():
 
 def test_openai_adapter_emits_tool_use_from_tool_calls():
     lines = [
-        _sse({"id": "c", "model": "gpt", "choices": [{"delta": {"tool_calls": [
-            {"index": 0, "id": "call_1", "function": {"name": "pivot_ioc", "arguments": "{\"ind"}},
-        ]}}]}),
-        _sse({"choices": [{"delta": {"tool_calls": [
-            {"index": 0, "function": {"arguments": "icator_value\": \"1.2.3.4\"}"}},
-        ]}}]}),
+        _sse(
+            {
+                "id": "c",
+                "model": "gpt",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {"name": "pivot_ioc", "arguments": '{"ind'},
+                                },
+                            ]
+                        }
+                    }
+                ],
+            }
+        ),
+        _sse(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"arguments": 'icator_value": "1.2.3.4"}'},
+                                },
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
         _sse({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
         "data: [DONE]",
     ]
     client = _FakeClient(lines)
     adapter = OpenAIAdapter(api_key="sk-test", http_client=client)
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+        )
+    )
     agg = collect_stream(events)
     assert agg["stop_reason"] == "tool_use"
     assert agg["tool_uses"][0]["name"] == "pivot_ioc"
@@ -212,17 +318,31 @@ def test_gemini_adapter_health_configured():
 def test_gemini_adapter_streams_text_and_stops():
     lines = [
         _sse({"candidates": [{"content": {"parts": [{"text": "Hi"}]}}]}),
-        _sse({"candidates": [{"content": {"parts": [{"text": " there"}]}, "finishReason": "STOP"}],
-              "usageMetadata": {"promptTokenCount": 4, "candidatesTokenCount": 2}}),
+        _sse(
+            {
+                "candidates": [
+                    {"content": {"parts": [{"text": " there"}]}, "finishReason": "STOP"}
+                ],
+                "usageMetadata": {"promptTokenCount": 4, "candidatesTokenCount": 2},
+            }
+        ),
     ]
     client = _FakeClient(lines)
     adapter = GeminiAdapter(api_key="g-test", http_client=client)
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-        tools=[{"name": "query_knowledge", "description": "rag", "input_schema": {"type": "object"}}],
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+            tools=[
+                {
+                    "name": "query_knowledge",
+                    "description": "rag",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        )
+    )
     agg = collect_stream(events)
     assert agg["text"] == "Hi there"
     assert agg["stop_reason"] == "end_turn"
@@ -270,11 +390,13 @@ def test_azure_adapter_streams_against_deployment_url():
         api_version="2024-08-01-preview",
         http_client=client,
     )
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+        )
+    )
     agg = collect_stream(events)
     assert agg["text"] == "yo"
     url = client.last_request["url"]
@@ -287,7 +409,13 @@ def test_azure_adapter_streams_against_deployment_url():
 
 
 def test_bedrock_adapter_health_missing_credentials(monkeypatch):
-    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"):
+    for key in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_PROFILE",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+    ):
         monkeypatch.delenv(key, raising=False)
     adapter = BedrockAdapter()
     h = adapter.health()
@@ -307,19 +435,37 @@ def test_bedrock_adapter_health_configured(monkeypatch):
 def test_bedrock_adapter_streams_anthropic_family():
     # Two content deltas + message_delta with end_turn.
     chunks = [
-        {"chunk": {"bytes": json.dumps({
-            "type": "content_block_delta",
-            "delta": {"type": "text_delta", "text": "hello"},
-        }).encode("utf-8")}},
-        {"chunk": {"bytes": json.dumps({
-            "type": "content_block_delta",
-            "delta": {"type": "text_delta", "text": " bedrock"},
-        }).encode("utf-8")}},
-        {"chunk": {"bytes": json.dumps({
-            "type": "message_delta",
-            "delta": {"stop_reason": "end_turn"},
-            "usage": {"input_tokens": 5, "output_tokens": 2},
-        }).encode("utf-8")}},
+        {
+            "chunk": {
+                "bytes": json.dumps(
+                    {
+                        "type": "content_block_delta",
+                        "delta": {"type": "text_delta", "text": "hello"},
+                    }
+                ).encode("utf-8")
+            }
+        },
+        {
+            "chunk": {
+                "bytes": json.dumps(
+                    {
+                        "type": "content_block_delta",
+                        "delta": {"type": "text_delta", "text": " bedrock"},
+                    }
+                ).encode("utf-8")
+            }
+        },
+        {
+            "chunk": {
+                "bytes": json.dumps(
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": "end_turn"},
+                        "usage": {"input_tokens": 5, "output_tokens": 2},
+                    }
+                ).encode("utf-8")
+            }
+        },
     ]
     fake_client = MagicMock()
     fake_client.invoke_model_with_response_stream.return_value = {"body": iter(chunks)}
@@ -329,11 +475,13 @@ def test_bedrock_adapter_streams_anthropic_family():
         model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
         bedrock_client=fake_client,
     )
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+        )
+    )
     agg = collect_stream(events)
     assert agg["text"] == "hello bedrock"
     assert agg["stop_reason"] == "end_turn"
@@ -346,12 +494,18 @@ def test_bedrock_adapter_streams_anthropic_family():
 
 def test_bedrock_adapter_streams_titan_family():
     chunks = [
-        {"chunk": {"bytes": json.dumps({
-            "outputText": "titan says hi",
-            "completionReason": "FINISH",
-            "inputTextTokenCount": 3,
-            "totalOutputTextTokenCount": 4,
-        }).encode("utf-8")}},
+        {
+            "chunk": {
+                "bytes": json.dumps(
+                    {
+                        "outputText": "titan says hi",
+                        "completionReason": "FINISH",
+                        "inputTextTokenCount": 3,
+                        "totalOutputTextTokenCount": 4,
+                    }
+                ).encode("utf-8")
+            }
+        },
     ]
     fake_client = MagicMock()
     fake_client.invoke_model_with_response_stream.return_value = {"body": iter(chunks)}
@@ -360,11 +514,13 @@ def test_bedrock_adapter_streams_titan_family():
         model_id="amazon.titan-text-lite-v1",
         bedrock_client=fake_client,
     )
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+        )
+    )
     agg = collect_stream(events)
     assert "titan says hi" in agg["text"]
 
@@ -392,11 +548,13 @@ def test_local_adapter_streams_openai_compatible():
         model="llama3.1:8b",
         http_client=client,
     )
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+        )
+    )
     agg = collect_stream(events)
     assert agg["text"] == "local hi"
     assert agg["stop_reason"] == "end_turn"
@@ -408,11 +566,13 @@ def test_local_adapter_streams_openai_compatible():
 def test_openai_adapter_surfaces_http_error_as_event():
     client = _FakeClient(lines=[], status_code=503)
     adapter = OpenAIAdapter(api_key="sk-test", http_client=client)
-    events = list(adapter.stream(
-        capability="summarize_evidence",
-        prompt="hi",
-        grounding={"items": [{"label": "x"}]},
-    ))
+    events = list(
+        adapter.stream(
+            capability="summarize_evidence",
+            prompt="hi",
+            grounding={"items": [{"label": "x"}]},
+        )
+    )
     agg = collect_stream(events)
     assert agg["stop_reason"] == "error"
     assert agg["errors"]

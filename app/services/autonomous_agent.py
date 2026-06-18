@@ -26,11 +26,11 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.event_bus import EventBus, run_event_stream
+from app.core.event_bus import EventBus
 from app.core.time import utc_now
 from app.models.malware_lab import AnalysisCase, BehaviorFinding, IndicatorArtifact
 from app.models.sheshnaag import AutonomousAgentRun
@@ -52,10 +52,10 @@ class AgentReplayError(RuntimeError):
 class AgentStep:
     step: int
     thought: str
-    tool: Optional[str]
-    tool_input: Optional[Dict[str, Any]]
-    tool_output: Optional[Dict[str, Any]]
-    citations: List[Dict[str, Any]] = field(default_factory=list)
+    tool: str | None
+    tool_input: dict[str, Any] | None
+    tool_output: dict[str, Any] | None
+    citations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -63,14 +63,14 @@ class AgentRun:
     run_id: str
     goal: str
     status: str  # "completed" | "denied" | "failed"
-    reason: Optional[str]
-    steps: List[AgentStep]
+    reason: str | None
+    steps: list[AgentStep]
     final_summary: str
-    disposition: Dict[str, Any] = field(default_factory=dict)
-    action_digest: Optional[str] = None
-    authorization_artifact_id: Optional[str] = None
+    disposition: dict[str, Any] = field(default_factory=dict)
+    action_digest: str | None = None
+    authorization_artifact_id: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "goal": self.goal,
@@ -93,8 +93,8 @@ class AutonomousAgent:
         self,
         session: Session,
         *,
-        ai: Optional[AIProviderHarness] = None,
-        event_bus: Optional[EventBus] = None,
+        ai: AIProviderHarness | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.session = session
         self.ai = ai or AIProviderHarness()
@@ -108,7 +108,7 @@ class AutonomousAgent:
 
     # ------------------------------------------------------------------ tools
 
-    def _tool_summarise_case(self, tenant: Tenant, *, case_id: int) -> Dict[str, Any]:
+    def _tool_summarise_case(self, tenant: Tenant, *, case_id: int) -> dict[str, Any]:
         case = (
             self.session.query(AnalysisCase)
             .filter(AnalysisCase.tenant_id == tenant.id, AnalysisCase.id == case_id)
@@ -118,17 +118,24 @@ class AutonomousAgent:
             return {"error": "case_not_found", "case_id": case_id}
         findings = (
             self.session.query(BehaviorFinding)
-            .filter(BehaviorFinding.tenant_id == tenant.id, BehaviorFinding.analysis_case_id == case_id)
+            .filter(
+                BehaviorFinding.tenant_id == tenant.id, BehaviorFinding.analysis_case_id == case_id
+            )
             .limit(20)
             .all()
         )
         indicators = (
             self.session.query(IndicatorArtifact)
-            .filter(IndicatorArtifact.tenant_id == tenant.id, IndicatorArtifact.analysis_case_id == case_id)
+            .filter(
+                IndicatorArtifact.tenant_id == tenant.id,
+                IndicatorArtifact.analysis_case_id == case_id,
+            )
             .limit(20)
             .all()
         )
-        case_label = getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
+        case_label = (
+            getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
+        )
         return {
             "case": {"id": case.id, "name": case_label, "status": case.status},
             "finding_count": len(findings),
@@ -143,15 +150,13 @@ class AutonomousAgent:
             ],
         }
 
-    def _tool_attack_summary(self, tenant: Tenant) -> Dict[str, Any]:
+    def _tool_attack_summary(self, tenant: Tenant) -> dict[str, Any]:
         from app.services.attack_mapper import TECHNIQUE_TACTICS
 
         findings = (
-            self.session.query(BehaviorFinding)
-            .filter(BehaviorFinding.tenant_id == tenant.id)
-            .all()
+            self.session.query(BehaviorFinding).filter(BehaviorFinding.tenant_id == tenant.id).all()
         )
-        tactics: Dict[str, int] = {}
+        tactics: dict[str, int] = {}
         for finding in findings:
             payload = finding.payload or {}
             for technique in payload.get("attack_techniques") or []:
@@ -160,7 +165,9 @@ class AutonomousAgent:
                 tactics[tactic] = tactics.get(tactic, 0) + 1
         return {"tactic_counts": tactics, "finding_count": len(findings)}
 
-    def _dispatch_tool(self, tenant: Tenant, tool: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    def _dispatch_tool(
+        self, tenant: Tenant, tool: str, tool_input: dict[str, Any]
+    ) -> dict[str, Any]:
         if tool == "summarise_case":
             return self._tool_summarise_case(tenant, case_id=int(tool_input.get("case_id") or 0))
         if tool == "attack_summary":
@@ -175,11 +182,11 @@ class AutonomousAgent:
         *,
         goal: str,
         actor: str = "ui",
-        case_id: Optional[int] = None,
-        max_steps: Optional[int] = None,
+        case_id: int | None = None,
+        max_steps: int | None = None,
     ) -> AgentRun:
         run_id = f"agent_{uuid.uuid4().hex[:16]}"
-        steps: List[AgentStep] = []
+        steps: list[AgentStep] = []
 
         requested_steps = max_steps if max_steps is not None else self.DEFAULT_MAX_STEPS
         budget = max(1, min(requested_steps, 10))
@@ -191,9 +198,9 @@ class AutonomousAgent:
         }
 
         # Capability gate: every policy error denies before the first tool.
-        denial: Optional[str] = None
-        policy_reason: Optional[str] = None
-        authorization_artifact_id: Optional[str] = None
+        denial: str | None = None
+        policy_reason: str | None = None
+        authorization_artifact_id: str | None = None
         from app.services.capability_policy import (
             CapabilityPolicy,
             exact_action_scope,
@@ -308,7 +315,7 @@ class AutonomousAgent:
         self._persist(tenant=tenant, run=run, actor=actor, case_id=case_id)
         return run
 
-    def _publish(self, run_id: str, event_type: str, payload: Dict[str, Any]) -> None:
+    def _publish(self, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
         try:
             self.bus.publish(
                 f"sheshnaag:agent:{run_id}:events",
@@ -341,7 +348,7 @@ class AutonomousAgent:
             {"summary": run.final_summary},
         )
 
-    def _synthesise(self, *, goal: str, steps: List[AgentStep], tenant: Tenant) -> Dict[str, Any]:
+    def _synthesise(self, *, goal: str, steps: list[AgentStep], tenant: Tenant) -> dict[str, Any]:
         # Default deterministic summary so the agent works even when no LLM
         # provider is configured. Production deployments add a provider via
         # ``AUTONOMOUS_AGENT_PROVIDER`` and the summary becomes a grounded
@@ -364,7 +371,11 @@ class AutonomousAgent:
         try:
             grounding = {
                 "items": [
-                    {"kind": "agent_step", "title": f"step {step.step} {step.tool}", "summary": json.dumps(step.tool_output, default=str)[:600]}
+                    {
+                        "kind": "agent_step",
+                        "title": f"step {step.step} {step.tool}",
+                        "summary": json.dumps(step.tool_output, default=str)[:600],
+                    }
                     for step in steps
                 ]
             }
@@ -394,7 +405,7 @@ class AutonomousAgent:
         tenant: Tenant,
         run: AgentRun,
         actor: str,
-        case_id: Optional[int],
+        case_id: int | None,
     ) -> None:
         """Insert the run and fail when the durable write cannot flush."""
 
@@ -435,9 +446,9 @@ class AutonomousAgent:
     def list_runs(
         self,
         *,
-        tenant: Optional[Tenant] = None,
+        tenant: Tenant | None = None,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return persisted runs, newest first.
 
         A tenant is required so replay cannot cross a tenant boundary.

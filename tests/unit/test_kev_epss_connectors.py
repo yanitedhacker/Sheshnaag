@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,10 +13,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.ingestion.connector import get_registered_connectors
-from app.ingestion.kev_client import KEVClient
-from app.ingestion.kev_connector import KEVConnector
 from app.ingestion.epss_client import EPSSClient
 from app.ingestion.epss_connector import EPSSConnector
+from app.ingestion.kev_client import KEVClient
+from app.ingestion.kev_connector import KEVConnector
 from app.models.v2 import EPSSSnapshot, KEVEntry
 
 
@@ -80,6 +80,7 @@ SAMPLE_EPSS_RESPONSE = {
 # KEV client tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_kev_client_parses_catalog():
     client = KEVClient()
@@ -97,6 +98,7 @@ def test_kev_client_parses_catalog():
 # ---------------------------------------------------------------------------
 # KEV connector tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_kev_connector_persists_new_entries():
@@ -157,10 +159,11 @@ def test_kev_connector_upserts_existing_entries():
 # EPSS client tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_epss_client_parses_scores():
     client = EPSSClient()
-    scored_at = datetime(2024, 7, 1, tzinfo=timezone.utc)
+    scored_at = datetime(2024, 7, 1, tzinfo=UTC)
     parsed = client.parse_scores(SAMPLE_EPSS_RESPONSE["data"], scored_at=scored_at)
 
     assert len(parsed) == 2
@@ -174,6 +177,7 @@ def test_epss_client_parses_scores():
 # ---------------------------------------------------------------------------
 # EPSS connector tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_epss_connector_persists_new_snapshots():
@@ -202,6 +206,7 @@ def test_epss_connector_persists_new_snapshots():
 # ---------------------------------------------------------------------------
 # Registry tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_kev_connector_registered():

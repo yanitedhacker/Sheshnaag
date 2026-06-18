@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -37,7 +36,7 @@ class PatchDecisionResult:
     decision: Decision
     expected_risk_reduction: float
     axes: PatchAxisScores
-    justification: List[str]
+    justification: list[str]
 
 
 def _clamp01(v: float) -> float:
@@ -62,21 +61,29 @@ class PatchOptimizer:
     def __init__(self, session: Session):
         self.session = session
 
-    def list_patches(self) -> List[Patch]:
+    def list_patches(self) -> list[Patch]:
         return self.session.query(Patch).order_by(Patch.vendor, Patch.patch_id).all()
 
-    def compute_decisions(self, *, delay_days: int = 0, as_of: Optional[datetime] = None) -> List[PatchDecisionResult]:
-        results: List[PatchDecisionResult] = []
+    def compute_decisions(
+        self, *, delay_days: int = 0, as_of: datetime | None = None
+    ) -> list[PatchDecisionResult]:
+        results: list[PatchDecisionResult] = []
         for patch in self.list_patches():
             try:
-                results.append(self.compute_decision_for_patch(patch.patch_id, delay_days=delay_days, as_of=as_of))
+                results.append(
+                    self.compute_decision_for_patch(
+                        patch.patch_id, delay_days=delay_days, as_of=as_of
+                    )
+                )
             except Exception as e:
                 logger.exception("Failed computing patch decision for %s: %s", patch.patch_id, e)
 
         results.sort(key=lambda r: r.priority_score, reverse=True)
         return results
 
-    def compute_decision_for_patch(self, patch_id: str, *, delay_days: int = 0, as_of: Optional[datetime] = None) -> PatchDecisionResult:
+    def compute_decision_for_patch(
+        self, patch_id: str, *, delay_days: int = 0, as_of: datetime | None = None
+    ) -> PatchDecisionResult:
         patch = self.session.query(Patch).filter(Patch.patch_id == patch_id).first()
         if not patch:
             raise ValueError(f"Patch {patch_id} not found")
@@ -95,8 +102,12 @@ class PatchOptimizer:
         numerator = axes.EL * axes.IS * axes.ACS * axes.TPM
         priority_score = _clamp01(_safe_div(numerator, axes.PCS))
 
-        decision = self._decide(priority_score=priority_score, pcs=axes.PCS, assets_with_meta=assets_with_meta)
-        justification = self._finalize_justification(decision, axes, assets_with_meta, justification)
+        decision = self._decide(
+            priority_score=priority_score, pcs=axes.PCS, assets_with_meta=assets_with_meta
+        )
+        justification = self._finalize_justification(
+            decision, axes, assets_with_meta, justification
+        )
 
         return PatchDecisionResult(
             patch_id=patch.patch_id,
@@ -107,7 +118,7 @@ class PatchOptimizer:
             justification=justification,
         )
 
-    def _assets_for_patch(self, patch_id: str) -> List[Tuple[Asset, AssetPatch]]:
+    def _assets_for_patch(self, patch_id: str) -> list[tuple[Asset, AssetPatch]]:
         rows = (
             self.session.query(Asset, AssetPatch)
             .join(AssetPatch, AssetPatch.asset_id == Asset.id)
@@ -116,7 +127,7 @@ class PatchOptimizer:
         )
         return list(rows)
 
-    def _latest_risk_for_cve_ids(self, cve_ids: List[int]) -> Dict[int, RiskScore]:
+    def _latest_risk_for_cve_ids(self, cve_ids: list[int]) -> dict[int, RiskScore]:
         """
         Best-effort fetch of latest RiskScore per CVE.
 
@@ -132,7 +143,7 @@ class PatchOptimizer:
             .order_by(desc(RiskScore.created_at))
             .all()
         )
-        latest: Dict[int, RiskScore] = {}
+        latest: dict[int, RiskScore] = {}
         for s in scores:
             if s.cve_id not in latest:
                 latest[s.cve_id] = s
@@ -141,12 +152,12 @@ class PatchOptimizer:
     def _compute_axes(
         self,
         patch: Patch,
-        cves: List[CVE],
-        assets_with_meta: List[Tuple[Asset, AssetPatch]],
+        cves: list[CVE],
+        assets_with_meta: list[tuple[Asset, AssetPatch]],
         *,
         delay_days: int = 0,
-        as_of: Optional[datetime] = None,
-    ) -> Tuple[PatchAxisScores, float, List[str]]:
+        as_of: datetime | None = None,
+    ) -> tuple[PatchAxisScores, float, list[str]]:
         # --- CVE-driven axes ---
         cve_ids = [c.id for c in cves]
         latest_scores = self._latest_risk_for_cve_ids(cve_ids)
@@ -154,7 +165,7 @@ class PatchOptimizer:
         el = 0.0
         iscore = 0.0
         tpm = 0.0
-        justification: List[str] = []
+        justification: list[str] = []
 
         for cve in cves:
             rs = latest_scores.get(cve.id)
@@ -190,7 +201,10 @@ class PatchOptimizer:
             for asset, mapping in assets_with_meta:
                 acs = max(
                     acs,
-                    _clamp01(0.65 * criticality_score(asset.criticality) + 0.35 * environment_score(mapping.environment or asset.environment)),
+                    _clamp01(
+                        0.65 * criticality_score(asset.criticality)
+                        + 0.35 * environment_score(mapping.environment or asset.environment)
+                    ),
                 )
         else:
             # If patch isn't mapped to assets yet, treat as low confidence.
@@ -216,16 +230,24 @@ class PatchOptimizer:
             justification.append("High operational cost to apply")
 
         # --- Expected risk reduction (heuristic) ---
-        expected_risk_reduction = self._expected_risk_reduction(cves, latest_scores, assets_with_meta)
+        expected_risk_reduction = self._expected_risk_reduction(
+            cves, latest_scores, assets_with_meta
+        )
 
-        axes = PatchAxisScores(EL=_clamp01(el), IS=_clamp01(iscore), ACS=_clamp01(acs), PCS=max(0.05, pcs), TPM=_clamp01(tpm))
+        axes = PatchAxisScores(
+            EL=_clamp01(el),
+            IS=_clamp01(iscore),
+            ACS=_clamp01(acs),
+            PCS=max(0.05, pcs),
+            TPM=_clamp01(tpm),
+        )
         return axes, expected_risk_reduction, justification
 
     def _expected_risk_reduction(
         self,
-        cves: List[CVE],
-        latest_scores: Dict[int, RiskScore],
-        assets_with_meta: List[Tuple[Asset, AssetPatch]],
+        cves: list[CVE],
+        latest_scores: dict[int, RiskScore],
+        assets_with_meta: list[tuple[Asset, AssetPatch]],
     ) -> float:
         """
         Heuristic: sum normalized CVE overall scores, weighted by asset criticality/env,
@@ -252,9 +274,12 @@ class PatchOptimizer:
             for asset, mapping in assets_with_meta:
                 best_asset_weight = max(
                     best_asset_weight,
-                    _clamp01(0.7 * criticality_score(asset.criticality) + 0.3 * environment_score(mapping.environment or asset.environment)),
+                    _clamp01(
+                        0.7 * criticality_score(asset.criticality)
+                        + 0.3 * environment_score(mapping.environment or asset.environment)
+                    ),
                 )
-            base *= (0.5 + 0.5 * best_asset_weight)
+            base *= 0.5 + 0.5 * best_asset_weight
 
         # Squash: diminishing returns beyond a couple CVEs
         # 1 - exp(-x) maps x>=0 to [0,1)
@@ -267,7 +292,7 @@ class PatchOptimizer:
         *,
         priority_score: float,
         pcs: float,
-        assets_with_meta: List[Tuple[Asset, AssetPatch]],
+        assets_with_meta: list[tuple[Asset, AssetPatch]],
     ) -> Decision:
         # Hard gates: if no asset mapping, default to schedule (needs triage).
         if not assets_with_meta:
@@ -284,9 +309,9 @@ class PatchOptimizer:
         self,
         decision: Decision,
         axes: PatchAxisScores,
-        assets_with_meta: List[Tuple[Asset, AssetPatch]],
-        existing: List[str],
-    ) -> List[str]:
+        assets_with_meta: list[tuple[Asset, AssetPatch]],
+        existing: list[str],
+    ) -> list[str]:
         out = list(dict.fromkeys(existing))  # stable de-dupe
 
         if decision == "PATCH_NOW":

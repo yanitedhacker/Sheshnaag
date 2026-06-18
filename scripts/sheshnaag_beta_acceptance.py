@@ -13,7 +13,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -192,7 +191,9 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
     if duplicate_artifacts:
         blockers.append("duplicate_artifacts")
 
-    compose_rc, compose_output = _run(["docker", "compose", "--env-file", compose_env, "config"], timeout=90)
+    compose_rc, compose_output = _run(
+        ["docker", "compose", "--env-file", compose_env, "config"], timeout=90
+    )
     if compose_rc != 0:
         blockers.append("docker_compose_config")
 

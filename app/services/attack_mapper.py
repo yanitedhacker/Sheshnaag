@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -47,7 +48,9 @@ class TechniqueMatch:
         }
 
 
-_ATTACK_BUNDLE_PATH = Path(__file__).resolve().parents[1] / "data" / "attack" / "enterprise-attack.json"
+_ATTACK_BUNDLE_PATH = (
+    Path(__file__).resolve().parents[1] / "data" / "attack" / "enterprise-attack.json"
+)
 
 
 def _load_bundle() -> dict[str, str]:
@@ -87,13 +90,17 @@ TECHNIQUE_TACTICS = {**_FALLBACK_TACTICS, **_BUNDLED_TACTICS}
 class AttackMapper:
     """Attach MITRE ATT&CK technique tags to V4 behavior findings."""
 
-    def __init__(self, session: Session, *, llm_fallback: Optional[bool] = None) -> None:
+    def __init__(self, session: Session, *, llm_fallback: bool | None = None) -> None:
         self.session = session
         # ``llm_fallback`` defaults to the env var so production can flip the
         # toggle without redeploying. Tests pass ``llm_fallback=False``
         # explicitly to keep mapping deterministic.
         if llm_fallback is None:
-            llm_fallback = os.getenv("ATTACK_MAPPER_LLM_FALLBACK", "").strip().lower() in {"1", "true", "yes"}
+            llm_fallback = os.getenv("ATTACK_MAPPER_LLM_FALLBACK", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
         self.llm_fallback = bool(llm_fallback)
 
     def map_finding(self, finding: BehaviorFinding) -> list[dict[str, Any]]:
@@ -126,7 +133,7 @@ class AttackMapper:
 
         prompt = (
             "You map malware-lab behavior findings to MITRE ATT&CK techniques.\n"
-            "Return JSON only: {\"techniques\": [{\"technique_id\": \"T...\", \"confidence\": 0..1, \"rationale\": \"...\"}]}\n"
+            'Return JSON only: {"techniques": [{"technique_id": "T...", "confidence": 0..1, "rationale": "..."}]}\n'
             "Use only techniques in the supplied bundle. Reply with empty list when uncertain.\n\n"
             f"Finding type: {finding.finding_type}\n"
             f"Title: {finding.title}\n"
@@ -198,37 +205,75 @@ class AttackMapper:
         plugin = str(payload.get("plugin") or raw.get("plugin") or "").lower()
         syscall = str(raw.get("syscall") or raw.get("type") or "").lower()
         command = " ".join(
-            str(raw.get(key) or "") for key in ("command", "cmdline", "process", "path", "argv", "args")
+            str(raw.get(key) or "")
+            for key in ("command", "cmdline", "process", "path", "argv", "args")
         ).lower()
         rule_name = str(raw.get("rule") or raw.get("name") or "").lower()
 
         if source == "volatility" or finding_type.startswith("memory:"):
             if "malfind" in plugin or "malfind" in finding_type:
-                yield self._match("T1055.012", 0.9, "rule", "Volatility malfind indicates process hollowing/injection.")
+                yield self._match(
+                    "T1055.012",
+                    0.9,
+                    "rule",
+                    "Volatility malfind indicates process hollowing/injection.",
+                )
             if "hollowfind" in plugin or "hollowfind" in finding_type:
-                yield self._match("T1055.012", 0.88, "rule", "Volatility hollowfind indicates process hollowing.")
+                yield self._match(
+                    "T1055.012", 0.88, "rule", "Volatility hollowfind indicates process hollowing."
+                )
             if "netscan" in plugin or "netscan" in finding_type:
-                yield self._match("T1071.001", 0.72, "rule", "Memory network artifact suggests web protocol C2.")
+                yield self._match(
+                    "T1071.001", 0.72, "rule", "Memory network artifact suggests web protocol C2."
+                )
 
         if source == "ebpf" or finding_type.startswith("ebpf:"):
             if "ptrace" in syscall or "ptrace" in finding_type:
-                yield self._match("T1055.008", 0.82, "rule", "ptrace attach behavior maps to ptrace system call injection.")
+                yield self._match(
+                    "T1055.008",
+                    0.82,
+                    "rule",
+                    "ptrace attach behavior maps to ptrace system call injection.",
+                )
             if "execve" in syscall or "exec" in finding_type:
                 if "powershell" in command or " -enc" in command or " -encodedcommand" in command:
-                    yield self._match("T1059.001", 0.8, "rule", "Encoded PowerShell execution maps to PowerShell command interpreter.")
-                if any(shell in command for shell in ("bash", "/sh", " zsh", "python -c", "perl -e")):
-                    yield self._match("T1059.004", 0.74, "rule", "Shell interpreter execution maps to Unix shell.")
+                    yield self._match(
+                        "T1059.001",
+                        0.8,
+                        "rule",
+                        "Encoded PowerShell execution maps to PowerShell command interpreter.",
+                    )
+                if any(
+                    shell in command for shell in ("bash", "/sh", " zsh", "python -c", "perl -e")
+                ):
+                    yield self._match(
+                        "T1059.004", 0.74, "rule", "Shell interpreter execution maps to Unix shell."
+                    )
             if "connect" in syscall or "network" in title:
-                yield self._match("T1071.001", 0.64, "rule", "Runtime network activity maps to application-layer C2.")
+                yield self._match(
+                    "T1071.001",
+                    0.64,
+                    "rule",
+                    "Runtime network activity maps to application-layer C2.",
+                )
 
         if source == "yara" or finding_type == "static:yara":
             technique = "T1055" if "shellcode" in rule_name or "cobalt" in rule_name else "T1105"
-            yield self._match(technique, 0.66, "rule", "Static YARA hit maps to known malware capability.")
+            yield self._match(
+                technique, 0.66, "rule", "Static YARA hit maps to known malware capability."
+            )
 
         if "dns" in finding_type or "beacon" in title:
-            yield self._match("T1071.004", 0.62, "rule", "Beaconing or DNS behavior maps to DNS application-layer C2.")
+            yield self._match(
+                "T1071.004",
+                0.62,
+                "rule",
+                "Beaconing or DNS behavior maps to DNS application-layer C2.",
+            )
 
-    def _match(self, technique_id: str, confidence: float, source: str, rationale: str) -> TechniqueMatch:
+    def _match(
+        self, technique_id: str, confidence: float, source: str, rationale: str
+    ) -> TechniqueMatch:
         return TechniqueMatch(
             technique_id=technique_id,
             confidence=confidence,
@@ -260,7 +305,9 @@ class AttackMapper:
                         **item,
                         "technique_id": technique_id,
                         "confidence": float(item.get("confidence") or 0.5),
-                        "tactic": str(item.get("tactic") or TECHNIQUE_TACTICS.get(technique_id, "Unknown")),
+                        "tactic": str(
+                            item.get("tactic") or TECHNIQUE_TACTICS.get(technique_id, "Unknown")
+                        ),
                     }
                 )
         return normalized
@@ -270,6 +317,8 @@ class AttackMapper:
         by_id: dict[str, dict[str, Any]] = {}
         for item in cls._normalize(items):
             technique_id = str(item["technique_id"])
-            if technique_id not in by_id or float(item.get("confidence") or 0) > float(by_id[technique_id].get("confidence") or 0):
+            if technique_id not in by_id or float(item.get("confidence") or 0) > float(
+                by_id[technique_id].get("confidence") or 0
+            ):
                 by_id[technique_id] = item
         return list(by_id.values())

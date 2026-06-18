@@ -13,9 +13,9 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.launchers.base import Launcher, LauncherResult
+from app.lab.launchers.base import LauncherResult
 
 _BROWSER_KINDS = frozenset({"file/js", "file/hta", "file/lnk", "file"})
 _BROWSER_MIMES = frozenset(
@@ -43,7 +43,7 @@ class BrowserLauncher:
     def _has_binary(self, name: str) -> bool:
         return shutil.which(name) is not None
 
-    def _exec(self, argv: List[str], *, timeout: int) -> subprocess.CompletedProcess:
+    def _exec(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess:
         return subprocess.run(
             argv,
             check=False,
@@ -64,9 +64,9 @@ class BrowserLauncher:
         snapshot_snap: Any,
     ) -> LauncherResult:
         start = time.monotonic()
-        logs: List[str] = []
-        artifacts: List[str] = []
-        metadata: Dict[str, Any] = {"launcher": "browser"}
+        logs: list[str] = []
+        artifacts: list[str] = []
+        metadata: dict[str, Any] = {"launcher": "browser"}
 
         profile_cfg = getattr(profile, "config", {}) or {}
         timeout = int(profile_cfg.get("detonation_timeout_s", 45))
@@ -74,7 +74,9 @@ class BrowserLauncher:
         specimen_ref = getattr(revision, "quarantine_path", None) or quarantine_path
 
         pcap_path = os.path.join(quarantine_path, f"run-{getattr(run, 'id', 'x')}.pcap")
-        console_log_path = os.path.join(quarantine_path, f"run-{getattr(run, 'id', 'x')}-console.log")
+        console_log_path = os.path.join(
+            quarantine_path, f"run-{getattr(run, 'id', 'x')}-console.log"
+        )
         har_path = os.path.join(quarantine_path, f"run-{getattr(run, 'id', 'x')}.har")
         artifacts.extend([console_log_path, har_path])
 
@@ -99,7 +101,7 @@ class BrowserLauncher:
                 "--headless=new",
                 "--disable-gpu",
                 "--no-sandbox",
-                f"--dump-dom",
+                "--dump-dom",
                 f"file:///specimen/{os.path.basename(specimen_ref)}",
             ]
             completed = self._exec(run_argv, timeout=timeout)

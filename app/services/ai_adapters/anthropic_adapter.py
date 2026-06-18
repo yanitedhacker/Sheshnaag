@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
 from app.services.ai_adapters.base import format_grounding_system_prompt
-
 
 DEFAULT_MODEL = "claude-3-5-sonnet-latest"
 DEFAULT_BASE_URL = "https://api.anthropic.com"
@@ -26,14 +26,16 @@ class AnthropicAdapter:
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        http_client: Optional[httpx.Client] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        http_client: httpx.Client | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
         self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        self._base_url = (base_url or os.getenv("ANTHROPIC_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self._base_url = (base_url or os.getenv("ANTHROPIC_BASE_URL") or DEFAULT_BASE_URL).rstrip(
+            "/"
+        )
         self.model_label = model or os.getenv("ANTHROPIC_MODEL") or DEFAULT_MODEL
         self._http = http_client
         self._max_tokens = max_tokens
@@ -49,8 +51,8 @@ class AnthropicAdapter:
 
     # -- public API -----------------------------------------------------------
 
-    def health(self) -> Dict[str, Any]:
-        missing: List[str] = []
+    def health(self) -> dict[str, Any]:
+        missing: list[str] = []
         if not self._api_key:
             missing.append("ANTHROPIC_API_KEY")
         return {
@@ -66,10 +68,10 @@ class AnthropicAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         if not self._api_key:
             yield {"type": "error", "error": "ANTHROPIC_API_KEY not set", "recoverable": False}
             yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
@@ -97,7 +99,11 @@ class AnthropicAdapter:
                 with client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
                         text = resp.read().decode("utf-8", errors="replace")
-                        yield {"type": "error", "error": f"HTTP {resp.status_code}: {text[:500]}", "recoverable": False}
+                        yield {
+                            "type": "error",
+                            "error": f"HTTP {resp.status_code}: {text[:500]}",
+                            "recoverable": False,
+                        }
                         yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
                         return
                     yield from self._parse_sse(resp.iter_lines())
@@ -115,16 +121,13 @@ class AnthropicAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]],
-        cache_key: Optional[str],
-    ) -> Dict[str, Any]:
-        system_text = (
-            f"Capability: {capability}\n\n"
-            + format_grounding_system_prompt(grounding)
-        )
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+        cache_key: str | None,
+    ) -> dict[str, Any]:
+        system_text = f"Capability: {capability}\n\n" + format_grounding_system_prompt(grounding)
         # cache_control on the system block (ephemeral) for repeated grounding.
-        system_blocks: List[Dict[str, Any]] = [
+        system_blocks: list[dict[str, Any]] = [
             {
                 "type": "text",
                 "text": system_text,
@@ -132,7 +135,7 @@ class AnthropicAdapter:
             }
         ]
 
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "model": self.model_label,
             "max_tokens": self._max_tokens,
             "stream": True,
@@ -148,7 +151,7 @@ class AnthropicAdapter:
         return body
 
     @staticmethod
-    def _encode_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
+    def _encode_tool(tool: dict[str, Any]) -> dict[str, Any]:
         encoded = {
             "name": tool["name"],
             "description": tool.get("description", ""),
@@ -161,10 +164,10 @@ class AnthropicAdapter:
 
     # -- SSE parsing ---------------------------------------------------------
 
-    def _parse_sse(self, lines: Iterator[str]) -> Iterator[Dict[str, Any]]:
-        current_tool: Optional[Dict[str, Any]] = None
-        current_tool_json_parts: List[str] = []
-        usage: Dict[str, Any] = {}
+    def _parse_sse(self, lines: Iterator[str]) -> Iterator[dict[str, Any]]:
+        current_tool: dict[str, Any] | None = None
+        current_tool_json_parts: list[str] = []
+        usage: dict[str, Any] = {}
         stop_reason = "end_turn"
         started = False
 
@@ -176,7 +179,7 @@ class AnthropicAdapter:
                 continue
             if not line.startswith("data:"):
                 continue
-            data_str = line[len("data:"):].strip()
+            data_str = line[len("data:") :].strip()
             if not data_str or data_str == "[DONE]":
                 continue
             try:
@@ -189,7 +192,10 @@ class AnthropicAdapter:
                 started = True
                 msg = event.get("message", {})
                 usage = msg.get("usage", {}) or {}
-                yield {"type": "message_start", "metadata": {"id": msg.get("id"), "model": msg.get("model")}}
+                yield {
+                    "type": "message_start",
+                    "metadata": {"id": msg.get("id"), "model": msg.get("model")},
+                }
             elif etype == "content_block_start":
                 block = event.get("content_block", {})
                 if block.get("type") == "tool_use":
@@ -232,7 +238,11 @@ class AnthropicAdapter:
                 break
             elif etype == "error":
                 err = event.get("error", {})
-                yield {"type": "error", "error": err.get("message", "anthropic error"), "recoverable": False}
+                yield {
+                    "type": "error",
+                    "error": err.get("message", "anthropic error"),
+                    "recoverable": False,
+                }
                 stop_reason = "error"
                 break
 

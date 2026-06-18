@@ -168,7 +168,7 @@ class _MinimalParser(PatchNoteParser):
     def source_name(self) -> str:
         return "minimal_source"
 
-    def parse(self, raw_data: dict) -> List[NormalizedPatchNote]:
+    def parse(self, raw_data: dict) -> list[NormalizedPatchNote]:
         return [
             {
                 "source": self.source_name(),

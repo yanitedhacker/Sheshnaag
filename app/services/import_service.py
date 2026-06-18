@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 from sqlalchemy.orm import Session
 
 from app.models.asset import Asset
-from app.models.cve import CVE
-from app.models.v2 import AssetSoftware, KnowledgeDocument, Service, SoftwareComponent, Tenant, VexStatement
+from app.models.v2 import (
+    AssetSoftware,
+    KnowledgeDocument,
+    Service,
+    SoftwareComponent,
+    Tenant,
+    VexStatement,
+)
 from app.services.graph_service import ExposureGraphService
 from app.services.knowledge_service import KnowledgeRetrievalService
 
@@ -26,21 +30,27 @@ class ImportService:
         tenant: Tenant,
         *,
         document: dict,
-        asset_id: Optional[int] = None,
-        service_id: Optional[int] = None,
-    ) -> Dict[str, object]:
+        asset_id: int | None = None,
+        service_id: int | None = None,
+    ) -> dict[str, object]:
         """Import a CycloneDX-style software inventory document."""
         components = document.get("components", [])
         asset = None
         if asset_id is not None:
-            asset = self.session.query(Asset).filter(Asset.id == asset_id, Asset.tenant_id == tenant.id).first()
+            asset = (
+                self.session.query(Asset)
+                .filter(Asset.id == asset_id, Asset.tenant_id == tenant.id)
+                .first()
+            )
 
         created = 0
         linked = 0
         services_created = 0
         dependencies_linked = 0
         documents_created = 0
-        service_map, services_created = self._ensure_services(tenant, document=document, asset_id=asset_id)
+        service_map, services_created = self._ensure_services(
+            tenant, document=document, asset_id=asset_id
+        )
 
         for item in components:
             name = item.get("name")
@@ -97,11 +107,16 @@ class ImportService:
                     )
                     linked += 1
 
-        dependencies_linked = self._link_dependencies(tenant, document=document, service_map=service_map)
+        dependencies_linked = self._link_dependencies(
+            tenant, document=document, service_map=service_map
+        )
         sbom_note_ids = [
             row[0]
             for row in self.session.query(KnowledgeDocument.id)
-            .filter(KnowledgeDocument.tenant_id == tenant.id, KnowledgeDocument.document_type == "sbom-note")
+            .filter(
+                KnowledgeDocument.tenant_id == tenant.id,
+                KnowledgeDocument.document_type == "sbom-note",
+            )
             .all()
         ]
         self.knowledge.reindex_documents(document_ids=sbom_note_ids)
@@ -117,7 +132,7 @@ class ImportService:
             "knowledge_documents_created": documents_created,
         }
 
-    def import_vex(self, tenant: Tenant, *, document: dict) -> Dict[str, object]:
+    def import_vex(self, tenant: Tenant, *, document: dict) -> dict[str, object]:
         """Import VEX-like vulnerability status statements."""
         vulnerabilities = document.get("vulnerabilities", [])
         statements = document.get("statements", [])
@@ -163,7 +178,11 @@ class ImportService:
             products = statement.get("products", [])
             component_ids = self._match_components(tenant, products)
             status = self._normalize_vex_status(statement.get("status") or "under_investigation")
-            justification = statement.get("justification") or statement.get("impact_statement") or statement.get("action_statement")
+            justification = (
+                statement.get("justification")
+                or statement.get("impact_statement")
+                or statement.get("action_statement")
+            )
             for component_id in component_ids:
                 created_delta, updated_delta = self._upsert_vex_statement(
                     tenant,
@@ -186,14 +205,16 @@ class ImportService:
             "statements_updated": updated,
         }
 
-    def _ensure_services(self, tenant: Tenant, *, document: dict, asset_id: Optional[int]) -> tuple[Dict[str, Service], int]:
+    def _ensure_services(
+        self, tenant: Tenant, *, document: dict, asset_id: int | None
+    ) -> tuple[dict[str, Service], int]:
         service_defs = []
         metadata_component = (document.get("metadata") or {}).get("component")
         if metadata_component and metadata_component.get("type") in {"application", "service"}:
             service_defs.append(metadata_component)
         service_defs.extend(document.get("services", []) or [])
 
-        service_map: Dict[str, Service] = {}
+        service_map: dict[str, Service] = {}
         created = 0
         for item in service_defs:
             name = item.get("name")
@@ -212,8 +233,14 @@ class ImportService:
                     name=name,
                     slug=self._slugify(name),
                     service_type=item.get("type") or "application",
-                    environment=((document.get("metadata") or {}).get("lifecycles", [{}])[0] or {}).get("name"),
-                    owner=((item.get("provider") or {}).get("name") if isinstance(item.get("provider"), dict) else None),
+                    environment=(
+                        (document.get("metadata") or {}).get("lifecycles", [{}])[0] or {}
+                    ).get("name"),
+                    owner=(
+                        (item.get("provider") or {}).get("name")
+                        if isinstance(item.get("provider"), dict)
+                        else None
+                    ),
                     business_criticality="high" if item.get("x-trust-boundary") else "medium",
                     internet_exposed=False,
                     description=item.get("description"),
@@ -225,7 +252,9 @@ class ImportService:
             service_map[bom_ref] = service
         return service_map, created
 
-    def _link_dependencies(self, tenant: Tenant, *, document: dict, service_map: Dict[str, Service]) -> int:
+    def _link_dependencies(
+        self, tenant: Tenant, *, document: dict, service_map: dict[str, Service]
+    ) -> int:
         count = 0
         dependencies = document.get("dependencies", []) or []
         for dependency in dependencies:
@@ -234,13 +263,17 @@ class ImportService:
             if service is None:
                 continue
             depends_on = dependency.get("dependsOn", []) or dependency.get("depends_on", [])
-            upstream = next((service_map.get(item) for item in depends_on if service_map.get(item)), None)
+            upstream = next(
+                (service_map.get(item) for item in depends_on if service_map.get(item)), None
+            )
             if upstream and service.upstream_service_id != upstream.id:
                 service.upstream_service_id = upstream.id
                 count += 1
         return count
 
-    def _upsert_component_note(self, tenant: Tenant, component: SoftwareComponent, item: dict) -> int:
+    def _upsert_component_note(
+        self, tenant: Tenant, component: SoftwareComponent, item: dict
+    ) -> int:
         title = f"SBOM note: {component.name} {component.version or ''}".strip()
         existing = (
             self.session.query(KnowledgeDocument)
@@ -274,8 +307,8 @@ class ImportService:
         component_id: int,
         cve_id: str,
         status: str,
-        justification: Optional[str],
-        source_url: Optional[str],
+        justification: str | None,
+        source_url: str | None,
         raw_data: dict,
     ) -> tuple[int, int]:
         statement = (
@@ -306,11 +339,13 @@ class ImportService:
         statement.raw_data = raw_data
         return 0, 1
 
-    def _match_components(self, tenant: Tenant, affects: List[dict]) -> List[int]:
-        ids: List[int] = []
+    def _match_components(self, tenant: Tenant, affects: list[dict]) -> list[int]:
+        ids: list[int] = []
         for item in affects:
             ref = item.get("ref") or item.get("bom-ref") or item.get("@id") or ""
-            query = self.session.query(SoftwareComponent).filter(SoftwareComponent.tenant_id == tenant.id)
+            query = self.session.query(SoftwareComponent).filter(
+                SoftwareComponent.tenant_id == tenant.id
+            )
             component = None
             if ref:
                 component = next(
@@ -322,7 +357,10 @@ class ImportService:
                     None,
                 )
             if component is None and item.get("name"):
-                component = query.filter(SoftwareComponent.name == item.get("name"), SoftwareComponent.version == item.get("version")).first()
+                component = query.filter(
+                    SoftwareComponent.name == item.get("name"),
+                    SoftwareComponent.version == item.get("version"),
+                ).first()
             if component is not None:
                 ids.append(component.id)
         return ids

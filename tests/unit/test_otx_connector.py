@@ -13,7 +13,6 @@ from app.ingestion.misp_connector import (
 )
 from app.ingestion.otx_connector import OTXConnector
 
-
 SAMPLE_PULSES = {
     "results": [
         {
@@ -66,6 +65,7 @@ def _mock_response(status_code: int = 200, json_body=None):
 # Health
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_health_false_without_env(monkeypatch):
     monkeypatch.delenv("OTX_API_KEY", raising=False)
@@ -82,6 +82,7 @@ def test_health_true_with_env(monkeypatch):
 # Fetch without env
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_returns_empty_without_env(monkeypatch):
     monkeypatch.delenv("OTX_API_KEY", raising=False)
@@ -94,6 +95,7 @@ def test_fetch_returns_empty_without_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # Pulses
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_pulses_normalizes_indicators():
@@ -123,6 +125,7 @@ def test_fetch_pulses_normalizes_indicators():
 # ---------------------------------------------------------------------------
 # Indicator lookup
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_indicator_general():
@@ -156,6 +159,7 @@ def test_fetch_indicator_general():
 # ---------------------------------------------------------------------------
 # Error / rate-limit handling
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_retries_on_429_then_succeeds():
@@ -208,6 +212,7 @@ def test_fetch_returns_empty_on_network_error():
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_otx_registered():

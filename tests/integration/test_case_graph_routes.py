@@ -13,7 +13,6 @@ from app.core.database import Base, get_sync_session
 from app.models.malware_lab import AnalysisCase
 from app.models.v2 import Tenant
 
-
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

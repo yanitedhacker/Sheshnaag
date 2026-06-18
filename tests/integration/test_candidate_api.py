@@ -40,7 +40,9 @@ class TestCandidateListAPI:
         assert r2.status_code == 200
 
     def test_list_with_sort(self, wait_for_lab_api, lab_httpx_client):
-        r = lab_httpx_client.get("/api/candidates", params={"sort_by": "score", "sort_order": "asc"})
+        r = lab_httpx_client.get(
+            "/api/candidates", params={"sort_by": "score", "sort_order": "asc"}
+        )
         assert r.status_code == 200
         scores = [i["candidate_score"] for i in r.json()["items"]]
         assert scores == sorted(scores)

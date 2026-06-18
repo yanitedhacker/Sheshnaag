@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -33,8 +31,8 @@ def get_or_create_demo_tenant(session: Session) -> Tenant:
 def resolve_tenant(
     session: Session,
     *,
-    tenant_id: Optional[int] = None,
-    tenant_slug: Optional[str] = None,
+    tenant_id: int | None = None,
+    tenant_slug: str | None = None,
     default_to_demo: bool = True,
 ) -> Tenant:
     """Resolve a tenant by id or slug, optionally defaulting to demo-public."""
@@ -57,11 +55,13 @@ def resolve_tenant(
 def require_writable_tenant(
     session: Session,
     *,
-    tenant_id: Optional[int] = None,
-    tenant_slug: Optional[str] = None,
+    tenant_id: int | None = None,
+    tenant_slug: str | None = None,
 ) -> Tenant:
     """Resolve a tenant and reject writes to read-only demo workspaces."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False
+    )
     if tenant.is_read_only:
         raise HTTPException(status_code=403, detail="This tenant is read-only")
     return tenant

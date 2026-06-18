@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from collections.abc import Sequence
 
 from sqlalchemy.orm import Session
 
@@ -24,7 +24,7 @@ class CopilotService:
         self.knowledge = KnowledgeRetrievalService(session)
         self.ai_gateway = AIGatewayService()
 
-    def answer(self, tenant: Tenant, query: str) -> Dict[str, object]:
+    def answer(self, tenant: Tenant, query: str) -> dict[str, object]:
         """Return a grounded answer using structured retrieval and source-backed evidence."""
         normalized = query.lower().strip()
         workbench = self.workbench.get_summary(tenant, limit=10)
@@ -37,7 +37,9 @@ class CopilotService:
             top = workbench["actions"][0]
             cve_refs = [entity["id"] for entity in top["entity_refs"] if entity["type"] == "cve"]
             cve_db_ids = [cve.id for cve in self._cve_records_for_ids(cve_refs)]
-            chunks = self.knowledge.retrieve(query=query, tenant=tenant, cve_db_ids=cve_db_ids, limit=5)
+            chunks = self.knowledge.retrieve(
+                query=query, tenant=tenant, cve_db_ids=cve_db_ids, limit=5
+            )
             synthesis = self.ai_gateway.synthesize(
                 intent=intent,
                 query=query,
@@ -70,9 +72,16 @@ class CopilotService:
 
         if intent in {"cab_memo", "weekly_summary"}:
             actions = workbench["actions"][:3]
-            cve_refs = [entity["id"] for action in actions for entity in action["entity_refs"] if entity["type"] == "cve"]
+            cve_refs = [
+                entity["id"]
+                for action in actions
+                for entity in action["entity_refs"]
+                if entity["type"] == "cve"
+            ]
             cve_db_ids = [cve.id for cve in self._cve_records_for_ids(cve_refs)]
-            chunks = self.knowledge.retrieve(query=query, tenant=tenant, cve_db_ids=cve_db_ids, limit=6)
+            chunks = self.knowledge.retrieve(
+                query=query, tenant=tenant, cve_db_ids=cve_db_ids, limit=6
+            )
             citations = [citation for action in actions for citation in action["citations"]]
             synthesis = self.ai_gateway.synthesize(
                 intent=intent,
@@ -83,12 +92,16 @@ class CopilotService:
             return self._response_from_context(
                 synthesis=synthesis,
                 citations=self._merge_citations(citations, chunks),
-                supporting_entities=[entity for action in actions for entity in action["entity_refs"][:2]],
+                supporting_entities=[
+                    entity for action in actions for entity in action["entity_refs"][:2]
+                ],
             )
 
-        return self._cannot_answer("Supported prompts include ranking explanations, attack path summaries, and CAB-style weekly memos.")
+        return self._cannot_answer(
+            "Supported prompts include ranking explanations, attack path summaries, and CAB-style weekly memos."
+        )
 
-    def _match_asset(self, tenant: Tenant, query: str) -> Optional[Asset]:
+    def _match_asset(self, tenant: Tenant, query: str) -> Asset | None:
         assets = self.session.query(Asset).filter(Asset.tenant_id == tenant.id).all()
         for asset in assets:
             if asset.name.lower() in query:
@@ -101,7 +114,11 @@ class CopilotService:
             return "attack_paths"
         if "cab" in normalized_query or "memo" in normalized_query:
             return "cab_memo"
-        if "this week" in normalized_query or "week's top risks" in normalized_query or "top risks" in normalized_query:
+        if (
+            "this week" in normalized_query
+            or "week's top risks" in normalized_query
+            or "top risks" in normalized_query
+        ):
             return "weekly_summary"
         if "ranked first" in normalized_query or normalized_query.startswith("why"):
             return "why_top_action"
@@ -116,18 +133,23 @@ class CopilotService:
         return self.session.query(CVE).filter(CVE.cve_id.in_(wanted)).all()
 
     @staticmethod
-    def _merge_citations(existing: List[dict], chunks: List[dict]) -> List[dict]:
-        merged: Dict[str, dict] = {}
+    def _merge_citations(existing: list[dict], chunks: list[dict]) -> list[dict]:
+        merged: dict[str, dict] = {}
         for citation in existing:
             if citation.get("url"):
                 merged[citation["url"]] = citation
         for chunk in chunks:
             if chunk.get("source_url"):
-                merged[chunk["source_url"]] = {"label": chunk.get("source_label") or chunk["document_type"], "url": chunk["source_url"]}
+                merged[chunk["source_url"]] = {
+                    "label": chunk.get("source_label") or chunk["document_type"],
+                    "url": chunk["source_url"],
+                }
         return list(merged.values())
 
     @staticmethod
-    def _response_from_context(*, synthesis: dict, citations: List[dict], supporting_entities: List[dict]) -> Dict[str, object]:
+    def _response_from_context(
+        *, synthesis: dict, citations: list[dict], supporting_entities: list[dict]
+    ) -> dict[str, object]:
         return {
             "answer_markdown": synthesis.get("answer_markdown", ""),
             "citations": citations,
@@ -137,7 +159,7 @@ class CopilotService:
         }
 
     @staticmethod
-    def _cannot_answer(reason: str) -> Dict[str, object]:
+    def _cannot_answer(reason: str) -> dict[str, object]:
         return {
             "answer_markdown": "",
             "citations": [],

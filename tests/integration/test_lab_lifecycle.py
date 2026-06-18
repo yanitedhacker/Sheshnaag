@@ -36,7 +36,9 @@ def make_session():
 _original_docker_teardown = DockerKaliProvider.teardown
 
 
-def _teardown_idempotent(self: DockerKaliProvider, *, provider_run_ref: str, retain_workspace: bool = False):
+def _teardown_idempotent(
+    self: DockerKaliProvider, *, provider_run_ref: str, retain_workspace: bool = False
+):
     info = self._active_containers.get(provider_run_ref)
     if info is None:
         return ProviderResult(
@@ -45,13 +47,15 @@ def _teardown_idempotent(self: DockerKaliProvider, *, provider_run_ref: str, ret
             transcript="No active resources for this run; treating as already destroyed.",
             health=HealthStatus.DESTROYED,
         )
-    return _original_docker_teardown(self, provider_run_ref=provider_run_ref, retain_workspace=retain_workspace)
+    return _original_docker_teardown(
+        self, provider_run_ref=provider_run_ref, retain_workspace=retain_workspace
+    )
 
 
 DockerKaliProvider.teardown = _teardown_idempotent  # type: ignore[method-assign]
 
 
-def _workstation() -> Dict[str, Any]:
+def _workstation() -> dict[str, Any]:
     return {
         "hostname": "analyst-mbp",
         "os_family": "macOS",
@@ -60,7 +64,7 @@ def _workstation() -> Dict[str, Any]:
     }
 
 
-def _recipe_content(*, allow_egress_hosts: Optional[list] = None) -> Dict[str, Any]:
+def _recipe_content(*, allow_egress_hosts: list | None = None) -> dict[str, Any]:
     hosts: list = [] if allow_egress_hosts is None else allow_egress_hosts
     return {
         "base_image": DEFAULT_KALI_IMAGE,
@@ -96,7 +100,9 @@ def _bootstrap_private_lab_session():
             environment="production",
             criticality="high",
             business_criticality="high",
-            installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+            installed_software=[
+                {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+            ],
         )
     )
     session.commit()
@@ -108,7 +114,7 @@ def _launch_prepared_run(
     tenant,
     *,
     launch_mode: str,
-    recipe_content: Dict[str, Any],
+    recipe_content: dict[str, Any],
 ):
     service.sync_candidates(tenant)
     candidates = service.list_candidates(tenant, limit=10)
@@ -123,7 +129,9 @@ def _launch_prepared_run(
         created_by="Lab Owner",
         content=recipe_content,
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
     return service.launch_run(
         tenant,
         recipe_id=recipe["id"],
@@ -139,7 +147,7 @@ def _staged_simulated_run(
     service: SheshnaagService,
     tenant,
     *,
-    recipe_content: Dict[str, Any],
+    recipe_content: dict[str, Any],
 ):
     """WS4-T3: plan -> allocate -> boot without single-shot launch."""
     service.sync_candidates(tenant)
@@ -155,7 +163,9 @@ def _staged_simulated_run(
         created_by="Lab Owner",
         content=recipe_content,
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
     planned = service.plan_run(
         tenant,
         recipe_id=recipe["id"],
@@ -181,7 +191,9 @@ def test_dry_run_lifecycle():
     session, tenant = _bootstrap_private_lab_session()
     try:
         service = SheshnaagService(session)
-        run = _launch_prepared_run(service, tenant, launch_mode="dry_run", recipe_content=_recipe_content())
+        run = _launch_prepared_run(
+            service, tenant, launch_mode="dry_run", recipe_content=_recipe_content()
+        )
         assert run["state"] == "planned"
         assert run.get("timeline"), "expected timeline events on dry run"
     finally:
@@ -207,7 +219,9 @@ def test_simulated_run_full_lifecycle():
     session, tenant = _bootstrap_private_lab_session()
     try:
         service = SheshnaagService(session)
-        run = _launch_prepared_run(service, tenant, launch_mode="simulated", recipe_content=_recipe_content())
+        run = _launch_prepared_run(
+            service, tenant, launch_mode="simulated", recipe_content=_recipe_content()
+        )
         run_id = run["id"]
         assert run["state"] == "completed"
 
@@ -225,7 +239,9 @@ def test_stop_flow():
     session, tenant = _bootstrap_private_lab_session()
     try:
         service = SheshnaagService(session)
-        run = _launch_prepared_run(service, tenant, launch_mode="simulated", recipe_content=_recipe_content())
+        run = _launch_prepared_run(
+            service, tenant, launch_mode="simulated", recipe_content=_recipe_content()
+        )
         assert run["state"] == "completed"
 
         with pytest.raises(ValueError) as excinfo:
@@ -240,7 +256,9 @@ def test_teardown_flow():
     session, tenant = _bootstrap_private_lab_session()
     try:
         service = SheshnaagService(session)
-        run = _launch_prepared_run(service, tenant, launch_mode="simulated", recipe_content=_recipe_content())
+        run = _launch_prepared_run(
+            service, tenant, launch_mode="simulated", recipe_content=_recipe_content()
+        )
         assert run["state"] == "completed"
 
         after = service.teardown_run(tenant, run_id=run["id"])
@@ -256,7 +274,9 @@ def test_destroy_flow():
     session, tenant = _bootstrap_private_lab_session()
     try:
         service = SheshnaagService(session)
-        run = _launch_prepared_run(service, tenant, launch_mode="simulated", recipe_content=_recipe_content())
+        run = _launch_prepared_run(
+            service, tenant, launch_mode="simulated", recipe_content=_recipe_content()
+        )
         assert run["state"] == "completed"
 
         after = service.destroy_run(tenant, run_id=run["id"])
@@ -362,7 +382,12 @@ def test_lima_provider_is_discoverable_and_supports_simulated_secure_mode():
             service,
             tenant,
             launch_mode="simulated",
-            recipe_content={**_recipe_content(), "provider": "lima", "image_profile": "secure_lima", "execution_policy": {"secure_mode_required": True}},
+            recipe_content={
+                **_recipe_content(),
+                "provider": "lima",
+                "image_profile": "secure_lima",
+                "execution_policy": {"secure_mode_required": True},
+            },
         )
         assert run["provider"] == "lima"
         assert run["state"] == "completed"

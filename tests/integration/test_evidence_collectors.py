@@ -76,13 +76,20 @@ def test_collector_failure_does_not_block_other_evidence(monkeypatch):
             "collectors": ["process_tree"],
         },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Tester",
-        workstation={"hostname": "h", "os_family": "linux", "architecture": "x86_64", "fingerprint": "fp"},
+        workstation={
+            "hostname": "h",
+            "os_family": "linux",
+            "architecture": "x86_64",
+            "fingerprint": "fp",
+        },
         launch_mode="simulated",
     )
     evidence = service.list_evidence(tenant, run_id=run["id"])
@@ -116,13 +123,20 @@ def test_get_run_includes_evidence_timeline():
             "collectors": ["process_tree"],
         },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Tester",
-        workstation={"hostname": "h", "os_family": "linux", "architecture": "x86_64", "fingerprint": "fp"},
+        workstation={
+            "hostname": "h",
+            "os_family": "linux",
+            "architecture": "x86_64",
+            "fingerprint": "fp",
+        },
         launch_mode="simulated",
     )
     detail = service.get_run(tenant, run["id"])
@@ -158,13 +172,20 @@ def test_evidence_payload_includes_service_layer_collect_timing():
             "collectors": ["process_tree", "package_inventory"],
         },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Tester",
-        workstation={"hostname": "h", "os_family": "linux", "architecture": "x86_64", "fingerprint": "fp"},
+        workstation={
+            "hostname": "h",
+            "os_family": "linux",
+            "architecture": "x86_64",
+            "fingerprint": "fp",
+        },
         launch_mode="simulated",
     )
     evidence = service.list_evidence(tenant, run_id=run["id"])

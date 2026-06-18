@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from scripts import sheshnaag_maintainer
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -16,7 +17,6 @@ from app.models import AnalysisCase, MaintainerAssessment, MalwareReport
 from app.services.auth_service import AuthService
 from app.services.demo_seed_service import DemoSeedService
 from app.services.maintainer_assessment_service import MaintainerAssessmentService
-from scripts import sheshnaag_maintainer
 
 
 def make_session():
@@ -267,11 +267,15 @@ def test_maintainer_api_create_get_export_with_auth_override():
     assert created.status_code == 200
     assessment_id = created.json()["id"]
 
-    fetched = client.get(f"/api/maintainer/assessments/{assessment_id}", params={"tenant_slug": tenant.slug})
+    fetched = client.get(
+        f"/api/maintainer/assessments/{assessment_id}", params={"tenant_slug": tenant.slug}
+    )
     assert fetched.status_code == 200
     assert fetched.json()["id"] == assessment_id
 
-    exported = client.post(f"/api/maintainer/assessments/{assessment_id}/export", params={"tenant_slug": tenant.slug})
+    exported = client.post(
+        f"/api/maintainer/assessments/{assessment_id}/export", params={"tenant_slug": tenant.slug}
+    )
     assert exported.status_code == 200
     assert exported.json()["report_id"]
 
@@ -377,7 +381,9 @@ def test_maintainer_cli_auth_failure_message(monkeypatch, capsys):
         raise HTTPError(url="http://api", code=401, msg="Unauthorized", hdrs=None, fp=None)
 
     monkeypatch.setattr(sheshnaag_maintainer, "_request_json", fake_request)
-    rc = sheshnaag_maintainer.main(["show", "--base-url", "http://127.0.0.1:8000", "--assessment-id", "1"])
+    rc = sheshnaag_maintainer.main(
+        ["show", "--base-url", "http://127.0.0.1:8000", "--assessment-id", "1"]
+    )
 
     assert rc == 2
     assert "Authentication required" in capsys.readouterr().err

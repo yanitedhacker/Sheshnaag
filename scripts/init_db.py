@@ -10,32 +10,32 @@ This script sets up everything you need to get started:
   3. Creates sample assets to demonstrate vulnerability mapping
   4. Calculates initial risk scores
 
-The sample CVEs are based on real high-profile vulnerabilities that made 
-headlines. I picked these specifically because they represent different 
-attack patterns and severity levels - good for demonstrating the ML model's 
+The sample CVEs are based on real high-profile vulnerabilities that made
+headlines. I picked these specifically because they represent different
+attack patterns and severity levels - good for demonstrating the ML model's
 ability to differentiate risk.
 
 Run this once after cloning, and you're ready to go!
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import datetime, timedelta, timezone
 import random
+from datetime import UTC, datetime, timedelta
 
-from app.core.database import engine, Base, SessionLocal
-from app.models.cve import CVE, CVEReference, AffectedProduct
-from app.models.exploit import Exploit
+from app.core.database import Base, SessionLocal, engine
+from app.models.asset import Asset
+from app.models.cve import CVE
+from app.models.patch import AssetPatch, Patch
 from app.models.risk_score import RiskScore
-from app.models.asset import Asset, AssetVulnerability
-from app.models.patch import Patch, AssetPatch
 
 
 def get_utc_now():
     """Get current UTC time (timezone-aware)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def create_tables():
@@ -48,7 +48,7 @@ def create_tables():
 def create_sample_data():
     """Create sample data for demonstration."""
     session = SessionLocal()
-    
+
     try:
         # Check if data already exists (seed incrementally)
         has_cves = session.query(CVE).first() is not None
@@ -62,7 +62,7 @@ def create_sample_data():
             print("✓ CVE data already exists. Skipping CVE seeding...")
         else:
             print("Creating sample CVE data...")
-        
+
         # Sample CVEs - Real-world critical vulnerabilities
         sample_cves = [
             {
@@ -174,25 +174,27 @@ def create_sample_data():
                 "exploit_count": 6,
             },
         ]
-        
+
         # Add more sample CVEs with varying severity
         for i in range(20):
             cvss = round(random.uniform(3.0, 9.9), 1)
             has_exploit = random.choice([True, False])
-            sample_cves.append({
-                "cve_id": f"CVE-2024-{10000 + i}",
-                "description": f"Sample vulnerability #{i+1} affecting various software components with potential security implications.",
-                "cvss_v3_score": cvss,
-                "attack_vector": random.choice(["NETWORK", "LOCAL", "ADJACENT_NETWORK"]),
-                "attack_complexity": random.choice(["LOW", "HIGH"]),
-                "privileges_required": random.choice(["NONE", "LOW", "HIGH"]),
-                "user_interaction": random.choice(["NONE", "REQUIRED"]),
-                "cwe_id": random.choice(["CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-287"]),
-                "published_date": now - timedelta(days=random.randint(1, 60)),
-                "exploit_available": has_exploit,
-                "exploit_count": random.randint(1, 3) if has_exploit else 0,
-            })
-        
+            sample_cves.append(
+                {
+                    "cve_id": f"CVE-2024-{10000 + i}",
+                    "description": f"Sample vulnerability #{i + 1} affecting various software components with potential security implications.",
+                    "cvss_v3_score": cvss,
+                    "attack_vector": random.choice(["NETWORK", "LOCAL", "ADJACENT_NETWORK"]),
+                    "attack_complexity": random.choice(["LOW", "HIGH"]),
+                    "privileges_required": random.choice(["NONE", "LOW", "HIGH"]),
+                    "user_interaction": random.choice(["NONE", "REQUIRED"]),
+                    "cwe_id": random.choice(["CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-287"]),
+                    "published_date": now - timedelta(days=random.randint(1, 60)),
+                    "exploit_available": has_exploit,
+                    "exploit_count": random.randint(1, 3) if has_exploit else 0,
+                }
+            )
+
         if not has_cves:
             # Create CVEs
             for cve_data in sample_cves:
@@ -220,7 +222,7 @@ def create_sample_data():
 
             session.commit()
             print(f"✓ Created {len(sample_cves)} sample CVEs")
-        
+
         # Create sample assets
         if has_assets:
             print("✓ Asset data already exists. Skipping asset seeding...")
@@ -269,7 +271,7 @@ def create_sample_data():
                 "owner": "Backend Team",
             },
         ]
-        
+
         if not has_assets:
             for asset_data in sample_assets:
                 asset = Asset(
@@ -297,7 +299,8 @@ def create_sample_data():
             # Fetch canonical CVEs to link
             cve_by_id = {
                 c.cve_id: c
-                for c in session.query(CVE).filter(
+                for c in session.query(CVE)
+                .filter(
                     CVE.cve_id.in_(
                         [
                             "CVE-2024-21762",
@@ -307,14 +310,15 @@ def create_sample_data():
                             "CVE-2024-3400",
                         ]
                     )
-                ).all()
+                )
+                .all()
             }
 
             asset_by_hostname = {
                 a.hostname: a
-                for a in session.query(Asset).filter(
-                    Asset.hostname.in_(["web-prod-01", "jenkins-01", "db-dev-01"])
-                ).all()
+                for a in session.query(Asset)
+                .filter(Asset.hostname.in_(["web-prod-01", "jenkins-01", "db-dev-01"]))
+                .all()
             }
 
             patches = [
@@ -455,7 +459,7 @@ def create_sample_data():
 
             session.commit()
             print(f"✓ Created {len(patches)} sample patches")
-        
+
         # Calculate risk scores for sample CVEs
         if has_risk_scores:
             print("✓ Risk scores already exist. Skipping risk scoring...")
@@ -465,9 +469,9 @@ def create_sample_data():
 
             aggregator = RiskAggregator(session)
             aggregator.calculate_all_risks()
-        
+
         print("✓ Sample data creation complete!")
-        
+
     except Exception as e:
         print(f"✗ Error creating sample data: {e}")
         session.rollback()

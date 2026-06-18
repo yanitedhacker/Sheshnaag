@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.security import TokenData, verify_token
-from app.core.tenancy import resolve_tenant, require_writable_tenant
+from app.core.tenancy import require_writable_tenant, resolve_tenant
 from app.services.behavior_similarity_service import BehaviorSimilarityService
 
 router = APIRouter(prefix="/api/v4/specimens", tags=["Sheshnaag V4 Similarity"])
@@ -18,8 +16,8 @@ router = APIRouter(prefix="/api/v4/specimens", tags=["Sheshnaag V4 Similarity"])
 @router.post("/{specimen_id}/embed")
 def compute_specimen_embedding(
     specimen_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
@@ -27,9 +25,7 @@ def compute_specimen_embedding(
 
     tenant = require_writable_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug)
     try:
-        return BehaviorSimilarityService(session).embed_specimen(
-            tenant, specimen_id=specimen_id
-        )
+        return BehaviorSimilarityService(session).embed_specimen(tenant, specimen_id=specimen_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -37,8 +33,8 @@ def compute_specimen_embedding(
 @router.get("/{specimen_id}/similar")
 def list_similar_specimens(
     specimen_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     top_k: int = Query(10, ge=1, le=100),
     min_score: float = Query(0.0, ge=0.0, le=1.0),
     session: Session = Depends(get_sync_session),
@@ -64,8 +60,8 @@ def list_similar_specimens(
 def variant_diff(
     specimen_id: int,
     other_specimen_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):

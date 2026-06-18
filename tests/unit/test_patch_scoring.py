@@ -51,4 +51,3 @@ def test_patch_cost_score_behaves_reasonably():
     assert 0.0 <= low <= 1.0
     assert 0.0 <= high <= 1.0
     assert high > low
-

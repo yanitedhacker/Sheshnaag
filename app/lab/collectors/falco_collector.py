@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.interfaces import Collector
-
-from app.lab.collectors.common import build_advanced_telemetry_evidence, synthetic_from_plan, utc_iso
+from app.lab.collectors.common import (
+    build_advanced_telemetry_evidence,
+    synthetic_from_plan,
+    utc_iso,
+)
 from app.lab.collectors.runtime import env_flag_enabled, is_executable_guest_context, run_in_guest
+from app.lab.interfaces import Collector
 from app.lab.telemetry_envelope import normalize_falco_line, validate_runtime_event
 from app.lab.telemetry_policy_packs import get_pack
 from app.lab.telemetry_translation import translate_with_enterprise_pack
@@ -18,7 +21,9 @@ class FalcoEventsCollector(Collector):
     collector_name = "falco_events"
     collector_version = "1.0.0"
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         if not env_flag_enabled("SHESHNAAG_ENABLE_FALCO", default=False):
             return [
                 synthetic_from_plan(
@@ -30,7 +35,9 @@ class FalcoEventsCollector(Collector):
                     collector_version=self.collector_version,
                 )
             ]
-        if not is_executable_guest_context(run_context=run_context, provider_result=provider_result):
+        if not is_executable_guest_context(
+            run_context=run_context, provider_result=provider_result
+        ):
             return [
                 synthetic_from_plan(
                     collector_name=self.collector_name,
@@ -82,16 +89,16 @@ class FalcoEventsCollector(Collector):
         session_command = (
             f"tmp=$(mktemp); "
             f"(timeout {time_limit} sh -lc 'falco -A -o json_output=true -o stdout_output.enabled=true "
-            "-o syslog_output.enabled=false -o file_output.enabled=false 2>/dev/null' || true) >\"$tmp\" 2>/dev/null; "
-            f"head -n {event_limit} \"$tmp\"; "
-            "rm -f \"$tmp\""
+            '-o syslog_output.enabled=false -o file_output.enabled=false 2>/dev/null\' || true) >"$tmp" 2>/dev/null; '
+            f'head -n {event_limit} "$tmp"; '
+            'rm -f "$tmp"'
         )
         code, out, err = run_in_guest(
             provider_result,
             ["sh", "-lc", session_command],
             timeout_sec=time_limit + 20,
         )
-        events: List[Dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
         for line in (out or "").splitlines():
             ne = normalize_falco_line(line)
             if ne:

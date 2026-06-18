@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.time import utc_now
 from app.lab.image_catalog import (
@@ -23,7 +23,6 @@ from app.lab.interfaces import (
     LabProvider,
     ProviderResult,
     RunState,
-    validate_transition,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,10 +59,14 @@ class DockerKaliProvider(LabProvider):
     provider_name = "docker_kali"
 
     def __init__(self) -> None:
-        self._active_containers: Dict[str, Dict[str, Any]] = {}
+        self._active_containers: dict[str, dict[str, Any]] = {}
 
-    def build_plan(self, *, revision_content: Dict[str, Any], run_context: Dict[str, Any]) -> Dict[str, Any]:
-        allowlisted_hosts = revision_content.get("network_policy", {}).get("allow_egress_hosts", []) or []
+    def build_plan(
+        self, *, revision_content: dict[str, Any], run_context: dict[str, Any]
+    ) -> dict[str, Any]:
+        allowlisted_hosts = (
+            revision_content.get("network_policy", {}).get("allow_egress_hosts", []) or []
+        )
         collectors = revision_content.get("collectors", []) or []
         execution_policy = revision_content.get("execution_policy") or {}
         catalog_entry = resolve_catalog_entry(
@@ -100,22 +103,27 @@ class DockerKaliProvider(LabProvider):
             "workdir": revision_content.get("workdir") or "/workspace",
             "workspace_mount_target": revision_content.get("workdir") or "/workspace",
             "collectors": collectors,
-            "teardown_policy": revision_content.get("teardown_policy") or {
+            "teardown_policy": revision_content.get("teardown_policy")
+            or {
                 "mode": "destroy_immediately",
                 "ephemeral_workspace": True,
                 "retain_export_only": True,
             },
-            "workspace_retention": revision_content.get("workspace_retention") or "destroy_immediately",
+            "workspace_retention": revision_content.get("workspace_retention")
+            or "destroy_immediately",
             "acknowledgement_required": bool(
-                revision_content.get("requires_acknowledgement") or revision_content.get("risk_level") in {"sensitive", "high"}
+                revision_content.get("requires_acknowledgement")
+                or revision_content.get("risk_level") in {"sensitive", "high"}
             ),
             "generated_at": utc_now().isoformat(),
             "tooling_profile_name": tooling_profile["profile"],
             "tooling_profile": tooling_profile,
             "execution_policy": {
                 "secure_mode_required": bool(execution_policy.get("secure_mode_required")),
-                "preferred_provider": execution_policy.get("preferred_provider") or self.provider_name,
-                "allowed_modes": execution_policy.get("allowed_modes") or ["dry_run", "simulated", "execute"],
+                "preferred_provider": execution_policy.get("preferred_provider")
+                or self.provider_name,
+                "allowed_modes": execution_policy.get("allowed_modes")
+                or ["dry_run", "simulated", "execute"],
             },
             "run_context": {
                 "tenant_slug": run_context.get("tenant_slug"),
@@ -131,7 +139,9 @@ class DockerKaliProvider(LabProvider):
                 "Docker network mode=none provides full isolation. "
                 "Bridge mode with host allowlists requires external firewall rules; "
                 "Docker alone cannot enforce per-host egress filtering."
-            ) if network_mode == "bridge" else "Full network isolation via Docker network=none.",
+            )
+            if network_mode == "bridge"
+            else "Full network isolation via Docker network=none.",
         }
         plan["provider_safety"] = {
             "read_only_rootfs": True,
@@ -152,7 +162,9 @@ class DockerKaliProvider(LabProvider):
             network_mode=network_mode,
             collectors=collectors,
         )
-        plan["collector_capabilities"] = self._collector_capabilities(collectors=collectors, image=image)
+        plan["collector_capabilities"] = self._collector_capabilities(
+            collectors=collectors, image=image
+        )
         plan["collector_policy"] = {
             "baseline_execute_defaults": list(BASELINE_EXECUTE_COLLECTORS),
             "extended_execute_collectors": list(EXTENDED_EXECUTE_COLLECTORS),
@@ -167,7 +179,9 @@ class DockerKaliProvider(LabProvider):
                 plan[opt] = revision_content[opt]
         return plan
 
-    def launch(self, *, revision_content: Dict[str, Any], run_context: Dict[str, Any]) -> ProviderResult:
+    def launch(
+        self, *, revision_content: dict[str, Any], run_context: dict[str, Any]
+    ) -> ProviderResult:
         launch_mode = run_context.get("launch_mode") or "simulated"
         plan = self.build_plan(revision_content=revision_content, run_context=run_context)
         provider_run_ref = self._generate_run_ref()
@@ -277,7 +291,7 @@ class DockerKaliProvider(LabProvider):
             health=HealthStatus.STOPPED,
         )
 
-    def create(self, *, plan: Dict[str, Any], run_context: Dict[str, Any]) -> ProviderResult:
+    def create(self, *, plan: dict[str, Any], run_context: dict[str, Any]) -> ProviderResult:
         provider_run_ref = self._generate_run_ref()
         workspace = self._workspace_for_ref(provider_run_ref)
         os.makedirs(workspace, exist_ok=True)
@@ -335,7 +349,9 @@ class DockerKaliProvider(LabProvider):
             docker_args[docker_args.index("--rm")] = "--detach"
 
         try:
-            result = subprocess.run(docker_args, capture_output=True, text=True, timeout=LAUNCH_TIMEOUT_SECONDS)
+            result = subprocess.run(
+                docker_args, capture_output=True, text=True, timeout=LAUNCH_TIMEOUT_SECONDS
+            )
             if result.returncode != 0:
                 return ProviderResult(
                     state=RunState.ERRORED,
@@ -386,7 +402,9 @@ class DockerKaliProvider(LabProvider):
         try:
             result = subprocess.run(
                 ["docker", "inspect", "--format", "{{.State.Status}}", container_id],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             status = result.stdout.strip()
             health_map = {
@@ -443,7 +461,9 @@ class DockerKaliProvider(LabProvider):
         try:
             subprocess.run(
                 ["docker", "stop", container_id],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             info["state"] = RunState.STOPPED
             return ProviderResult(
@@ -473,7 +493,9 @@ class DockerKaliProvider(LabProvider):
         container_id = info.get("container_id")
         if container_id:
             try:
-                subprocess.run(["docker", "rm", "-f", container_id], capture_output=True, text=True, timeout=15)
+                subprocess.run(
+                    ["docker", "rm", "-f", container_id], capture_output=True, text=True, timeout=15
+                )
             except (subprocess.SubprocessError, subprocess.TimeoutExpired):
                 logger.warning("Failed to remove container %s during teardown", container_id)
 
@@ -502,18 +524,18 @@ class DockerKaliProvider(LabProvider):
         self,
         *,
         provider_run_ref: str,
-        artifacts: List[Dict[str, Any]],
+        artifacts: list[dict[str, Any]],
         workspace_path: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         os.makedirs(workspace_path, exist_ok=True)
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for artifact in artifacts:
             src = artifact.get("source_path", "")
             name = artifact.get("name", os.path.basename(src))
             requested_destination = str(artifact.get("destination") or f"/workspace/{name}")
             relative_destination = requested_destination
             if requested_destination.startswith("/workspace/"):
-                relative_destination = requested_destination[len("/workspace/"):]
+                relative_destination = requested_destination[len("/workspace/") :]
             elif requested_destination == "/workspace":
                 relative_destination = name
             relative_destination = relative_destination.lstrip("/") or name
@@ -539,7 +561,14 @@ class DockerKaliProvider(LabProvider):
             post_hash = self._file_sha256(dst)
             if pre_hash != post_hash:
                 os.remove(dst)
-                results.append({"name": name, "status": "checksum_mismatch", "pre_hash": pre_hash, "post_hash": post_hash})
+                results.append(
+                    {
+                        "name": name,
+                        "status": "checksum_mismatch",
+                        "pre_hash": pre_hash,
+                        "post_hash": post_hash,
+                    }
+                )
                 continue
 
             results.append(
@@ -554,7 +583,9 @@ class DockerKaliProvider(LabProvider):
 
         return {"provider_run_ref": provider_run_ref, "transfers": results}
 
-    def _docker_args_for_plan(self, plan: Dict[str, Any], *, host_workspace: Optional[str] = None) -> List[str]:
+    def _docker_args_for_plan(
+        self, plan: dict[str, Any], *, host_workspace: str | None = None
+    ) -> list[str]:
         args = [
             "docker",
             "run",
@@ -583,18 +614,22 @@ class DockerKaliProvider(LabProvider):
         args.extend(plan["command"])
         return args
 
-    def _provider_readiness(self, *, image: str, network_mode: str, collectors: List[str]) -> Dict[str, Any]:
+    def _provider_readiness(
+        self, *, image: str, network_mode: str, collectors: list[str]
+    ) -> dict[str, Any]:
         docker_cli = shutil.which("docker") is not None
         docker_version_ok = False
-        docker_version_error: Optional[str] = None
+        docker_version_error: str | None = None
         if docker_cli:
             try:
-                subprocess.run(["docker", "version"], check=True, capture_output=True, text=True, timeout=15)
+                subprocess.run(
+                    ["docker", "version"], check=True, capture_output=True, text=True, timeout=15
+                )
                 docker_version_ok = True
             except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as exc:
                 docker_version_error = str(exc)
         image_present = False
-        image_error: Optional[str] = None
+        image_error: str | None = None
         if docker_version_ok:
             try:
                 result = subprocess.run(
@@ -616,17 +651,26 @@ class DockerKaliProvider(LabProvider):
             {
                 "name": "docker_cli",
                 "status": "ready" if docker_cli else "unavailable",
-                "detail": "Docker CLI available on host." if docker_cli else "Docker CLI not found on host.",
+                "detail": "Docker CLI available on host."
+                if docker_cli
+                else "Docker CLI not found on host.",
             },
             {
                 "name": "docker_engine",
                 "status": "ready" if docker_version_ok else "unavailable",
-                "detail": "Docker engine responded to version check." if docker_version_ok else (docker_version_error or "Docker engine not reachable."),
+                "detail": "Docker engine responded to version check."
+                if docker_version_ok
+                else (docker_version_error or "Docker engine not reachable."),
             },
             {
                 "name": "image_local",
                 "status": "ready" if image_present else "degraded",
-                "detail": f"Image {image} present locally." if image_present else (image_error or f"Image {image} not present locally; Docker may pull it during boot."),
+                "detail": f"Image {image} present locally."
+                if image_present
+                else (
+                    image_error
+                    or f"Image {image} not present locally; Docker may pull it during boot."
+                ),
             },
             {
                 "name": "image_profile",
@@ -636,7 +680,9 @@ class DockerKaliProvider(LabProvider):
             {
                 "name": "workspace_root",
                 "status": "ready" if workspace_root_ready else "unavailable",
-                "detail": f"Workspace root {WORKSPACE_ROOT} is writable." if workspace_root_ready else f"Workspace root {WORKSPACE_ROOT} is not writable.",
+                "detail": f"Workspace root {WORKSPACE_ROOT} is writable."
+                if workspace_root_ready
+                else f"Workspace root {WORKSPACE_ROOT} is not writable.",
             },
             {
                 "name": "teardown_policy",
@@ -689,11 +735,11 @@ class DockerKaliProvider(LabProvider):
             "workspace_root": WORKSPACE_ROOT,
         }
 
-    def _collector_capabilities(self, *, collectors: List[str], image: str) -> List[Dict[str, Any]]:
+    def _collector_capabilities(self, *, collectors: list[str], image: str) -> list[dict[str, Any]]:
         selected = set(collectors or [])
         docker_ready = shutil.which("docker") is not None
         tooling_profile = self._tooling_profile_for_image(image)
-        capabilities: List[Dict[str, Any]] = []
+        capabilities: list[dict[str, Any]] = []
 
         for name in BASELINE_EXECUTE_COLLECTORS:
             capabilities.append(
@@ -702,7 +748,9 @@ class DockerKaliProvider(LabProvider):
                     "tier": "baseline",
                     "selected": name in selected,
                     "status": "ready" if docker_ready else "unavailable",
-                    "reason": "Execute-mode default collector." if docker_ready else "Docker CLI unavailable on host.",
+                    "reason": "Execute-mode default collector."
+                    if docker_ready
+                    else "Docker CLI unavailable on host.",
                     "requires_feature_flag": False,
                 }
             )
@@ -717,10 +765,20 @@ class DockerKaliProvider(LabProvider):
         for name in EXTENDED_EXECUTE_COLLECTORS:
             requirement = env_requirements[name]
             flag = requirement["feature_flag"]
-            flag_enabled = True if flag is None else os.environ.get(flag, "").strip().lower() in {"1", "true", "yes", "on"}
+            flag_enabled = (
+                True
+                if flag is None
+                else os.environ.get(flag, "").strip().lower() in {"1", "true", "yes", "on"}
+            )
             status = "ready" if docker_ready and flag_enabled else "degraded"
-            reason = "Optional execute collector is enabled." if status == "ready" else (
-                f"Enable {flag} to promote this collector from degraded to ready." if flag and not flag_enabled else "Docker CLI unavailable on host."
+            reason = (
+                "Optional execute collector is enabled."
+                if status == "ready"
+                else (
+                    f"Enable {flag} to promote this collector from degraded to ready."
+                    if flag and not flag_enabled
+                    else "Docker CLI unavailable on host."
+                )
             )
             if name == "osquery_snapshot" and not tooling_profile["osquery_available"]:
                 status = "unavailable"
@@ -753,11 +811,19 @@ class DockerKaliProvider(LabProvider):
         return capabilities
 
     @staticmethod
-    def _tooling_profile_for_image(image: str) -> Dict[str, Any]:
+    def _tooling_profile_for_image(image: str) -> dict[str, Any]:
         entry = find_image_by_name(image, provider="docker_kali")
         normalized = (image or "").strip().lower()
-        osquery_available = bool(entry.supports_osquery) if entry else normalized == DEFAULT_OSQUERY_IMAGE.lower() or "osquery" in normalized
-        tracee_available = bool(entry.supports_tracee) if entry else normalized == DEFAULT_TRACEE_IMAGE.lower() or "tracee" in normalized
+        osquery_available = (
+            bool(entry.supports_osquery)
+            if entry
+            else normalized == DEFAULT_OSQUERY_IMAGE.lower() or "osquery" in normalized
+        )
+        tracee_available = (
+            bool(entry.supports_tracee)
+            if entry
+            else normalized == DEFAULT_TRACEE_IMAGE.lower() or "tracee" in normalized
+        )
         if tracee_available:
             profile = "tracee"
         elif osquery_available:

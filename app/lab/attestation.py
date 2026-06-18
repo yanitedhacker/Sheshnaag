@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -19,7 +19,7 @@ from app.lab.interfaces import AttestationSigner
 class HashAttestationSigner(AttestationSigner):
     """Deterministic local signer with a pluggable dev backend."""
 
-    def sign(self, *, payload: Dict[str, Any], signer: str) -> Dict[str, str]:
+    def sign(self, *, payload: dict[str, Any], signer: str) -> dict[str, str]:
         serialized = json.dumps(payload, sort_keys=True, default=str)
         digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         backend = "hmac-sha256" if settings.secret_key else "local-sha256"
@@ -40,7 +40,7 @@ class HashAttestationSigner(AttestationSigner):
             "backend": backend,
         }
 
-    def verify(self, *, payload: Dict[str, Any], signature: str) -> bool:
+    def verify(self, *, payload: dict[str, Any], signature: str) -> bool:
         """Verify a previously produced signature."""
         serialized = json.dumps(payload, sort_keys=True, default=str)
         digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -65,7 +65,7 @@ class Ed25519AttestationSigner(AttestationSigner):
         self.fingerprint = fingerprint
 
     @staticmethod
-    def ensure_key_material(private_key_path: str) -> Dict[str, str]:
+    def ensure_key_material(private_key_path: str) -> dict[str, str]:
         path = Path(private_key_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
@@ -90,7 +90,7 @@ class Ed25519AttestationSigner(AttestationSigner):
             "key_path": str(path),
         }
 
-    def sign(self, *, payload: Dict[str, Any], signer: str) -> Dict[str, str]:
+    def sign(self, *, payload: dict[str, Any], signer: str) -> dict[str, str]:
         serialized = json.dumps(payload, sort_keys=True, default=str)
         digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         private_key = self._load_private_key()
@@ -106,13 +106,17 @@ class Ed25519AttestationSigner(AttestationSigner):
             "public_key": self.public_key,
         }
 
-    def verify(self, *, payload: Dict[str, Any], signature: str) -> bool:
+    def verify(self, *, payload: dict[str, Any], signature: str) -> bool:
         if not signature.startswith("ed25519:"):
             return False
         serialized = json.dumps(payload, sort_keys=True, default=str)
         try:
-            public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(self.public_key.encode("ascii")))
-            public_key.verify(base64.b64decode(signature.split(":", 1)[1]), serialized.encode("utf-8"))
+            public_key = Ed25519PublicKey.from_public_bytes(
+                base64.b64decode(self.public_key.encode("ascii"))
+            )
+            public_key.verify(
+                base64.b64decode(signature.split(":", 1)[1]), serialized.encode("utf-8")
+            )
             return True
         except Exception:  # noqa: BLE001 - verification failures are expected control flow
             return False

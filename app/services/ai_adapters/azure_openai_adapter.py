@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
 from app.services.ai_adapters.openai_adapter import OpenAIAdapter
-
 
 DEFAULT_API_VERSION = "2024-08-01-preview"
 
@@ -22,11 +22,11 @@ class AzureOpenAIAdapter(OpenAIAdapter):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        endpoint: Optional[str] = None,
-        deployment: Optional[str] = None,
-        api_version: Optional[str] = None,
-        http_client: Optional[httpx.Client] = None,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        deployment: str | None = None,
+        api_version: str | None = None,
+        http_client: httpx.Client | None = None,
     ) -> None:
         resolved_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
         resolved_endpoint = (endpoint or os.getenv("AZURE_OPENAI_ENDPOINT") or "").rstrip("/")
@@ -53,8 +53,8 @@ class AzureOpenAIAdapter(OpenAIAdapter):
         self._deployment = resolved_deployment
         self._api_version = resolved_version
 
-    def health(self) -> Dict[str, Any]:
-        missing: List[str] = []
+    def health(self) -> dict[str, Any]:
+        missing: list[str] = []
         if not self._real_api_key:
             missing.append("AZURE_OPENAI_API_KEY")
         if not self._endpoint:
@@ -73,16 +73,18 @@ class AzureOpenAIAdapter(OpenAIAdapter):
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         if not self._real_api_key or not self._endpoint:
             yield {"type": "error", "error": "Azure OpenAI not configured", "recoverable": False}
             yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
             return
 
-        body = self._build_body(capability=capability, prompt=prompt, grounding=grounding, tools=tools)
+        body = self._build_body(
+            capability=capability, prompt=prompt, grounding=grounding, tools=tools
+        )
         if cache_key:
             body["user"] = str(cache_key)[:128]
 
@@ -103,7 +105,11 @@ class AzureOpenAIAdapter(OpenAIAdapter):
                 with client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
                         text = resp.read().decode("utf-8", errors="replace")
-                        yield {"type": "error", "error": f"HTTP {resp.status_code}: {text[:500]}", "recoverable": False}
+                        yield {
+                            "type": "error",
+                            "error": f"HTTP {resp.status_code}: {text[:500]}",
+                            "recoverable": False,
+                        }
                         yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
                         return
                     yield from self._parse_sse(resp.iter_lines())

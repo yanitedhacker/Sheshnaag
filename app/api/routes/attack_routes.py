@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from app.services.attack_mapper import TECHNIQUE_TACTICS
 router = APIRouter(prefix="/api/v4/attack", tags=["Sheshnaag V4 ATT&CK"])
 
 
-def _parse_since(value: Optional[str]) -> Optional[datetime]:
+def _parse_since(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -32,7 +32,13 @@ def _techniques(payload: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for item in raw:
         if isinstance(item, str):
-            out.append({"technique_id": item, "confidence": 0.5, "tactic": TECHNIQUE_TACTICS.get(item, "Unknown")})
+            out.append(
+                {
+                    "technique_id": item,
+                    "confidence": 0.5,
+                    "tactic": TECHNIQUE_TACTICS.get(item, "Unknown"),
+                }
+            )
         elif isinstance(item, dict) and item.get("technique_id"):
             technique_id = str(item["technique_id"])
             out.append(
@@ -40,7 +46,9 @@ def _techniques(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     **item,
                     "technique_id": technique_id,
                     "confidence": float(item.get("confidence") or 0.5),
-                    "tactic": str(item.get("tactic") or TECHNIQUE_TACTICS.get(technique_id, "Unknown")),
+                    "tactic": str(
+                        item.get("tactic") or TECHNIQUE_TACTICS.get(technique_id, "Unknown")
+                    ),
                 }
             )
     return out
@@ -63,12 +71,14 @@ def _finding_payload(row: BehaviorFinding) -> dict[str, Any]:
 
 @router.get("/coverage")
 def attack_coverage(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
-    since: Optional[str] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
+    since: str | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     query = session.query(BehaviorFinding).filter(BehaviorFinding.tenant_id == tenant.id)
     since_dt = _parse_since(since)
     if since_dt is not None:
@@ -93,19 +103,26 @@ def attack_coverage(
         for bucket in tactic["techniques"].values():
             bucket.pop("confidence_total", None)
 
-    return {"tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name}, "tactics": tactics}
+    return {
+        "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
+        "tactics": tactics,
+    }
 
 
 @router.get("/technique/{technique_id}")
 def attack_technique_findings(
     technique_id: str,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     findings = []
-    for finding in session.query(BehaviorFinding).filter(BehaviorFinding.tenant_id == tenant.id).all():
+    for finding in (
+        session.query(BehaviorFinding).filter(BehaviorFinding.tenant_id == tenant.id).all()
+    ):
         if any(item["technique_id"] == technique_id for item in _techniques(finding.payload or {})):
             findings.append(_finding_payload(finding))
     return {

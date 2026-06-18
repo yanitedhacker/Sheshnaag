@@ -18,14 +18,14 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 # -- Plugin catalog -----------------------------------------------------------
 
-DEFAULT_WINDOWS_PLUGINS: List[str] = [
+DEFAULT_WINDOWS_PLUGINS: list[str] = [
     "windows.pslist",
     "windows.malfind",
     "windows.netscan",
@@ -34,7 +34,7 @@ DEFAULT_WINDOWS_PLUGINS: List[str] = [
     "windows.modscan",
 ]
 
-DEFAULT_LINUX_PLUGINS: List[str] = [
+DEFAULT_LINUX_PLUGINS: list[str] = [
     "linux.pslist",
     "linux.malfind",
     "linux.netstat",
@@ -47,7 +47,7 @@ DEFAULT_LINUX_PLUGINS: List[str] = [
 # baseline_confidence is used when the plugin returns rows that are purely
 # informational (e.g. pslist). hit_confidence is used for rows that represent
 # a suspicious artifact (malfind, hollowfind, rootkit modules).
-_PLUGIN_KIND: Dict[str, Dict[str, Any]] = {
+_PLUGIN_KIND: dict[str, dict[str, Any]] = {
     "pslist": {"severity": "info", "baseline": 0.3, "hit": 0.3, "hit_signal": False},
     "malfind": {"severity": "high", "baseline": 0.85, "hit": 0.9, "hit_signal": True},
     "netscan": {"severity": "medium", "baseline": 0.55, "hit": 0.7, "hit_signal": False},
@@ -86,9 +86,9 @@ class VolatilityRunner:
     def __init__(
         self,
         *,
-        vol_binary: Optional[str] = None,
-        plugins: Optional[List[str]] = None,
-        dry_run: Optional[bool] = None,
+        vol_binary: str | None = None,
+        plugins: list[str] | None = None,
+        dry_run: bool | None = None,
     ) -> None:
         self.vol_binary = vol_binary or os.environ.get("SHESHNAAG_VOLATILITY_BIN", "vol")
         self._explicit_plugins = list(plugins) if plugins else None
@@ -96,12 +96,12 @@ class VolatilityRunner:
 
     # -- Health ---------------------------------------------------------------
 
-    def _binary_path(self) -> Optional[str]:
+    def _binary_path(self) -> str | None:
         if os.path.isabs(self.vol_binary) and os.path.exists(self.vol_binary):
             return self.vol_binary
         return shutil.which(self.vol_binary)
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         """Return a lightweight health snapshot.
 
         Never raises. Returns ``healthy=False`` when the binary cannot be
@@ -146,14 +146,14 @@ class VolatilityRunner:
 
     # -- Execution ------------------------------------------------------------
 
-    def plugins_for(self, os_hint: str) -> List[str]:
+    def plugins_for(self, os_hint: str) -> list[str]:
         if self._explicit_plugins is not None:
             return list(self._explicit_plugins)
         if (os_hint or "").strip().lower() == "linux":
             return list(DEFAULT_LINUX_PLUGINS)
         return list(DEFAULT_WINDOWS_PLUGINS)
 
-    def run(self, *, memory_dump_path: str, os_hint: str = "windows") -> List[Dict[str, Any]]:
+    def run(self, *, memory_dump_path: str, os_hint: str = "windows") -> list[dict[str, Any]]:
         """Invoke every configured plugin and return normalized findings.
 
         Parameters
@@ -164,14 +164,16 @@ class VolatilityRunner:
             Either ``"windows"`` or ``"linux"``. Chooses the default plugin
             catalog when the caller did not override ``plugins``.
         """
-        findings: List[Dict[str, Any]] = []
+        findings: list[dict[str, Any]] = []
         if not memory_dump_path:
             logger.warning("volatility_runner: empty memory_dump_path")
             return findings
 
         path = self._binary_path()
         if not path:
-            logger.warning("volatility_runner: binary '%s' not found; returning []", self.vol_binary)
+            logger.warning(
+                "volatility_runner: binary '%s' not found; returning []", self.vol_binary
+            )
             return findings
 
         if not os.path.isfile(memory_dump_path):
@@ -194,7 +196,7 @@ class VolatilityRunner:
         vol_path: str,
         memory_dump_path: str,
         plugin: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         cmd = [vol_path, "-f", memory_dump_path, "--renderer=json", plugin]
         try:
             proc = subprocess.run(
@@ -223,14 +225,17 @@ class VolatilityRunner:
 
     # -- Normalization --------------------------------------------------------
 
-    def _normalize(self, plugin: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize(self, plugin: str, row: dict[str, Any]) -> dict[str, Any]:
         kind_key = _plugin_kind_key(plugin)
-        kind = _PLUGIN_KIND.get(kind_key, {
-            "severity": "info",
-            "baseline": 0.3,
-            "hit": 0.3,
-            "hit_signal": False,
-        })
+        kind = _PLUGIN_KIND.get(
+            kind_key,
+            {
+                "severity": "info",
+                "baseline": 0.3,
+                "hit": 0.3,
+                "hit_signal": False,
+            },
+        )
         suspicious = _row_is_suspicious(kind_key, row)
         confidence = float(kind["hit"]) if suspicious else float(kind["baseline"])
         title = _title_for_row(plugin, row) or plugin
@@ -251,7 +256,7 @@ class VolatilityRunner:
 # -- Helpers ------------------------------------------------------------------
 
 
-def _extract_version(text: str) -> Optional[str]:
+def _extract_version(text: str) -> str | None:
     # Volatility prints "Volatility 3 Framework 2.5.2" in help header.
     if not text:
         return None
@@ -265,7 +270,7 @@ def _extract_version(text: str) -> Optional[str]:
     return None
 
 
-def _parse_vol_json(text: str) -> List[Dict[str, Any]]:
+def _parse_vol_json(text: str) -> list[dict[str, Any]]:
     """Parse the JSON rendered by ``vol --renderer=json``.
 
     Volatility 3 emits either a JSON array of row-dicts or (occasionally) one
@@ -281,7 +286,7 @@ def _parse_vol_json(text: str) -> List[Dict[str, Any]]:
     except json.JSONDecodeError:
         parsed = None
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     if isinstance(parsed, list):
         for item in parsed:
             if isinstance(item, dict):
@@ -317,7 +322,7 @@ def _parse_vol_json(text: str) -> List[Dict[str, Any]]:
     return rows
 
 
-def _row_is_suspicious(kind_key: str, row: Dict[str, Any]) -> bool:
+def _row_is_suspicious(kind_key: str, row: dict[str, Any]) -> bool:
     """Heuristics that promote a row from baseline to hit-confidence."""
     if not isinstance(row, dict):
         return False
@@ -334,8 +339,14 @@ def _row_is_suspicious(kind_key: str, row: Dict[str, Any]) -> bool:
         return bool(hidden)
     if kind_key == "netscan" or kind_key == "netstat":
         state = str(lowered.get("state") or "").upper()
-        foreign = str(lowered.get("foreignaddr") or lowered.get("foreign_addr") or lowered.get("foreign"))
-        return state == "ESTABLISHED" and bool(foreign) and not foreign.startswith(("0.0.0.0", "127.", "::1"))
+        foreign = str(
+            lowered.get("foreignaddr") or lowered.get("foreign_addr") or lowered.get("foreign")
+        )
+        return (
+            state == "ESTABLISHED"
+            and bool(foreign)
+            and not foreign.startswith(("0.0.0.0", "127.", "::1"))
+        )
     if kind_key == "cmdline":
         args = str(lowered.get("args") or lowered.get("cmdline") or "").lower()
         return any(needle in args for needle in ("powershell -enc", "rundll32", "cscript", "mshta"))
@@ -345,7 +356,7 @@ def _row_is_suspicious(kind_key: str, row: Dict[str, Any]) -> bool:
     return False
 
 
-def _title_for_row(plugin: str, row: Dict[str, Any]) -> str:
+def _title_for_row(plugin: str, row: dict[str, Any]) -> str:
     lowered = {str(k).lower(): v for k, v in row.items()}
     label = None
     for key in ("processname", "process", "imagefilename", "name", "module", "command"):

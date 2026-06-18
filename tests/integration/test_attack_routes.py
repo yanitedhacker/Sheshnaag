@@ -15,7 +15,6 @@ from app.models.sheshnaag import LabRecipe, LabRun, RecipeRevision
 from app.models.v2 import Tenant
 from app.services.attack_mapper import AttackMapper
 
-
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -55,10 +54,17 @@ def setup_module() -> None:
         )
         session.add(recipe)
         session.flush()
-        revision = RecipeRevision(recipe_id=recipe.id, revision_number=1, approval_state="approved", content={})
+        revision = RecipeRevision(
+            recipe_id=recipe.id, revision_number=1, approval_state="approved", content={}
+        )
         session.add(revision)
         session.flush()
-        run = LabRun(tenant_id=tenant.id, recipe_revision_id=revision.id, provider="docker_kali", state="completed")
+        run = LabRun(
+            tenant_id=tenant.id,
+            recipe_revision_id=revision.id,
+            provider="docker_kali",
+            state="completed",
+        )
         case = AnalysisCase(
             tenant_id=tenant.id,
             title="ATT&CK case",
@@ -87,7 +93,10 @@ def setup_module() -> None:
                     title="shell exec",
                     severity="medium",
                     confidence=0.78,
-                    payload={"source": "ebpf", "raw": {"syscall": "execve", "command": "/bin/bash -lc id"}},
+                    payload={
+                        "source": "ebpf",
+                        "raw": {"syscall": "execve", "command": "/bin/bash -lc id"},
+                    },
                 ),
                 BehaviorFinding(
                     tenant_id=tenant.id,
@@ -132,7 +141,9 @@ def test_attack_coverage_route_groups_by_tactic_and_technique():
 
 
 def test_attack_technique_route_lists_contributing_findings():
-    response = client.get("/api/v4/attack/technique/T1055.012", params={"tenant_slug": "attack-private"})
+    response = client.get(
+        "/api/v4/attack/technique/T1055.012", params={"tenant_slug": "attack-private"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["count"] == 1

@@ -7,10 +7,10 @@ from alembic import context
 from alembic.script import ScriptDirectory
 from sqlalchemy import engine_from_config, inspect, pool
 
+import app.models  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base
 from app.migrations.bootstrap import create_current_schema_snapshot
-import app.models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

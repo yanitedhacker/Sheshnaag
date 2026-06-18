@@ -15,12 +15,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.models  # noqa: F401
 from app.api.routes.admin_roles import router as admin_roles_router
+from app.core.config import settings
 from app.core.database import Base, get_sync_session
 from app.core.security import TokenData, verify_token
-import app.models  # noqa: F401
 from app.models.rbac import Permission, Role, RolePermission
 from app.models.v2 import Tenant, TenantMembership, TenantUser
+
+
+@pytest.fixture(autouse=True)
+def _auth_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "auth_enabled", True)
 
 
 @pytest.fixture()
@@ -52,9 +58,7 @@ def app_fixture():
         ]
     )
     sess.add(Tenant(id=1, slug="t1", name="T1"))
-    sess.add(
-        TenantUser(id=10, email="alice@example.com", password_hash="x")
-    )
+    sess.add(TenantUser(id=10, email="alice@example.com", password_hash="x"))
     sess.add(TenantMembership(tenant_id=1, user_id=10, role="analyst"))
     sess.commit()
     sess.close()
@@ -78,9 +82,7 @@ def app_fixture():
 
 def _client_as(app, roles):
     """Override verify_token to inject the chosen roles."""
-    app.dependency_overrides[verify_token] = lambda: TokenData(
-        username="caller", roles=roles
-    )
+    app.dependency_overrides[verify_token] = lambda: TokenData(username="caller", roles=roles)
     return TestClient(app)
 
 

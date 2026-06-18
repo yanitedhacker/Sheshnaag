@@ -22,9 +22,7 @@ Configuration keys (all optional):
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-
-from app.lab.interfaces import Collector
+from typing import Any
 
 from app.lab.collectors.common import (
     build_advanced_telemetry_evidence,
@@ -33,7 +31,7 @@ from app.lab.collectors.common import (
     utc_iso,
 )
 from app.lab.collectors.runtime import env_flag_enabled, run_in_guest
-
+from app.lab.interfaces import Collector
 
 # Generous default capture ceilings (the old 5s/20-pkt/64KB cap is gone).
 DEFAULT_DURATION_SECONDS = 30
@@ -46,7 +44,9 @@ class PcapCollector(Collector):
     collector_name = "pcap"
     collector_version = "2.0.0"
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         started = utc_iso()
         plan = provider_result.get("plan") or {}
         provider_name = str(plan.get("provider") or run_context.get("provider") or "")
@@ -237,15 +237,13 @@ class PcapCollector(Collector):
                         "max_bytes": max_bytes,
                         "source": config["source"],
                     },
-                    "note": (
-                        "Capture bounds sourced from collector profile; 0 denotes unlimited."
-                    ),
+                    "note": ("Capture bounds sourced from collector profile; 0 denotes unlimited."),
                 },
             )
         ]
 
 
-def resolve_pcap_config(plan: Dict[str, Any]) -> Dict[str, Any]:
+def resolve_pcap_config(plan: dict[str, Any]) -> dict[str, Any]:
     """Resolve the effective PCAP collector config from a provider plan.
 
     Lookup order:
@@ -257,7 +255,7 @@ def resolve_pcap_config(plan: Dict[str, Any]) -> Dict[str, Any]:
     Missing keys fall back to the generous V4 defaults (never the old
     5-second / 20-packet cap).
     """
-    candidates: List[Optional[Dict[str, Any]]] = []
+    candidates: list[dict[str, Any] | None] = []
     for parent_key in ("collector_config", "collectors_config"):
         parent = plan.get(parent_key) if isinstance(plan, dict) else None
         if isinstance(parent, dict):
@@ -267,7 +265,7 @@ def resolve_pcap_config(plan: Dict[str, Any]) -> Dict[str, Any]:
         candidates.append(flat)
 
     source = "defaults"
-    merged: Dict[str, Any] = {}
+    merged: dict[str, Any] = {}
     for idx, cand in enumerate(candidates):
         if isinstance(cand, dict):
             merged.update(cand)

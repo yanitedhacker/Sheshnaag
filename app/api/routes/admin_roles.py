@@ -6,8 +6,6 @@ frontend can render the role catalog in the operator console.
 
 from __future__ import annotations
 
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -17,13 +15,12 @@ from app.core.security import TokenData, require_role, verify_token
 from app.models.v2 import TenantMembership, TenantUser
 from app.services.rbac import RbacService
 
-
 router = APIRouter(prefix="/api/v5/admin", tags=["Sheshnaag V5 Admin RBAC"])
 
 
 class RoleEntry(BaseModel):
     name: str
-    permissions: List[str]
+    permissions: list[str]
 
 
 class AssignRoleRequest(BaseModel):
@@ -38,11 +35,11 @@ class AssignRoleResponse(BaseModel):
     previous_role: str
 
 
-@router.get("/roles", response_model=List[RoleEntry])
+@router.get("/roles", response_model=list[RoleEntry])
 def list_roles(
     _td: TokenData = Depends(verify_token),
     session: Session = Depends(get_sync_session),
-) -> List[RoleEntry]:
+) -> list[RoleEntry]:
     rbac = RbacService(session)
     return [
         RoleEntry(name=name, permissions=rbac.permissions_for_role(name))
@@ -50,11 +47,11 @@ def list_roles(
     ]
 
 
-@router.get("/permissions", response_model=List[str])
+@router.get("/permissions", response_model=list[str])
 def list_permissions(
     _td: TokenData = Depends(verify_token),
     session: Session = Depends(get_sync_session),
-) -> List[str]:
+) -> list[str]:
     return RbacService(session).list_permissions()
 
 
@@ -83,9 +80,7 @@ def assign_role(
         )
 
     membership = (
-        session.query(TenantMembership)
-        .filter_by(user_id=user_id, tenant_id=req.tenant_id)
-        .first()
+        session.query(TenantMembership).filter_by(user_id=user_id, tenant_id=req.tenant_id).first()
     )
     if membership is None:
         raise HTTPException(

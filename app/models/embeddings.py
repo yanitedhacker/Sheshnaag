@@ -17,11 +17,11 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Column,
     DateTime,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -30,7 +30,6 @@ from sqlalchemy.types import TypeDecorator, TypeEngine
 
 from app.core.database import Base
 from app.core.time import utc_now
-
 
 VECTOR_DIM = 1024
 
@@ -93,9 +92,7 @@ class KnowledgeChunkEmbedding(Base):
 
     __tablename__ = "knowledge_chunk_embeddings"
     __table_args__ = (
-        UniqueConstraint(
-            "document_id", "chunk_index", name="uq_knowledge_chunk_embedding_doc_idx"
-        ),
+        UniqueConstraint("document_id", "chunk_index", name="uq_knowledge_chunk_embedding_doc_idx"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -108,9 +105,7 @@ class KnowledgeChunkEmbedding(Base):
     document_id = Column(Integer, index=True, nullable=True)
     tenant_id = Column(Integer, index=True, nullable=True)
     chunk_index = Column(Integer, nullable=False, default=0)
-    sha256 = Column(
-        String(128), nullable=False, index=True
-    )  # ix_knowledge_chunk_embeddings_sha256
+    sha256 = Column(String(128), nullable=False, index=True)  # ix_knowledge_chunk_embeddings_sha256
     source_label = Column(String(200), nullable=True)
     source_url = Column(Text, nullable=True)
     content_preview = Column(Text, nullable=True)

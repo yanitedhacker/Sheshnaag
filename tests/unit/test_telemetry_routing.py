@@ -34,7 +34,12 @@ def test_route_events_by_source_tool():
 @pytest.mark.unit
 def test_build_telemetry_slices_adds_summary_routes_and_overhead():
     events = [
-        base_event(source_tool="falco", severity="high", process={"name": "bash"}, network={"dst_ip": "1.2.3.4"}),
+        base_event(
+            source_tool="falco",
+            severity="high",
+            process={"name": "bash"},
+            network={"dst_ip": "1.2.3.4"},
+        ),
         base_event(source_tool="tracee", severity="info", file_ref={"path": "/tmp/demo"}),
     ]
     payload = build_telemetry_slices(

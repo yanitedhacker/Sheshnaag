@@ -9,8 +9,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401
+from app.core.database import Base
 from app.models.malware_lab import AnalysisCase, IndicatorArtifact
 from app.models.v2 import Tenant
 from app.services.ioc_enrichment import (
@@ -19,7 +19,6 @@ from app.services.ioc_enrichment import (
     _consensus_score,
     _verdict_record,
 )
-
 
 # ---------------------------------------------------------------------------
 # Connector stubs
@@ -35,16 +34,16 @@ class _StubConnector:
         name: str,
         healthy: bool,
         response: Any,
-        raise_exc: Optional[Exception] = None,
+        raise_exc: Exception | None = None,
     ) -> None:
         self.name = name
         self.healthy = healthy
         self._response = response
         self._raise = raise_exc
         self.called = False
-        self.received_scope: Optional[Dict[str, Any]] = None
+        self.received_scope: dict[str, Any] | None = None
 
-    def fetch(self, scope: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any]) -> list[dict[str, Any]]:
         self.called = True
         self.received_scope = scope
         if self._raise is not None:
@@ -214,12 +213,9 @@ def test_enrich_consensus_malicious_vs_clean(session, seeded):
     """3 malicious + 1 clean should produce a high consensus score."""
     _, _, indicator = seeded
     connectors = [
-        _StubConnector(name=f"m{i}", healthy=True, response=[{"confidence": 0.9}])
-        for i in range(3)
+        _StubConnector(name=f"m{i}", healthy=True, response=[{"confidence": 0.9}]) for i in range(3)
     ]
-    connectors.append(
-        _StubConnector(name="c1", healthy=True, response=[{"confidence": 0.05}])
-    )
+    connectors.append(_StubConnector(name="c1", healthy=True, response=[{"confidence": 0.05}]))
     enricher = IocEnrichment(session, connectors=connectors)
     result = enricher.enrich(indicator)
     # 3 malicious votes dominate
@@ -260,9 +256,7 @@ def test_scope_shape_is_uniform(session, seeded):
     enricher = IocEnrichment(session, connectors=[connector])
     enricher.enrich(indicator)
     assert connector.received_scope is not None
-    assert connector.received_scope["iocs"] == [
-        {"kind": "sha256", "value": indicator.value}
-    ]
+    assert connector.received_scope["iocs"] == [{"kind": "sha256", "value": indicator.value}]
 
 
 def test_verdict_record_picks_highest_confidence():

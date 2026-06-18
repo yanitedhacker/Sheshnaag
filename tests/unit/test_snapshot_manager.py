@@ -21,7 +21,7 @@ from app.lab.snapshot_manager import SnapshotManager
 def _profile(
     *,
     provider_hint: str,
-    config: Dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
     name: str = "profile-X",
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -49,11 +49,12 @@ def test_libvirt_snapshot_happy_path(monkeypatch):
     profile = _profile(provider_hint="libvirt", config={"domain": "win10-lab"})
 
     monkeypatch.setattr(
-        sm_module.shutil, "which",
+        sm_module.shutil,
+        "which",
         lambda name: f"/usr/bin/{name}" if name == "virsh" else None,
     )
 
-    captured_cmds: List[List[str]] = []
+    captured_cmds: list[list[str]] = []
 
     def _fake_run(cmd, **kwargs):
         captured_cmds.append(list(cmd))
@@ -87,13 +88,14 @@ def test_lima_snapshot_happy_path(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        sm_module.shutil, "which",
+        sm_module.shutil,
+        "which",
         lambda name: f"/usr/bin/{name}" if name == "limactl" else None,
     )
     # Use the real shutil.copy2 so the baseline image gets created/restored.
     monkeypatch.setattr(sm_module.shutil, "copy2", shutil.copy2)
 
-    calls: List[List[str]] = []
+    calls: list[list[str]] = []
 
     def _fake_run(cmd, **kwargs):
         calls.append(list(cmd))
@@ -121,11 +123,12 @@ def test_lima_snapshot_happy_path(monkeypatch, tmp_path):
 def test_docker_snapshot_is_noop_revert(monkeypatch):
     profile = _profile(provider_hint="docker", config={"image": "kali:latest"})
     monkeypatch.setattr(
-        sm_module.shutil, "which",
+        sm_module.shutil,
+        "which",
         lambda name: f"/usr/bin/{name}" if name == "docker" else None,
     )
 
-    inspect_calls: List[List[str]] = []
+    inspect_calls: list[list[str]] = []
 
     def _fake_run(cmd, **kwargs):
         inspect_calls.append(list(cmd))
@@ -151,11 +154,12 @@ def test_docker_snapshot_is_noop_revert(monkeypatch):
 def test_revert_on_exception(monkeypatch):
     profile = _profile(provider_hint="libvirt", config={"domain": "dom-x"})
     monkeypatch.setattr(
-        sm_module.shutil, "which",
+        sm_module.shutil,
+        "which",
         lambda name: f"/usr/bin/{name}" if name == "virsh" else None,
     )
 
-    captured: List[List[str]] = []
+    captured: list[list[str]] = []
 
     def _fake_run(cmd, **kwargs):
         captured.append(list(cmd))
@@ -165,9 +169,8 @@ def test_revert_on_exception(monkeypatch):
 
     mgr = SnapshotManager(profile, run_id="exc")
 
-    with pytest.raises(RuntimeError, match="kaboom"):
-        with mgr.with_snapshot():
-            raise RuntimeError("kaboom")
+    with pytest.raises(RuntimeError, match="kaboom"), mgr.with_snapshot():
+        raise RuntimeError("kaboom")
 
     # Even though the body raised, revert must still have run.
     assert any(cmd[:2] == ["virsh", "snapshot-revert"] for cmd in captured)
@@ -180,13 +183,15 @@ def test_no_revert_env_var_honored(monkeypatch):
     monkeypatch.setenv("SHESHNAAG_SNAPSHOT_NO_REVERT", "1")
     profile = _profile(provider_hint="libvirt", config={"domain": "dom-noop"})
     monkeypatch.setattr(
-        sm_module.shutil, "which",
+        sm_module.shutil,
+        "which",
         lambda name: f"/usr/bin/{name}" if name == "virsh" else None,
     )
 
-    captured: List[List[str]] = []
+    captured: list[list[str]] = []
     monkeypatch.setattr(
-        sm_module.subprocess, "run",
+        sm_module.subprocess,
+        "run",
         lambda cmd, **kw: captured.append(list(cmd)) or _Completed(),
     )
 

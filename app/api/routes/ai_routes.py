@@ -1,7 +1,5 @@
 """V3 AI provider and draft session APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -14,8 +12,8 @@ router = APIRouter(prefix="/api/ai", tags=["Sheshnaag V3 AI"])
 
 
 class AISessionCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     analysis_case_id: int
     provider_key: str
     capability: str
@@ -25,38 +23,46 @@ class AISessionCreateRequest(BaseModel):
 
 
 class AISessionReviewRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     session_id: int
     reviewer_name: str
     decision: str
-    rationale: Optional[str] = None
+    rationale: str | None = None
 
 
 @router.get("/providers")
 def list_ai_providers(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return MalwareLabService(session).list_ai_providers(tenant)
 
 
 @router.get("/sessions")
 def list_ai_sessions(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
-    analysis_case_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
+    analysis_case_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return MalwareLabService(session).list_ai_sessions(tenant, analysis_case_id=analysis_case_id)
 
 
 @router.post("/sessions")
-def create_ai_session(request: AISessionCreateRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+def create_ai_session(
+    request: AISessionCreateRequest, session: Session = Depends(get_sync_session)
+):
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).create_ai_session(
             tenant,
@@ -72,8 +78,12 @@ def create_ai_session(request: AISessionCreateRequest, session: Session = Depend
 
 
 @router.post("/sessions/review")
-def review_ai_session(request: AISessionReviewRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+def review_ai_session(
+    request: AISessionReviewRequest, session: Session = Depends(get_sync_session)
+):
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).review_ai_session(
             tenant,

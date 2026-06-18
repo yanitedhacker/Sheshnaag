@@ -1,7 +1,6 @@
 """V3 specimen intake APIs."""
 
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -15,19 +14,19 @@ router = APIRouter(prefix="/api/specimens", tags=["Sheshnaag V3 Specimens"])
 
 
 class SpecimenCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     name: str
     specimen_kind: str = "file"
     source_type: str = "upload"
     source_reference: str
     submitted_by: str
-    summary: Optional[str] = None
+    summary: str | None = None
     labels: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
 
 
-def _parse_json_field(raw: Optional[str], *, default):
+def _parse_json_field(raw: str | None, *, default):
     if raw in {None, ""}:
         return default
     try:
@@ -38,17 +37,21 @@ def _parse_json_field(raw: Optional[str], *, default):
 
 @router.get("")
 def list_specimens(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return MalwareLabService(session).list_specimens(tenant)
 
 
 @router.post("")
 def create_specimen(request: SpecimenCreateRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).create_specimen(
             tenant,
@@ -67,14 +70,14 @@ def create_specimen(request: SpecimenCreateRequest, session: Session = Depends(g
 
 @router.post("/upload")
 async def upload_specimen(
-    tenant_id: Optional[int] = Form(None),
-    tenant_slug: Optional[str] = Form(None),
+    tenant_id: int | None = Form(None),
+    tenant_slug: str | None = Form(None),
     name: str = Form(...),
     specimen_kind: str = Form("file"),
     submitted_by: str = Form(...),
-    summary: Optional[str] = Form(None),
-    labels: Optional[str] = Form(None),
-    metadata: Optional[str] = Form(None),
+    summary: str | None = Form(None),
+    labels: str | None = Form(None),
+    metadata: str | None = Form(None),
     file: UploadFile = File(...),
     session: Session = Depends(get_sync_session),
 ):

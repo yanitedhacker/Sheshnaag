@@ -20,7 +20,6 @@ from app.services.capability_policy import (
     exact_action_scope,
 )
 
-
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -88,8 +88,8 @@ class BriefService:
             .all()
         )
 
-        severity_counts: Dict[str, int] = {}
-        attack_techniques: Dict[str, int] = {}
+        severity_counts: dict[str, int] = {}
+        attack_techniques: dict[str, int] = {}
         for f in new_findings:
             severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
             for tech in (f.payload or {}).get("attack_techniques", []) or []:
@@ -97,14 +97,9 @@ class BriefService:
                 if tid:
                     attack_techniques[str(tid)] = attack_techniques.get(str(tid), 0) + 1
 
-        recent_kev = (
-            self.session.query(KEVEntry)
-            .order_by(desc(KEVEntry.id))
-            .limit(5)
-            .all()
-        )
+        recent_kev = self.session.query(KEVEntry).order_by(desc(KEVEntry.id)).limit(5).all()
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "period": {
                 "start": period_start.isoformat(),
                 "end": period_end.isoformat(),
@@ -121,7 +116,12 @@ class BriefService:
                 attack_techniques.items(), key=lambda kv: kv[1], reverse=True
             )[:10],
             "top_findings": [
-                {"id": f.id, "title": f.title, "severity": f.severity, "case_id": f.analysis_case_id}
+                {
+                    "id": f.id,
+                    "title": f.title,
+                    "severity": f.severity,
+                    "case_id": f.analysis_case_id,
+                }
                 for f in new_findings[:5]
             ],
             "top_cases": [
@@ -166,7 +166,9 @@ class BriefService:
                     ),
                     grounding=grounding,
                 )
-                text = ((response or {}).get("draft") or {}).get("text") or response.get("text") or ""
+                text = (
+                    ((response or {}).get("draft") or {}).get("text") or response.get("text") or ""
+                )
                 if text:
                     narrative = text
             except Exception as exc:  # pragma: no cover - provider-dependent
@@ -186,7 +188,7 @@ class BriefService:
         return row
 
     @staticmethod
-    def _build_narrative(tenant: Tenant, payload: Dict[str, Any]) -> str:
+    def _build_narrative(tenant: Tenant, payload: dict[str, Any]) -> str:
         c = payload["counts"]
         sev = payload["severity_counts"]
         sev_summary = ", ".join(f"{k}:{v}" for k, v in sorted(sev.items())) or "no new findings"
@@ -205,7 +207,7 @@ class BriefService:
 
     # -------------------------------------------------------------- read APIs
 
-    def latest(self, tenant: Tenant, *, brief_type: Optional[str] = None) -> Optional[ScheduledBrief]:
+    def latest(self, tenant: Tenant, *, brief_type: str | None = None) -> ScheduledBrief | None:
         q = self.session.query(ScheduledBrief).filter(ScheduledBrief.tenant_id == tenant.id)
         if brief_type:
             q = q.filter(ScheduledBrief.brief_type == brief_type)
@@ -216,15 +218,15 @@ class BriefService:
         tenant: Tenant,
         *,
         limit: int = 20,
-        brief_type: Optional[str] = None,
-    ) -> List[ScheduledBrief]:
+        brief_type: str | None = None,
+    ) -> list[ScheduledBrief]:
         q = self.session.query(ScheduledBrief).filter(ScheduledBrief.tenant_id == tenant.id)
         if brief_type:
             q = q.filter(ScheduledBrief.brief_type == brief_type)
         return q.order_by(desc(ScheduledBrief.generated_at)).limit(max(1, min(limit, 200))).all()
 
 
-def serialize_brief(row: ScheduledBrief) -> Dict[str, Any]:
+def serialize_brief(row: ScheduledBrief) -> dict[str, Any]:
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,

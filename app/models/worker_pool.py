@@ -12,11 +12,11 @@ Three tables back the worker pool:
 from __future__ import annotations
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
     Integer,
-    JSON,
     LargeBinary,
     String,
     Text,
@@ -64,9 +64,7 @@ class WorkerCaKey(Base):
     nonce = Column(LargeBinary, nullable=False)
     not_before = Column(DateTime, nullable=False)
     not_after = Column(DateTime, nullable=False)
-    is_active = Column(
-        Boolean, nullable=False, default=True, server_default="1"
-    )
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
     created_at = Column(DateTime, default=utc_now)
     created_by = Column(String(200), nullable=False)
 

@@ -7,8 +7,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401  registers tables
+from app.core.database import Base
 from app.models.malware_lab import CaseFieldSchema
 from app.models.v2 import Tenant
 from app.services.case_field_schema import (
@@ -123,9 +123,7 @@ def test_validate_custom_fields_rejects_missing_required(session):
     svc = CaseFieldSchemaService(session)
     svc.install_schema(tenant_id=1, schema=SAMPLE_SCHEMA, actor="x")
     with pytest.raises(CustomFieldsValidationError) as exc:
-        svc.validate_custom_fields(
-            tenant_id=1, fields={"incident_id": "INC-42"}
-        )
+        svc.validate_custom_fields(tenant_id=1, fields={"incident_id": "INC-42"})
     assert any("severity" in e for e in exc.value.errors)
 
 

@@ -1,7 +1,5 @@
 """V3 analysis case APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -14,11 +12,11 @@ router = APIRouter(prefix="/api/analysis-cases", tags=["Sheshnaag V3 Analysis Ca
 
 
 class AnalysisCaseCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     title: str
     analyst_name: str
-    summary: Optional[str] = None
+    summary: str | None = None
     priority: str = "high"
     specimen_ids: list[int] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -27,22 +25,26 @@ class AnalysisCaseCreateRequest(BaseModel):
 
 @router.get("")
 def list_analysis_cases(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return MalwareLabService(session).list_analysis_cases(tenant)
 
 
 @router.get("/{case_id}")
 def get_analysis_case(
     case_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     try:
         return MalwareLabService(session).get_analysis_case(tenant, case_id=case_id)
     except ValueError as exc:
@@ -50,8 +52,12 @@ def get_analysis_case(
 
 
 @router.post("")
-def create_analysis_case(request: AnalysisCaseCreateRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+def create_analysis_case(
+    request: AnalysisCaseCreateRequest, session: Session = Depends(get_sync_session)
+):
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).create_analysis_case(
             tenant,

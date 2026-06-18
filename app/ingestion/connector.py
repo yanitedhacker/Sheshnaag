@@ -8,11 +8,9 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, ClassVar, Dict, List, Optional, Type
+from typing import Any, ClassVar
 
 from sqlalchemy.orm import Session
-
-from app.core.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +23,12 @@ class ConnectorResult:
     items_fetched: int = 0
     items_new: int = 0
     items_updated: int = 0
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    cursor: Optional[str] = None
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    started_at: str | None = None
+    completed_at: str | None = None
+    cursor: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "source": self.source,
             "items_fetched": self.items_fetched,
@@ -63,8 +61,8 @@ class FeedConnector(ABC):
         self,
         session: Session,
         *,
-        since: Optional[datetime] = None,
-        cursor: Optional[str] = None,
+        since: datetime | None = None,
+        cursor: str | None = None,
         limit: int = 2000,
     ) -> ConnectorResult:
         """
@@ -93,10 +91,10 @@ class FeedConnector(ABC):
 # Global connector registry
 # ---------------------------------------------------------------------------
 
-_CONNECTOR_REGISTRY: Dict[str, Type[FeedConnector]] = {}
+_CONNECTOR_REGISTRY: dict[str, type[FeedConnector]] = {}
 
 
-def register_connector(cls: Type[FeedConnector]) -> Type[FeedConnector]:
+def register_connector(cls: type[FeedConnector]) -> type[FeedConnector]:
     """Class decorator that registers a FeedConnector subclass."""
     if not hasattr(cls, "name") or not cls.name:
         raise ValueError(f"Connector {cls.__name__} must define a 'name' class attribute")
@@ -105,10 +103,10 @@ def register_connector(cls: Type[FeedConnector]) -> Type[FeedConnector]:
     return cls
 
 
-def get_registered_connectors() -> Dict[str, Type[FeedConnector]]:
+def get_registered_connectors() -> dict[str, type[FeedConnector]]:
     """Return a snapshot of all registered connectors."""
     return dict(_CONNECTOR_REGISTRY)
 
 
-def get_connector(name: str) -> Optional[Type[FeedConnector]]:
+def get_connector(name: str) -> type[FeedConnector] | None:
     return _CONNECTOR_REGISTRY.get(name)

@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _INSTRUMENTED = False
 
 
-def _truthy(value: Optional[str]) -> bool:
+def _truthy(value: str | None) -> bool:
     return bool(value) and value.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -35,7 +35,7 @@ def _otlp_trace_endpoint(endpoint: str) -> str:
     return f"{normalized}/v1/traces"
 
 
-def configure_telemetry(app: Any = None, *, service_name: Optional[str] = None) -> bool:
+def configure_telemetry(app: Any = None, *, service_name: str | None = None) -> bool:
     """Wire OpenTelemetry tracing if an exporter endpoint is configured.
 
     Returns ``True`` when OTel was successfully initialised, ``False`` if the

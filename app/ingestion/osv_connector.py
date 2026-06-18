@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -53,8 +52,8 @@ class OSVConnector(FeedConnector):
         self,
         session: Session,
         *,
-        since: Optional[datetime] = None,
-        cursor: Optional[str] = None,
+        since: datetime | None = None,
+        cursor: str | None = None,
         limit: int = 2000,
     ) -> ConnectorResult:
         result = ConnectorResult(source=self.name, started_at=utc_now().isoformat())
@@ -92,9 +91,7 @@ class OSVConnector(FeedConnector):
         payload_hash = self.hash_payload(parsed["raw"])
 
         existing = (
-            session.query(AdvisoryRecord)
-            .filter(AdvisoryRecord.external_id == osv_id)
-            .first()
+            session.query(AdvisoryRecord).filter(AdvisoryRecord.external_id == osv_id).first()
         )
 
         if existing is not None:
@@ -146,10 +143,14 @@ class OSVConnector(FeedConnector):
             )
             if advisory.package_record_id is None:
                 advisory.package_record_id = pkg.id
-            if not session.query(AdvisoryPackageLink).filter(
-                AdvisoryPackageLink.advisory_record_id == advisory.id,
-                AdvisoryPackageLink.package_record_id == pkg.id,
-            ).first():
+            if (
+                not session.query(AdvisoryPackageLink)
+                .filter(
+                    AdvisoryPackageLink.advisory_record_id == advisory.id,
+                    AdvisoryPackageLink.package_record_id == pkg.id,
+                )
+                .first()
+            ):
                 session.add(
                     AdvisoryPackageLink(
                         advisory_record_id=advisory.id,
@@ -196,7 +197,7 @@ class OSVConnector(FeedConnector):
                 session.add(vr)
 
     @staticmethod
-    def _resolve_cve_fk(session: Session, cve_aliases: list[str]) -> Optional[int]:
+    def _resolve_cve_fk(session: Session, cve_aliases: list[str]) -> int | None:
         """Look up the internal CVE PK for the first matching alias."""
         for alias in cve_aliases:
             cve = session.query(CVE).filter(CVE.cve_id == alias).first()
@@ -205,7 +206,7 @@ class OSVConnector(FeedConnector):
         return None
 
 
-def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
     try:

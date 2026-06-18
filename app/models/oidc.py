@@ -9,12 +9,12 @@ plaintext ``client_secret`` never touches the DB — we store a *reference*
 from __future__ import annotations
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
 )
@@ -46,9 +46,7 @@ class OidcProvider(Base):
     default_tenant_id = Column(
         Integer, ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True
     )
-    is_active = Column(
-        Boolean, nullable=False, default=True, server_default="1"
-    )
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

@@ -16,13 +16,9 @@ import pytest
 def pytest_configure(config):
     """Configure pytest with custom markers."""
     config.addinivalue_line(
-        "markers",
-        "integration: marks tests as integration tests (require running services)"
+        "markers", "integration: marks tests as integration tests (require running services)"
     )
-    config.addinivalue_line(
-        "markers",
-        "unit: marks tests as unit tests (no external dependencies)"
-    )
+    config.addinivalue_line("markers", "unit: marks tests as unit tests (no external dependencies)")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -33,7 +29,7 @@ def pytest_collection_modifyitems(config, items):
     integration tests skip gracefully when Docker services aren't running.
     """
     # Check if we should skip integration tests
-    skip_integration = not os.getenv("RUN_INTEGRATION_TESTS", "").lower() in ("1", "true", "yes")
+    skip_integration = os.getenv("RUN_INTEGRATION_TESTS", "").lower() not in ("1", "true", "yes")
 
     if skip_integration:
         skip_marker = pytest.mark.skip(

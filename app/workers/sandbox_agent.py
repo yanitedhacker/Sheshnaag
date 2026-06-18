@@ -34,7 +34,6 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import requests
 from cryptography import x509
@@ -47,7 +46,6 @@ from app.core.event_bus import (
     build_tls_redis_client,
     sandbox_return_stream,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +70,7 @@ class AgentState:
     redis_url: str
 
     @classmethod
-    def load(cls, state_path: Path) -> "AgentState":
+    def load(cls, state_path: Path) -> AgentState:
         with state_path.open("r") as f:
             data = json.load(f)
         return cls(**data)
@@ -87,7 +85,7 @@ class AgentState:
 
 
 def _generate_keypair_and_csr(
-    key_dir: Path, hostname: str, lan_ip: Optional[str]
+    key_dir: Path, hostname: str, lan_ip: str | None
 ) -> tuple[rsa.RSAPrivateKey, str, str]:
     """Idempotent: re-generate only if key.pem doesn't exist.
 
@@ -99,13 +97,9 @@ def _generate_keypair_and_csr(
 
     if key_path.exists():
         with key_path.open("rb") as f:
-            private_key = serialization.load_pem_private_key(
-                f.read(), password=None
-            )
+            private_key = serialization.load_pem_private_key(f.read(), password=None)
     else:
-        private_key = rsa.generate_private_key(
-            public_exponent=65537, key_size=3072
-        )
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
         key_pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -131,9 +125,7 @@ def _generate_keypair_and_csr(
         [
             x509.NameAttribute(NameOID.COMMON_NAME, cn_marker),
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Sheshnaag"),
-            x509.NameAttribute(
-                NameOID.ORGANIZATIONAL_UNIT_NAME, "sandbox-worker"
-            ),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "sandbox-worker"),
         ]
     )
     sans = [x509.DNSName(hostname)]
@@ -148,9 +140,7 @@ def _generate_keypair_and_csr(
     csr = (
         x509.CertificateSigningRequestBuilder()
         .subject_name(subject)
-        .add_extension(
-            x509.SubjectAlternativeName(sans), critical=False
-        )
+        .add_extension(x509.SubjectAlternativeName(sans), critical=False)
         .sign(private_key, hashes.SHA256())
     )
     csr_pem = csr.public_bytes(serialization.Encoding.PEM).decode("utf-8")
@@ -165,7 +155,7 @@ def _bootstrap(
     capability_flags: list[str],
     key_dir: Path,
     hostname: str,
-    lan_ip: Optional[str],
+    lan_ip: str | None,
 ) -> AgentState:
     """One-shot: generate key + CSR, POST to control plane, store result."""
     _, csr_pem, _ = _generate_keypair_and_csr(key_dir, hostname, lan_ip)
@@ -214,9 +204,7 @@ class HeartbeatLoop:
         worker_id: int,
         capability_flags: list[str],
     ) -> None:
-        self._url = (
-            f"{control_plane_url.rstrip('/')}/api/v5/workers/{worker_id}/heartbeat"
-        )
+        self._url = f"{control_plane_url.rstrip('/')}/api/v5/workers/{worker_id}/heartbeat"
         self._capability_flags = capability_flags
         self._draining = False
         self._stop = False
@@ -283,12 +271,12 @@ def _publish_return(
 def run_agent(
     *,
     control_plane_url: str,
-    enrollment_token: Optional[str],
+    enrollment_token: str | None,
     capability_flags: list[str],
     key_dir: Path = _DEFAULT_KEY_DIR,
-    hostname: Optional[str] = None,
-    lan_ip: Optional[str] = None,
-    consumer_name: Optional[str] = None,
+    hostname: str | None = None,
+    lan_ip: str | None = None,
+    consumer_name: str | None = None,
 ) -> int:
     """Start the agent. Returns process exit code.
 
@@ -302,9 +290,7 @@ def run_agent(
 
     if not state_path.exists():
         if not enrollment_token:
-            logger.error(
-                "no state.json and no enrollment token; cannot bootstrap"
-            )
+            logger.error("no state.json and no enrollment token; cannot bootstrap")
             return 2
         state = _bootstrap(
             control_plane_url=control_plane_url,
@@ -319,9 +305,7 @@ def run_agent(
 
     # Load private key for signing return payloads.
     with (key_dir / _KEY_FILE).open("rb") as f:
-        private_key = serialization.load_pem_private_key(
-            f.read(), password=None
-        )
+        private_key = serialization.load_pem_private_key(f.read(), password=None)
 
     redis_client = build_tls_redis_client(
         state.redis_url,
@@ -333,9 +317,7 @@ def run_agent(
     # Ensure consumer group exists. ``mkstream=True`` auto-creates the
     # work stream if absent, matching the V4 sandbox_worker behavior.
     try:
-        redis_client.xgroup_create(
-            SANDBOX_WORK_STREAM, _CONSUMER_GROUP, id="$", mkstream=True
-        )
+        redis_client.xgroup_create(SANDBOX_WORK_STREAM, _CONSUMER_GROUP, id="$", mkstream=True)
     except Exception:
         # Already exists.
         pass
@@ -356,9 +338,7 @@ def run_agent(
             heartbeat.tick()
             time.sleep(_HEARTBEAT_INTERVAL_SECONDS)
 
-    hb_thread = threading.Thread(
-        target=_heartbeat_thread, name="agent-heartbeat", daemon=True
-    )
+    hb_thread = threading.Thread(target=_heartbeat_thread, name="agent-heartbeat", daemon=True)
     hb_thread.start()
 
     # SIGTERM/SIGINT cleanup.
@@ -403,9 +383,7 @@ def run_agent(
                     message = json.loads(raw or "{}")
                 except json.JSONDecodeError:
                     logger.error("malformed work entry %s", entry_id)
-                    redis_client.xack(
-                        SANDBOX_WORK_STREAM, _CONSUMER_GROUP, entry_id
-                    )
+                    redis_client.xack(SANDBOX_WORK_STREAM, _CONSUMER_GROUP, entry_id)
                     continue
 
                 run_id = int(message.get("run_id", 0))
@@ -417,9 +395,7 @@ def run_agent(
                     continue
 
                 # Sign and publish the return payload.
-                body = json.dumps(
-                    result, sort_keys=True, default=str
-                ).encode("utf-8")
+                body = json.dumps(result, sort_keys=True, default=str).encode("utf-8")
                 signature = _sign_payload(private_key, body)
                 _publish_return(
                     redis_client,
@@ -428,9 +404,7 @@ def run_agent(
                     signature=signature,
                 )
 
-                redis_client.xack(
-                    SANDBOX_WORK_STREAM, _CONSUMER_GROUP, entry_id
-                )
+                redis_client.xack(SANDBOX_WORK_STREAM, _CONSUMER_GROUP, entry_id)
 
     return 0
 
@@ -440,19 +414,15 @@ def run_agent(
 # ---------------------------------------------------------------------------
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=os.environ.get("SHESHNAAG_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    parser = argparse.ArgumentParser(
-        description="Sheshnaag V5 sandbox worker agent"
-    )
+    parser = argparse.ArgumentParser(description="Sheshnaag V5 sandbox worker agent")
     parser.add_argument(
         "--control-plane",
-        default=os.environ.get(
-            "SHESHNAAG_CONTROL_PLANE_URL", "https://control.lab.local:8443"
-        ),
+        default=os.environ.get("SHESHNAAG_CONTROL_PLANE_URL", "https://control.lab.local:8443"),
         help="Control plane base URL.",
     )
     parser.add_argument(
@@ -468,16 +438,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "--key-dir",
-        default=os.environ.get(
-            "SHESHNAAG_WORKER_KEY_DIR", str(_DEFAULT_KEY_DIR)
-        ),
+        default=os.environ.get("SHESHNAAG_WORKER_KEY_DIR", str(_DEFAULT_KEY_DIR)),
     )
-    parser.add_argument(
-        "--hostname", default=None, help="Override autodetected FQDN."
-    )
-    parser.add_argument(
-        "--lan-ip", default=None, help="LAN IPv4/IPv6 SAN for the worker cert."
-    )
+    parser.add_argument("--hostname", default=None, help="Override autodetected FQDN.")
+    parser.add_argument("--lan-ip", default=None, help="LAN IPv4/IPv6 SAN for the worker cert.")
     args = parser.parse_args(argv)
 
     return run_agent(

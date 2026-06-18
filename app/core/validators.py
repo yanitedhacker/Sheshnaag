@@ -8,33 +8,32 @@ and ensure data integrity.
 """
 
 import re
-from typing import Optional
+
 from fastapi import HTTPException, status
 
-
 # CVE ID pattern: CVE-YYYY-NNNNN (4+ digits for the sequence number)
-CVE_PATTERN = re.compile(r'^CVE-\d{4}-\d{4,}$', re.IGNORECASE)
+CVE_PATTERN = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
 
 # Patch ID pattern: Vendor-specific or KB numbers
-PATCH_ID_PATTERN = re.compile(r'^[A-Za-z0-9_\-\.]+$')
+PATCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-\.]+$")
 
 # Safe string pattern (alphanumeric, spaces, basic punctuation)
-SAFE_STRING_PATTERN = re.compile(r'^[A-Za-z0-9\s\-_\.,;:\'\"()[\]{}!?@#$%&*+=/<>]+$')
+SAFE_STRING_PATTERN = re.compile(r"^[A-Za-z0-9\s\-_\.,;:\'\"()[\]{}!?@#$%&*+=/<>]+$")
 
 # IP address patterns
 IPV4_PATTERN = re.compile(
-    r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
-    r'(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+    r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
 )
 IPV6_PATTERN = re.compile(
-    r'^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|'
-    r'^(?:[0-9a-fA-F]{1,4}:){1,7}:$|'
-    r'^(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}$'
+    r"^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|"
+    r"^(?:[0-9a-fA-F]{1,4}:){1,7}:$|"
+    r"^(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}$"
 )
 
 # Hostname pattern
 HOSTNAME_PATTERN = re.compile(
-    r'^(?=.{1,253}$)(?:(?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)*(?!-)[A-Za-z0-9-]{1,63}(?<!-)$'
+    r"^(?=.{1,253}$)(?:(?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)*(?!-)[A-Za-z0-9-]{1,63}(?<!-)$"
 )
 
 
@@ -53,8 +52,7 @@ def validate_cve_id(cve_id: str) -> str:
     """
     if not cve_id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="CVE ID cannot be empty"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="CVE ID cannot be empty"
         )
 
     cve_id = cve_id.strip().upper()
@@ -62,7 +60,7 @@ def validate_cve_id(cve_id: str) -> str:
     if not CVE_PATTERN.match(cve_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid CVE ID format: '{cve_id}'. Expected format: CVE-YYYY-NNNNN (e.g., CVE-2024-12345)"
+            detail=f"Invalid CVE ID format: '{cve_id}'. Expected format: CVE-YYYY-NNNNN (e.g., CVE-2024-12345)",
         )
 
     return cve_id
@@ -83,22 +81,20 @@ def validate_patch_id(patch_id: str) -> str:
     """
     if not patch_id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Patch ID cannot be empty"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Patch ID cannot be empty"
         )
 
     patch_id = patch_id.strip()
 
     if len(patch_id) > 100:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Patch ID too long (max 100 characters)"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Patch ID too long (max 100 characters)"
         )
 
     if not PATCH_ID_PATTERN.match(patch_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid patch ID format: '{patch_id}'. Use only alphanumeric characters, hyphens, underscores, and dots."
+            detail=f"Invalid patch ID format: '{patch_id}'. Use only alphanumeric characters, hyphens, underscores, and dots.",
         )
 
     return patch_id
@@ -123,7 +119,7 @@ def validate_risk_level(risk_level: str) -> str:
     if risk_level not in valid_levels:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid risk level: '{risk_level}'. Must be one of: {', '.join(sorted(valid_levels))}"
+            detail=f"Invalid risk level: '{risk_level}'. Must be one of: {', '.join(sorted(valid_levels))}",
         )
 
     return risk_level
@@ -148,7 +144,7 @@ def validate_status(status_value: str, valid_statuses: set) -> str:
     if status_value not in valid_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status: '{status_value}'. Must be one of: {', '.join(sorted(valid_statuses))}"
+            detail=f"Invalid status: '{status_value}'. Must be one of: {', '.join(sorted(valid_statuses))}",
         )
 
     return status_value
@@ -191,8 +187,7 @@ def validate_ip_address(ip: str) -> str:
         return ip
 
     raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Invalid IP address format: '{ip}'"
+        status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid IP address format: '{ip}'"
     )
 
 
@@ -213,20 +208,17 @@ def validate_hostname(hostname: str) -> str:
 
     if not hostname:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Hostname cannot be empty"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Hostname cannot be empty"
         )
 
     if len(hostname) > 253:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Hostname too long (max 253 characters)"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Hostname too long (max 253 characters)"
         )
 
     if not HOSTNAME_PATTERN.match(hostname):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid hostname format: '{hostname}'"
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid hostname format: '{hostname}'"
         )
 
     return hostname
@@ -254,7 +246,7 @@ def sanitize_search_query(query: str, max_length: int = 200) -> str:
     if len(query) > max_length:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Search query too long (max {max_length} characters)"
+            detail=f"Search query too long (max {max_length} characters)",
         )
 
     # Check for SQL injection patterns
@@ -273,14 +265,13 @@ def sanitize_search_query(query: str, max_length: int = 200) -> str:
     for pattern in sql_patterns:
         if re.search(pattern, query_lower):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid characters in search query"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid characters in search query"
             )
 
     return query
 
 
-def validate_positive_int(value: int, field_name: str, max_value: Optional[int] = None) -> int:
+def validate_positive_int(value: int, field_name: str, max_value: int | None = None) -> int:
     """
     Validate that a value is a positive integer.
 
@@ -298,13 +289,13 @@ def validate_positive_int(value: int, field_name: str, max_value: Optional[int] 
     if value < 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{field_name} must be a positive integer"
+            detail=f"{field_name} must be a positive integer",
         )
 
     if max_value is not None and value > max_value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{field_name} cannot exceed {max_value}"
+            detail=f"{field_name} cannot exceed {max_value}",
         )
 
     return value

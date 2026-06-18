@@ -45,7 +45,9 @@ def docker_ready() -> bool:
 
 def image_present(image: str) -> bool:
     try:
-        result = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(
+            ["docker", "image", "inspect", image], capture_output=True, text=True, timeout=15
+        )
         return result.returncode == 0
     except Exception:
         return False
@@ -58,7 +60,9 @@ def main() -> int:
 
     image = os.environ.get("SHESHNAAG_OSQUERY_IMAGE", "sheshnaag-kali-osquery:2026.1")
     if not image_present(image):
-        print(f"SKIP: osquery-capable image {image} is not present. Run scripts/build_sheshnaag_osquery_image.sh first.")
+        print(
+            f"SKIP: osquery-capable image {image} is not present. Run scripts/build_sheshnaag_osquery_image.sh first."
+        )
         return 0
 
     engine = create_engine(
@@ -90,7 +94,9 @@ def main() -> int:
                 environment="production",
                 criticality="high",
                 business_criticality="high",
-                installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+                installed_software=[
+                    {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+                ],
             )
         )
         session.commit()
@@ -110,13 +116,20 @@ def main() -> int:
                 "collectors": ["process_tree", "osquery_snapshot", "file_diff"],
             },
         )
-        service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+        service.approve_recipe_revision(
+            tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+        )
         run = service.launch_run(
             tenant,
             recipe_id=recipe["id"],
             revision_number=1,
             analyst_name="osquery Smoke",
-            workstation={"hostname": "osquery-smoke", "os_family": "macOS", "architecture": "arm64", "fingerprint": "osquery-smoke-fp"},
+            workstation={
+                "hostname": "osquery-smoke",
+                "os_family": "macOS",
+                "architecture": "arm64",
+                "fingerprint": "osquery-smoke-fp",
+            },
             launch_mode="execute",
             acknowledge_sensitive=False,
         )
@@ -132,7 +145,9 @@ def main() -> int:
             )
 
         evidence = service.list_evidence(tenant, run_id=run["id"])
-        osquery_rows = [row for row in evidence["items"] if row["artifact_kind"] == "osquery_snapshot"]
+        osquery_rows = [
+            row for row in evidence["items"] if row["artifact_kind"] == "osquery_snapshot"
+        ]
         if not osquery_rows:
             raise RuntimeError("osquery smoke captured no osquery_snapshot evidence")
         if osquery_rows[0]["payload"].get("collection_state") != "live":

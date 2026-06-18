@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
-from app.lab.interfaces import Collector
+from typing import Any
 
 from app.lab.collectors.common import (
     build_evidence_dict,
     collector_error_evidence,
     collector_health_meta,
-    synthetic_from_plan,
     truncate_text,
     utc_iso,
 )
 from app.lab.collectors.runtime import guest_transport, is_executable_guest_context, run_in_guest
+from app.lab.interfaces import Collector
 
 MAX_OUTPUT_BYTES = 256_000
 
@@ -23,10 +21,14 @@ class NetworkMetadataCollector(Collector):
     collector_name = "network_metadata"
     collector_version = "1.0.0"
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         plan = provider_result.get("plan") or {}
         effective = plan.get("effective_network_policy") or {}
-        if not is_executable_guest_context(run_context=run_context, provider_result=provider_result):
+        if not is_executable_guest_context(
+            run_context=run_context, provider_result=provider_result
+        ):
             started = utc_iso()
             payload = {
                 "collector": self.collector_name,
@@ -63,7 +65,9 @@ class NetworkMetadataCollector(Collector):
         )
         ended = utc_iso()
         text, trunc = truncate_text(out or "", MAX_OUTPUT_BYTES)
-        allow_hosts = list(effective.get("allow_egress_hosts") or plan.get("allow_egress_hosts") or [])
+        allow_hosts = list(
+            effective.get("allow_egress_hosts") or plan.get("allow_egress_hosts") or []
+        )
         payload = {
             "collector": self.collector_name,
             "mode": "live",

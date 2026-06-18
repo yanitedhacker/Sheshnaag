@@ -1,7 +1,6 @@
 """V3 specimen revision APIs."""
 
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -15,16 +14,16 @@ router = APIRouter(prefix="/api/specimen-revisions", tags=["Sheshnaag V3 Specime
 
 
 class SpecimenRevisionCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     specimen_id: int
     content_ref: str
     ingest_source: str = "derived"
-    parent_revision_id: Optional[int] = None
+    parent_revision_id: int | None = None
     metadata: dict = Field(default_factory=dict)
 
 
-def _parse_json_object(raw: Optional[str]) -> dict:
+def _parse_json_object(raw: str | None) -> dict:
     if raw in {None, ""}:
         return {}
     try:
@@ -38,18 +37,24 @@ def _parse_json_object(raw: Optional[str]) -> dict:
 
 @router.get("")
 def list_specimen_revisions(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
-    specimen_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
+    specimen_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return MalwareLabService(session).list_specimen_revisions(tenant, specimen_id=specimen_id)
 
 
 @router.post("")
-def create_specimen_revision(request: SpecimenRevisionCreateRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+def create_specimen_revision(
+    request: SpecimenRevisionCreateRequest, session: Session = Depends(get_sync_session)
+):
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).create_specimen_revision(
             tenant,
@@ -65,12 +70,12 @@ def create_specimen_revision(request: SpecimenRevisionCreateRequest, session: Se
 
 @router.post("/upload")
 async def upload_specimen_revision(
-    tenant_id: Optional[int] = Form(None),
-    tenant_slug: Optional[str] = Form(None),
+    tenant_id: int | None = Form(None),
+    tenant_slug: str | None = Form(None),
     specimen_id: int = Form(...),
     ingest_source: str = Form("upload"),
-    parent_revision_id: Optional[int] = Form(None),
-    metadata: Optional[str] = Form(None),
+    parent_revision_id: int | None = Form(None),
+    metadata: str | None = Form(None),
     file: UploadFile = File(...),
     session: Session = Depends(get_sync_session),
 ):

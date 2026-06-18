@@ -24,13 +24,13 @@ from app.lab.collectors.pcap import (
 def _run_collector(
     monkeypatch,
     *,
-    plan_overrides: Dict[str, Any],
+    plan_overrides: dict[str, Any],
     enable_env: bool = True,
     returned_out: str = "c2hlc2huYWFnLXBjYXAtcHJldmlldw==",
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     collector = PcapCollector()
 
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     def fake_run_in_guest(provider_result, argv, timeout_sec=90, stdin_text=None):
         captured["argv"] = list(argv)
@@ -44,7 +44,7 @@ def _run_collector(
         lambda name, default=False: enable_env,
     )
 
-    plan: Dict[str, Any] = {"provider": "lima", "instance_name": "sheshnaag-lima-1"}
+    plan: dict[str, Any] = {"provider": "lima", "instance_name": "sheshnaag-lima-1"}
     plan.update(plan_overrides)
 
     evidence = collector.collect(

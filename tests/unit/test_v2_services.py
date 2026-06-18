@@ -1,5 +1,4 @@
 import pytest
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -113,7 +112,9 @@ def test_private_tenant_onboarding_and_login_work():
     )
     session.commit()
 
-    login = service.login(email="owner@example.com", password="supersecure123", tenant_slug="acme-private")
+    login = service.login(
+        email="owner@example.com", password="supersecure123", tenant_slug="acme-private"
+    )
 
     assert onboard["tenant"]["slug"] == "acme-private"
     assert onboard["memberships"][0]["role"] == "owner"
@@ -147,7 +148,9 @@ def test_import_service_handles_cyclonedx_and_openvex_shapes():
 
     importer = ImportService(session)
     sbom = {
-        "metadata": {"component": {"bom-ref": "svc-checkout", "name": "checkout-service", "type": "service"}},
+        "metadata": {
+            "component": {"bom-ref": "svc-checkout", "name": "checkout-service", "type": "service"}
+        },
         "services": [
             {"bom-ref": "svc-checkout", "name": "checkout-service", "type": "service"},
             {"bom-ref": "svc-payments", "name": "payments-api", "type": "service"},
@@ -164,7 +167,11 @@ def test_import_service_handles_cyclonedx_and_openvex_shapes():
         ],
         "dependencies": [{"ref": "svc-checkout", "dependsOn": ["svc-payments"]}],
     }
-    sbom_result = importer.import_sbom(auth.resolve_private_tenant(token_data=None, tenant_id=tenant_id), document=sbom, asset_id=asset.id)
+    sbom_result = importer.import_sbom(
+        auth.resolve_private_tenant(token_data=None, tenant_id=tenant_id),
+        document=sbom,
+        asset_id=asset.id,
+    )
     session.flush()
 
     openvex = {
@@ -178,13 +185,18 @@ def test_import_service_handles_cyclonedx_and_openvex_shapes():
             }
         ],
     }
-    vex_result = importer.import_vex(auth.resolve_private_tenant(token_data=None, tenant_id=tenant_id), document=openvex)
+    vex_result = importer.import_vex(
+        auth.resolve_private_tenant(token_data=None, tenant_id=tenant_id), document=openvex
+    )
     session.commit()
 
     assert sbom_result["components_created"] >= 1
     assert sbom_result["services_created"] >= 2
     assert session.query(Service).filter(Service.tenant_id == tenant_id).count() >= 2
-    assert session.query(SoftwareComponent).filter(SoftwareComponent.tenant_id == tenant_id).count() >= 1
+    assert (
+        session.query(SoftwareComponent).filter(SoftwareComponent.tenant_id == tenant_id).count()
+        >= 1
+    )
     assert vex_result["statements_created"] >= 1
     assert session.query(VexStatement).filter(VexStatement.tenant_id == tenant_id).count() >= 1
 
@@ -200,5 +212,10 @@ def test_governance_feedback_and_approvals_shape_workbench_actions():
     top = summary["actions"][0]
 
     assert top["approval_state"] in {"approved", "pending", "pending_review"}
-    assert top["signals"]["vex_status"] in {"unknown", "resolved", "affected", "under_investigation"}
+    assert top["signals"]["vex_status"] in {
+        "unknown",
+        "resolved",
+        "affected",
+        "under_investigation",
+    }
     assert any(item["kind"] in {"analyst", "governance"} for item in top["evidence"])

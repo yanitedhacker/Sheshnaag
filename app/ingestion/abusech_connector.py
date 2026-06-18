@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 import requests
 
@@ -55,15 +55,15 @@ class AbuseChConnector:
 
     def __init__(
         self,
-        auth_key: Optional[str] = None,
+        auth_key: str | None = None,
         *,
         urlhaus_url: str = URLHAUS_URL,
         malwarebazaar_url: str = MALWAREBAZAAR_URL,
         threatfox_url: str = THREATFOX_URL,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
-        backoff_seconds: Optional[float] = None,
+        session: requests.Session | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        backoff_seconds: float | None = None,
         sleep_fn=time.sleep,
     ) -> None:
         self._auth_key = auth_key or os.getenv("ABUSECH_AUTH_KEY") or ""
@@ -84,7 +84,7 @@ class AbuseChConnector:
     def healthy(self) -> bool:
         return bool(self._auth_key)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {"Auth-Key": self._auth_key, "Accept": "application/json"}
 
     # ------------------------------------------------------------------
@@ -95,9 +95,9 @@ class AbuseChConnector:
         self,
         url: str,
         *,
-        data: Optional[Dict[str, Any]] = None,
-        json_body: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        data: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         if not self.healthy:
             return None
 
@@ -113,7 +113,10 @@ class AbuseChConnector:
             except requests.RequestException as exc:
                 logger.warning(
                     "abuse.ch request error (attempt %d/%d) for %s: %s",
-                    attempt, self._max_retries, url, exc,
+                    attempt,
+                    self._max_retries,
+                    url,
+                    exc,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -122,7 +125,9 @@ class AbuseChConnector:
             if resp.status_code == 429:
                 logger.warning(
                     "abuse.ch rate limited (attempt %d/%d) for %s",
-                    attempt, self._max_retries, url,
+                    attempt,
+                    self._max_retries,
+                    url,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -131,7 +136,10 @@ class AbuseChConnector:
             if resp.status_code >= 500:
                 logger.warning(
                     "abuse.ch %s for %s (attempt %d/%d)",
-                    resp.status_code, url, attempt, self._max_retries,
+                    resp.status_code,
+                    url,
+                    attempt,
+                    self._max_retries,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -140,7 +148,8 @@ class AbuseChConnector:
             if resp.status_code >= 400:
                 logger.warning(
                     "abuse.ch client error %s for %s",
-                    resp.status_code, url,
+                    resp.status_code,
+                    url,
                 )
                 return None
 
@@ -156,7 +165,7 @@ class AbuseChConnector:
     # URLhaus
     # ------------------------------------------------------------------
 
-    def fetch_urlhaus(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def fetch_urlhaus(self, limit: int = 100) -> list[dict[str, Any]]:
         if not self.healthy:
             logger.info("abuse.ch not healthy; skipping URLhaus")
             return []
@@ -170,7 +179,7 @@ class AbuseChConnector:
             return []
 
         urls = body.get("urls") or body.get("payload") or []
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for entry in urls:
             if not isinstance(entry, dict):
                 continue
@@ -189,9 +198,7 @@ class AbuseChConnector:
                     "indicator_kind": "url",
                     "value": url_value,
                     "tags": tags,
-                    "confidence": 0.85
-                    if entry.get("url_status") == "online"
-                    else 0.5,
+                    "confidence": 0.85 if entry.get("url_status") == "online" else 0.5,
                     "first_seen": entry.get("date_added"),
                     "last_seen": entry.get("last_online") or entry.get("date_added"),
                     "raw": entry,
@@ -203,7 +210,7 @@ class AbuseChConnector:
     # MalwareBazaar
     # ------------------------------------------------------------------
 
-    def fetch_malwarebazaar(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def fetch_malwarebazaar(self, limit: int = 100) -> list[dict[str, Any]]:
         if not self.healthy:
             logger.info("abuse.ch not healthy; skipping MalwareBazaar")
             return []
@@ -220,7 +227,7 @@ class AbuseChConnector:
             return []
 
         samples = body.get("data") or []
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for sample in samples[: max(0, int(limit))]:
             if not isinstance(sample, dict):
                 continue
@@ -235,9 +242,7 @@ class AbuseChConnector:
                 {
                     "source": "malwarebazaar",
                     "event_id": sha256,
-                    "event_info": sample.get("file_name")
-                    or signature
-                    or "malwarebazaar",
+                    "event_info": sample.get("file_name") or signature or "malwarebazaar",
                     "indicator_kind": "sha256",
                     "value": sha256,
                     "tags": tags,
@@ -253,7 +258,7 @@ class AbuseChConnector:
     # ThreatFox
     # ------------------------------------------------------------------
 
-    def fetch_threatfox(self, days: int = 1) -> List[Dict[str, Any]]:
+    def fetch_threatfox(self, days: int = 1) -> list[dict[str, Any]]:
         if not self.healthy:
             logger.info("abuse.ch not healthy; skipping ThreatFox")
             return []
@@ -270,7 +275,7 @@ class AbuseChConnector:
             return []
 
         iocs = body.get("data") or []
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for entry in iocs:
             if not isinstance(entry, dict):
                 continue
@@ -310,7 +315,7 @@ class AbuseChConnector:
     # Generic fan-out
     # ------------------------------------------------------------------
 
-    def fetch(self, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Fetch from one or more abuse.ch sources.
 
         ``scope`` shape:
@@ -325,7 +330,7 @@ class AbuseChConnector:
 
         scope = scope or {}
         sources = scope.get("sources") or ["urlhaus", "malwarebazaar", "threatfox"]
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         if "urlhaus" in sources:
             results.extend(self.fetch_urlhaus(limit=int(scope.get("urlhaus_limit", 100))))
         if "malwarebazaar" in sources:

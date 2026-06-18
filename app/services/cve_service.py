@@ -2,12 +2,12 @@
 
 import logging
 from datetime import datetime
-from app.core.time import utc_now
-from typing import List, Dict, Any, Optional
+from typing import Any
 
+from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, or_, and_
 
+from app.core.time import utc_now
 from app.models.cve import CVE, AffectedProduct
 from app.models.risk_score import RiskScore
 from app.services.intel_service import ThreatIntelService
@@ -17,65 +17,65 @@ logger = logging.getLogger(__name__)
 
 class CVEService:
     """Service for CVE queries and management."""
-    
+
     def __init__(self, session: Session):
         self.session = session
         self.intel_service = ThreatIntelService(session)
-    
-    def get_cve_by_id(self, cve_id: str) -> Optional[Dict[str, Any]]:
+
+    def get_cve_by_id(self, cve_id: str) -> dict[str, Any] | None:
         """
         Get detailed CVE information by CVE ID.
-        
+
         Args:
             cve_id: CVE identifier (e.g., CVE-2024-1234)
-            
+
         Returns:
             CVE data dictionary or None
         """
         cve = self.session.query(CVE).filter(CVE.cve_id == cve_id).first()
-        
+
         if not cve:
             return None
-        
+
         # Get latest risk score
-        risk_score = self.session.query(RiskScore).filter(
-            RiskScore.cve_id == cve.id
-        ).order_by(desc(RiskScore.created_at)).first()
-        
+        risk_score = (
+            self.session.query(RiskScore)
+            .filter(RiskScore.cve_id == cve.id)
+            .order_by(desc(RiskScore.created_at))
+            .first()
+        )
+
         return self._cve_to_dict(cve, risk_score)
-    
+
     def search_cves(
         self,
-        keyword: Optional[str] = None,
-        vendor: Optional[str] = None,
-        product: Optional[str] = None,
-        min_cvss: Optional[float] = None,
-        max_cvss: Optional[float] = None,
-        risk_level: Optional[str] = None,
-        has_exploit: Optional[bool] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
+        keyword: str | None = None,
+        vendor: str | None = None,
+        product: str | None = None,
+        min_cvss: float | None = None,
+        max_cvss: float | None = None,
+        risk_level: str | None = None,
+        has_exploit: bool | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         page: int = 1,
-        page_size: int = 20
-    ) -> Dict[str, Any]:
+        page_size: int = 20,
+    ) -> dict[str, Any]:
         """
         Search CVEs with filters.
-        
+
         Returns:
             Dictionary with results and pagination info
         """
         query = self.session.query(CVE)
-        
+
         # Keyword search in description and CVE ID
         if keyword:
             keyword_filter = f"%{keyword}%"
             query = query.filter(
-                or_(
-                    CVE.description.ilike(keyword_filter),
-                    CVE.cve_id.ilike(keyword_filter)
-                )
+                or_(CVE.description.ilike(keyword_filter), CVE.cve_id.ilike(keyword_filter))
             )
-        
+
         # Vendor/Product filter
         if vendor or product:
             query = query.join(AffectedProduct)
@@ -83,174 +83,177 @@ class CVEService:
                 query = query.filter(AffectedProduct.vendor.ilike(f"%{vendor}%"))
             if product:
                 query = query.filter(AffectedProduct.product.ilike(f"%{product}%"))
-        
+
         # CVSS range
         if min_cvss is not None:
             query = query.filter(CVE.cvss_v3_score >= min_cvss)
         if max_cvss is not None:
             query = query.filter(CVE.cvss_v3_score <= max_cvss)
-        
+
         # Risk level filter
         if risk_level:
             query = query.join(RiskScore).filter(RiskScore.risk_level == risk_level)
-        
+
         # Exploit filter
         if has_exploit is not None:
             query = query.filter(CVE.exploit_available == has_exploit)
-        
+
         # Date range
         if start_date:
             query = query.filter(CVE.published_date >= start_date)
         if end_date:
             query = query.filter(CVE.published_date <= end_date)
-        
+
         # Get total count
         total = query.count()
-        
+
         # Pagination
         offset = (page - 1) * page_size
         cves = query.order_by(desc(CVE.published_date)).offset(offset).limit(page_size).all()
-        
+
         # Get risk scores for results
         cve_ids = [c.id for c in cves]
         risk_scores = {}
         if cve_ids:
-            scores = self.session.query(RiskScore).filter(
-                RiskScore.cve_id.in_(cve_ids)
-            ).all()
+            scores = self.session.query(RiskScore).filter(RiskScore.cve_id.in_(cve_ids)).all()
             for score in scores:
                 if score.cve_id not in risk_scores:
                     risk_scores[score.cve_id] = score
-        
-        results = [
-            self._cve_to_dict(cve, risk_scores.get(cve.id))
-            for cve in cves
-        ]
-        
+
+        results = [self._cve_to_dict(cve, risk_scores.get(cve.id)) for cve in cves]
+
         return {
             "results": results,
             "total": total,
             "page": page,
             "page_size": page_size,
-            "total_pages": (total + page_size - 1) // page_size
+            "total_pages": (total + page_size - 1) // page_size,
         }
-    
-    def get_recent_cves(self, days: int = 7, limit: int = 50) -> List[Dict[str, Any]]:
+
+    def get_recent_cves(self, days: int = 7, limit: int = 50) -> list[dict[str, Any]]:
         """Get CVEs published in the last N days."""
         from datetime import timedelta
-        
+
         cutoff = utc_now() - timedelta(days=days)
-        
-        cves = self.session.query(CVE).filter(
-            CVE.published_date >= cutoff
-        ).order_by(desc(CVE.published_date)).limit(limit).all()
-        
+
+        cves = (
+            self.session.query(CVE)
+            .filter(CVE.published_date >= cutoff)
+            .order_by(desc(CVE.published_date))
+            .limit(limit)
+            .all()
+        )
+
         cve_ids = [c.id for c in cves]
         risk_scores = {}
         if cve_ids:
-            scores = self.session.query(RiskScore).filter(
-                RiskScore.cve_id.in_(cve_ids)
-            ).all()
+            scores = self.session.query(RiskScore).filter(RiskScore.cve_id.in_(cve_ids)).all()
             for score in scores:
                 if score.cve_id not in risk_scores:
                     risk_scores[score.cve_id] = score
-        
-        return [
-            self._cve_to_dict(cve, risk_scores.get(cve.id))
-            for cve in cves
-        ]
-    
-    def get_trending_cves(self, limit: int = 10) -> List[Dict[str, Any]]:
+
+        return [self._cve_to_dict(cve, risk_scores.get(cve.id)) for cve in cves]
+
+    def get_trending_cves(self, limit: int = 10) -> list[dict[str, Any]]:
         """
         Get trending CVEs based on recent activity and risk.
-        
+
         Considers: new exploits, high risk, recently modified, etc.
         """
         from datetime import timedelta
-        
+
         # Recent + high risk
         cutoff = utc_now() - timedelta(days=14)
-        
-        cves = self.session.query(CVE).join(RiskScore).filter(
-            or_(
-                CVE.published_date >= cutoff,
-                and_(
-                    CVE.last_modified_date >= cutoff,
-                    RiskScore.risk_level.in_(["CRITICAL", "HIGH"])
-                ),
-                CVE.exploit_available == True
+
+        cves = (
+            self.session.query(CVE)
+            .join(RiskScore)
+            .filter(
+                or_(
+                    CVE.published_date >= cutoff,
+                    and_(
+                        CVE.last_modified_date >= cutoff,
+                        RiskScore.risk_level.in_(["CRITICAL", "HIGH"]),
+                    ),
+                    CVE.exploit_available == True,
+                )
             )
-        ).order_by(
-            desc(RiskScore.overall_score),
-            desc(CVE.published_date)
-        ).limit(limit).all()
-        
+            .order_by(desc(RiskScore.overall_score), desc(CVE.published_date))
+            .limit(limit)
+            .all()
+        )
+
         cve_ids = [c.id for c in cves]
         risk_scores = {}
         if cve_ids:
-            scores = self.session.query(RiskScore).filter(
-                RiskScore.cve_id.in_(cve_ids)
-            ).all()
+            scores = self.session.query(RiskScore).filter(RiskScore.cve_id.in_(cve_ids)).all()
             for score in scores:
                 if score.cve_id not in risk_scores:
                     risk_scores[score.cve_id] = score
-        
-        return [
-            self._cve_to_dict(cve, risk_scores.get(cve.id))
-            for cve in cves
-        ]
-    
-    def get_cve_statistics(self) -> Dict[str, Any]:
+
+        return [self._cve_to_dict(cve, risk_scores.get(cve.id)) for cve in cves]
+
+    def get_cve_statistics(self) -> dict[str, Any]:
         """Get overall CVE statistics."""
         from sqlalchemy import func
-        
+
         total_cves = self.session.query(func.count(CVE.id)).scalar()
-        
+
         # By severity
         severity_dist = {}
         for bucket, label in [(9, "Critical"), (7, "High"), (4, "Medium"), (0, "Low")]:
             if bucket == 9:
-                count = self.session.query(func.count(CVE.id)).filter(
-                    CVE.cvss_v3_score >= bucket
-                ).scalar()
+                count = (
+                    self.session.query(func.count(CVE.id))
+                    .filter(CVE.cvss_v3_score >= bucket)
+                    .scalar()
+                )
             elif bucket == 0:
-                count = self.session.query(func.count(CVE.id)).filter(
-                    or_(CVE.cvss_v3_score < 4, CVE.cvss_v3_score.is_(None))
-                ).scalar()
+                count = (
+                    self.session.query(func.count(CVE.id))
+                    .filter(or_(CVE.cvss_v3_score < 4, CVE.cvss_v3_score.is_(None)))
+                    .scalar()
+                )
             else:
-                count = self.session.query(func.count(CVE.id)).filter(
-                    CVE.cvss_v3_score >= bucket,
-                    CVE.cvss_v3_score < bucket + 2
-                ).scalar()
+                count = (
+                    self.session.query(func.count(CVE.id))
+                    .filter(CVE.cvss_v3_score >= bucket, CVE.cvss_v3_score < bucket + 2)
+                    .scalar()
+                )
             severity_dist[label] = count
-        
+
         # With exploits
-        with_exploits = self.session.query(func.count(CVE.id)).filter(
-            CVE.exploit_available == True
-        ).scalar()
-        
+        with_exploits = (
+            self.session.query(func.count(CVE.id)).filter(CVE.exploit_available == True).scalar()
+        )
+
         # Recent (7 days)
         from datetime import timedelta
-        recent = self.session.query(func.count(CVE.id)).filter(
-            CVE.published_date >= utc_now() - timedelta(days=7)
-        ).scalar()
-        
+
+        recent = (
+            self.session.query(func.count(CVE.id))
+            .filter(CVE.published_date >= utc_now() - timedelta(days=7))
+            .scalar()
+        )
+
         return {
             "total_cves": total_cves,
             "severity_distribution": severity_dist,
             "with_exploits": with_exploits,
             "recent_7_days": recent,
-            "last_updated": utc_now().isoformat()
+            "last_updated": utc_now().isoformat(),
         }
-    
-    def _cve_to_dict(self, cve: CVE, risk_score: Optional[RiskScore] = None) -> Dict[str, Any]:
+
+    def _cve_to_dict(self, cve: CVE, risk_score: RiskScore | None = None) -> dict[str, Any]:
         """Convert CVE model to dictionary."""
         data = {
             "id": cve.id,
             "cve_id": cve.cve_id,
             "description": cve.description,
             "published_date": cve.published_date.isoformat() if cve.published_date else None,
-            "last_modified_date": cve.last_modified_date.isoformat() if cve.last_modified_date else None,
+            "last_modified_date": cve.last_modified_date.isoformat()
+            if cve.last_modified_date
+            else None,
             "cvss_v3_score": cve.cvss_v3_score,
             "cvss_v3_vector": cve.cvss_v3_vector,
             "cvss_v2_score": cve.cvss_v2_score,
@@ -263,18 +266,14 @@ class CVEService:
             "exploit_count": cve.exploit_count,
             "source": cve.source,
         }
-        
+
         # Add affected products
-        if hasattr(cve, 'affected_products') and cve.affected_products:
+        if hasattr(cve, "affected_products") and cve.affected_products:
             data["affected_products"] = [
-                {
-                    "vendor": ap.vendor,
-                    "product": ap.product,
-                    "version": ap.version
-                }
+                {"vendor": ap.vendor, "product": ap.product, "version": ap.version}
                 for ap in cve.affected_products[:10]  # Limit for response size
             ]
-        
+
         # Add risk score if available
         if risk_score:
             data["risk"] = {
@@ -283,7 +282,7 @@ class CVEService:
                 "exploit_probability": risk_score.exploit_probability,
                 "priority_rank": risk_score.priority_rank,
                 "explanation": risk_score.explanation,
-                "top_features": risk_score.top_features
+                "top_features": risk_score.top_features,
             }
 
         kev = self.intel_service.get_kev_map([cve.cve_id]).get(cve.cve_id)
@@ -297,13 +296,17 @@ class CVEService:
                 "short_description": kev.short_description,
                 "known_ransomware_use": kev.known_ransomware_use,
                 "source_url": kev.source_url,
-            } if kev else {"present": False},
+            }
+            if kev
+            else {"present": False},
             "epss": {
                 "score": epss.score,
                 "percentile": epss.percentile,
                 "scored_at": epss.scored_at.isoformat() if epss.scored_at else None,
                 "source_url": epss.source_url,
-            } if epss else None,
+            }
+            if epss
+            else None,
             "attack_techniques": [
                 {
                     "external_id": technique.external_id,
@@ -323,5 +326,5 @@ class CVEService:
                 for doc in documents
             ],
         }
-        
+
         return data

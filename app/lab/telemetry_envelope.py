@@ -7,8 +7,8 @@ Maps Tracee, Falco, Tetragon, and generic tool output into one schema.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 REQUIRED_ENVELOPE_FIELDS = frozenset(
     {
@@ -23,12 +23,12 @@ SCHEMA_VERSION = "1.0"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def validate_runtime_event(event: Dict[str, Any]) -> Tuple[bool, List[str]]:
+def validate_runtime_event(event: dict[str, Any]) -> tuple[bool, list[str]]:
     """Return (ok, errors) for envelope validation."""
-    errors: List[str] = []
+    errors: list[str] = []
     for key in REQUIRED_ENVELOPE_FIELDS:
         if key not in event or event[key] in (None, ""):
             errors.append(f"missing_field:{key}")
@@ -41,15 +41,15 @@ def base_event(
     *,
     source_tool: str,
     severity: str = "info",
-    event_time: Optional[str] = None,
-    process: Optional[Dict[str, Any]] = None,
-    parent_process: Optional[Dict[str, Any]] = None,
-    file_ref: Optional[Dict[str, Any]] = None,
-    network: Optional[Dict[str, Any]] = None,
-    policy: Optional[Dict[str, Any]] = None,
-    raw: Optional[Dict[str, Any]] = None,
-    evidence_refs: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    event_time: str | None = None,
+    process: dict[str, Any] | None = None,
+    parent_process: dict[str, Any] | None = None,
+    file_ref: dict[str, Any] | None = None,
+    network: dict[str, Any] | None = None,
+    policy: dict[str, Any] | None = None,
+    raw: dict[str, Any] | None = None,
+    evidence_refs: list[str] | None = None,
+) -> dict[str, Any]:
     evt = {
         "schema_version": SCHEMA_VERSION,
         "source_tool": source_tool,
@@ -66,7 +66,7 @@ def base_event(
     return evt
 
 
-def normalize_falco_line(line: str) -> Optional[Dict[str, Any]]:
+def normalize_falco_line(line: str) -> dict[str, Any] | None:
     """Parse a single JSON line from Falco output if present."""
     line = line.strip()
     if not line.startswith("{"):
@@ -87,7 +87,7 @@ def normalize_falco_line(line: str) -> Optional[Dict[str, Any]]:
     )
 
 
-def normalize_tracee_line(line: str) -> Optional[Dict[str, Any]]:
+def normalize_tracee_line(line: str) -> dict[str, Any] | None:
     """Parse Tracee json line (best-effort)."""
     line = line.strip()
     if not line.startswith("{"):
@@ -107,7 +107,7 @@ def normalize_tracee_line(line: str) -> Optional[Dict[str, Any]]:
     )
 
 
-def normalize_tetragon_line(line: str) -> Optional[Dict[str, Any]]:
+def normalize_tetragon_line(line: str) -> dict[str, Any] | None:
     line = line.strip()
     if not line.startswith("{"):
         return None
@@ -119,6 +119,10 @@ def normalize_tetragon_line(line: str) -> Optional[Dict[str, Any]]:
     return base_event(
         source_tool="tetragon",
         severity="info",
-        process={"pid": proc.get("process", {}).get("pid") if isinstance(proc.get("process"), dict) else None},
+        process={
+            "pid": proc.get("process", {}).get("pid")
+            if isinstance(proc.get("process"), dict)
+            else None
+        },
         raw=raw,
     )

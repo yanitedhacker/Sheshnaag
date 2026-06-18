@@ -28,12 +28,12 @@ import multiprocessing as mp
 import os
 import signal
 import time
-from typing import Any, Optional
+from typing import Any
 
 import redis
 
 from app.core.database import SessionLocal
-from app.core.event_bus import EventBus, SANDBOX_WORK_STREAM, run_event_stream
+from app.core.event_bus import SANDBOX_WORK_STREAM, EventBus, run_event_stream
 from app.core.time import utc_now
 from app.models.sheshnaag import LabRun, RunEvent
 from app.models.v2 import Tenant
@@ -48,7 +48,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _event(run_id: int, event_type: str, *, severity: str = "info", source: str = "sandbox_worker", payload: Optional[dict] = None) -> dict:
+def _event(
+    run_id: int,
+    event_type: str,
+    *,
+    severity: str = "info",
+    source: str = "sandbox_worker",
+    payload: dict | None = None,
+) -> dict:
     return {
         "run_id": run_id,
         "type": event_type,
@@ -59,7 +66,9 @@ def _event(run_id: int, event_type: str, *, severity: str = "info", source: str 
     }
 
 
-def _record_event(session, run_id: int, event_type: str, payload: dict, level: str = "info") -> None:
+def _record_event(
+    session, run_id: int, event_type: str, payload: dict, level: str = "info"
+) -> None:
     session.add(
         RunEvent(
             run_id=run_id,
@@ -71,19 +80,23 @@ def _record_event(session, run_id: int, event_type: str, payload: dict, level: s
     )
 
 
-def process_sandbox_work(message: dict[str, Any], *, bus: Optional[EventBus] = None) -> dict[str, Any]:
+def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None) -> dict[str, Any]:
     bus = bus or EventBus()
     run_id = int(message["run_id"])
     tenant_id = int(message["tenant_id"])
     session = SessionLocal()
     try:
-        run = session.query(LabRun).filter(LabRun.id == run_id, LabRun.tenant_id == tenant_id).first()
+        run = (
+            session.query(LabRun).filter(LabRun.id == run_id, LabRun.tenant_id == tenant_id).first()
+        )
         tenant = session.query(Tenant).filter(Tenant.id == tenant_id).first()
         if run is None or tenant is None:
             raise ValueError("run_or_tenant_not_found")
 
         run.started_at = run.started_at or utc_now()
-        started = _event(run_id, "run_started", payload={"correlation_id": message.get("correlation_id")})
+        started = _event(
+            run_id, "run_started", payload={"correlation_id": message.get("correlation_id")}
+        )
         _record_event(session, run_id, "run_started", started)
         bus.publish(run_event_stream(run_id), started)
         session.commit()
@@ -114,7 +127,9 @@ def process_sandbox_work(message: dict[str, Any], *, bus: Optional[EventBus] = N
         return {"run_id": run_id, "status": "completed", "result": result}
     except Exception as exc:
         session.rollback()
-        run = session.query(LabRun).filter(LabRun.id == run_id, LabRun.tenant_id == tenant_id).first()
+        run = (
+            session.query(LabRun).filter(LabRun.id == run_id, LabRun.tenant_id == tenant_id).first()
+        )
         if run is not None:
             run.state = "errored"
             run.ended_at = utc_now()
@@ -176,7 +191,7 @@ def _read_work_rows(client, *, group: str, consumer: str) -> list:
         return []
 
 
-def run_forever(*, max_messages: Optional[int] = None) -> None:
+def run_forever(*, max_messages: int | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     _install_signal_handlers()
 
@@ -193,7 +208,9 @@ def run_forever(*, max_messages: Optional[int] = None) -> None:
         if "BUSYGROUP" not in str(exc):
             raise
 
-    logger.info("sandbox worker consuming %s group=%s consumer=%s", SANDBOX_WORK_STREAM, group, consumer)
+    logger.info(
+        "sandbox worker consuming %s group=%s consumer=%s", SANDBOX_WORK_STREAM, group, consumer
+    )
     processed = 0
     while not _SHUTDOWN:
         rows = _read_work_rows(client, group=group, consumer=consumer)
@@ -221,7 +238,9 @@ def run_forever(*, max_messages: Optional[int] = None) -> None:
 def _child_entrypoint(child_index: int) -> None:  # pragma: no cover - subprocess
     """Entry point for forked workers under :func:`run_supervised`."""
 
-    os.environ.setdefault("SHESHNAAG_SANDBOX_CONSUMER_NAME", f"sandbox-worker-{os.getpid()}-{child_index}")
+    os.environ.setdefault(
+        "SHESHNAAG_SANDBOX_CONSUMER_NAME", f"sandbox-worker-{os.getpid()}-{child_index}"
+    )
     logging.basicConfig(level=logging.INFO)
     try:
         run_forever()
@@ -231,7 +250,7 @@ def _child_entrypoint(child_index: int) -> None:  # pragma: no cover - subproces
         raise SystemExit(1)
 
 
-def run_supervised(*, concurrency: Optional[int] = None, max_restarts: int = 10) -> int:
+def run_supervised(*, concurrency: int | None = None, max_restarts: int = 10) -> int:
     """Fork ``concurrency`` children, restart them on failure with backoff.
 
     Returns the exit code (``0`` on clean shutdown, ``1`` if any child kept
@@ -243,11 +262,13 @@ def run_supervised(*, concurrency: Optional[int] = None, max_restarts: int = 10)
         concurrency = int(os.getenv("SHESHNAAG_SANDBOX_WORKER_CONCURRENCY", "2"))
 
     children: dict[int, mp.Process] = {}
-    restart_counts: dict[int, int] = {idx: 0 for idx in range(concurrency)}
-    last_restart: dict[int, float] = {idx: 0.0 for idx in range(concurrency)}
+    restart_counts: dict[int, int] = dict.fromkeys(range(concurrency), 0)
+    last_restart: dict[int, float] = dict.fromkeys(range(concurrency), 0.0)
 
     def _start(idx: int) -> mp.Process:
-        proc = mp.Process(target=_child_entrypoint, args=(idx,), name=f"sandbox-worker-{idx}", daemon=False)
+        proc = mp.Process(
+            target=_child_entrypoint, args=(idx,), name=f"sandbox-worker-{idx}", daemon=False
+        )
         proc.start()
         children[idx] = proc
         last_restart[idx] = time.time()
@@ -285,7 +306,11 @@ def run_supervised(*, concurrency: Optional[int] = None, max_restarts: int = 10)
                 logger.warning("sandbox supervisor child idx=%d exited code=%s", idx, exitcode)
                 restart_counts[idx] += 1
                 if restart_counts[idx] > max_restarts:
-                    logger.error("sandbox supervisor child idx=%d exceeded max_restarts=%d; bailing", idx, max_restarts)
+                    logger.error(
+                        "sandbox supervisor child idx=%d exceeded max_restarts=%d; bailing",
+                        idx,
+                        max_restarts,
+                    )
                     exit_code = 1
                     shutdown = True
                     break
@@ -311,15 +336,17 @@ def run_supervised(*, concurrency: Optional[int] = None, max_restarts: int = 10)
 # ---------------------------------------------------------------------------
 
 
-def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="sandbox-worker")
-    parser.add_argument("--supervised", action="store_true", help="Run as a supervised process pool")
+    parser.add_argument(
+        "--supervised", action="store_true", help="Run as a supervised process pool"
+    )
     parser.add_argument("--concurrency", type=int, default=None)
     parser.add_argument("--max-restarts", type=int, default=10)
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.supervised:
         return run_supervised(concurrency=args.concurrency, max_restarts=args.max_restarts)

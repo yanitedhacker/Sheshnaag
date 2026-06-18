@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -15,7 +14,7 @@ from app.services.capability_policy import CapabilityPolicy
 router = APIRouter(prefix="/api/v4/capability", tags=["Sheshnaag V4 Capability"])
 
 
-def _parse_scope(scope: Optional[str]) -> dict:
+def _parse_scope(scope: str | None) -> dict:
     if not scope:
         return {}
     try:
@@ -30,7 +29,7 @@ def _parse_scope(scope: Optional[str]) -> dict:
 @router.get("/check")
 def check_capability(
     capability: str = Query(...),
-    scope: Optional[str] = Query(None),
+    scope: str | None = Query(None),
     actor: str = Query("anonymous"),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),

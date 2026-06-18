@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from app.core.time import utc_now
-from typing import Dict, List
-
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.models.v2 import SimulationRun, Tenant
 from app.patch_scheduler.constraints import SchedulingConstraints
 from app.patch_scheduler.scheduler import PatchScheduler
@@ -22,7 +19,9 @@ class SimulationService:
         self.workbench = WorkbenchService(session)
         self.scheduler = PatchScheduler(session)
 
-    def run_risk_simulation(self, tenant: Tenant, *, parameters: dict, persist: bool = True) -> Dict[str, object]:
+    def run_risk_simulation(
+        self, tenant: Tenant, *, parameters: dict, persist: bool = True
+    ) -> dict[str, object]:
         """Compute before/after rankings for a given scenario."""
         before = self.workbench.get_summary(tenant, limit=25)
         constraints = SchedulingConstraints(
@@ -87,5 +86,7 @@ class SimulationService:
             "after": {"actions": after_actions},
             "schedule": schedule,
             "summary": summary,
-            "created_at": run.created_at.isoformat() if run is not None and run.created_at else utc_now().isoformat(),
+            "created_at": run.created_at.isoformat()
+            if run is not None and run.created_at
+            else utc_now().isoformat(),
         }

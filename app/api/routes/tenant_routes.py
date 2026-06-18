@@ -1,7 +1,5 @@
 """Tenant onboarding and listing APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -19,8 +17,8 @@ class TenantOnboardRequest(BaseModel):
     tenant_slug: str = Field(..., min_length=2, max_length=120)
     admin_email: str = Field(..., min_length=3)
     admin_password: str = Field(..., min_length=8)
-    admin_name: Optional[str] = None
-    description: Optional[str] = None
+    admin_name: str | None = None
+    description: str | None = None
 
 
 @router.post("/onboard")
@@ -43,13 +41,18 @@ def onboard_tenant(
 @router.get("")
 def list_tenants(
     session: Session = Depends(get_sync_session),
-    token_data: Optional[TokenData] = Depends(verify_token_optional),
+    token_data: TokenData | None = Depends(verify_token_optional),
 ):
     """List visible tenants, preferring the caller's memberships when authenticated."""
     if token_data and token_data.memberships:
         return {"items": token_data.memberships}
 
-    tenants = session.query(Tenant).filter(Tenant.is_active.is_(True)).order_by(Tenant.is_demo.desc(), Tenant.name).all()
+    tenants = (
+        session.query(Tenant)
+        .filter(Tenant.is_active.is_(True))
+        .order_by(Tenant.is_demo.desc(), Tenant.name)
+        .all()
+    )
     return {
         "items": [
             {

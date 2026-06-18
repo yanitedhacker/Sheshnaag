@@ -96,7 +96,9 @@ def seed_database() -> None:
                 environment="production",
                 criticality="high",
                 business_criticality="high",
-                installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+                installed_software=[
+                    {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+                ],
             )
         )
         session.commit()
@@ -115,7 +117,9 @@ def main() -> int:
     client = build_client()
     report: list[str] = []
 
-    intel = assert_ok(client.get("/api/intel/overview", params={"tenant_slug": TENANT_SLUG}), "intel overview")
+    intel = assert_ok(
+        client.get("/api/intel/overview", params={"tenant_slug": TENANT_SLUG}), "intel overview"
+    )
     report.append(f"intel overview ok ({len(intel['sources'])} sources)")
 
     candidates = assert_ok(
@@ -128,7 +132,11 @@ def main() -> int:
     assert_ok(
         client.post(
             f"/api/candidates/{candidate_id}/assign",
-            json={"tenant_slug": TENANT_SLUG, "analyst_name": "Smoke Analyst", "assigned_by": "Smoke Analyst"},
+            json={
+                "tenant_slug": TENANT_SLUG,
+                "analyst_name": "Smoke Analyst",
+                "assigned_by": "Smoke Analyst",
+            },
         ),
         "candidate assign",
     )
@@ -151,7 +159,9 @@ def main() -> int:
     )
     report.append(f"recipe lint ok ({len(lint['warnings'])} warnings)")
 
-    templates = assert_ok(client.get("/api/templates", params={"tenant_slug": TENANT_SLUG}), "template list")
+    templates = assert_ok(
+        client.get("/api/templates", params={"tenant_slug": TENANT_SLUG}), "template list"
+    )
     report.append(f"template list ok ({templates['count']} templates)")
 
     with NamedTemporaryFile("wb", dir="/tmp", suffix=".bin", delete=False) as handle:

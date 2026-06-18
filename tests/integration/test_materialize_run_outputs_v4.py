@@ -34,7 +34,6 @@ from app.models.malware_lab import (
 from app.models.sheshnaag import EvidenceArtifact, LabRecipe, LabRun, RecipeRevision
 from app.models.v2 import Tenant
 
-
 # Banned values — the V4 rewrite must derive confidence from telemetry.
 _BANNED_CONFIDENCES = {0.84, 0.82, 0.88, 0.71}
 
@@ -260,7 +259,9 @@ def test_materialize_run_outputs_v4_dispatches_launcher_and_persists_real_payloa
 
         launched: list = []
 
-        def fake_launch(self, *, specimen, revision, profile, run, quarantine_path, egress, snapshot_snap):
+        def fake_launch(
+            self, *, specimen, revision, profile, run, quarantine_path, egress, snapshot_snap
+        ):
             launched.append(
                 {
                     "specimen": specimen,

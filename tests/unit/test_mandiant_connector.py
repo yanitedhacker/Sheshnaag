@@ -13,7 +13,6 @@ from app.ingestion.misp_connector import (
     get_registered_ioc_connectors,
 )
 
-
 SAMPLE_INDICATORS = {
     "indicators": [
         {
@@ -64,6 +63,7 @@ def _mock_response(status_code: int = 200, json_body=None, text: str = ""):
 # Health
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_health_false_when_env_missing(monkeypatch):
     monkeypatch.delenv("MANDIANT_ACCESS_TOKEN", raising=False)
@@ -98,6 +98,7 @@ def test_health_true_with_key_and_secret(monkeypatch):
 # Fetch -- env missing
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_returns_empty_without_env(monkeypatch):
     monkeypatch.delenv("MANDIANT_ACCESS_TOKEN", raising=False)
@@ -112,6 +113,7 @@ def test_fetch_returns_empty_without_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # Fetch -- happy path with pre-issued bearer token
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_returns_normalized_records():
@@ -158,6 +160,7 @@ def test_fetch_returns_normalized_records():
 # Token exchange path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_exchanges_key_and_secret_for_token():
     session = MagicMock()
@@ -202,6 +205,7 @@ def test_token_exchange_failure_returns_empty():
 # Actor / malware lookups
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_actor_and_malware():
     session = MagicMock()
@@ -222,6 +226,7 @@ def test_fetch_actor_and_malware():
 # ---------------------------------------------------------------------------
 # Error / rate-limit handling
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_retries_on_429_then_succeeds():
@@ -286,6 +291,7 @@ def test_fetch_returns_empty_on_bad_json():
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_mandiant_registered():

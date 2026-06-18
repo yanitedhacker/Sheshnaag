@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from app.core.time import utc_now
-from typing import List, Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.security import require_scope
+from app.core.time import utc_now
 from app.models.asset import Asset
-from app.models.patch import Patch, AssetPatch
 from app.models.ops import PatchPlan, PatchPlanItem
+from app.models.patch import AssetPatch, Patch
 from app.patch_optimizer.engine import PatchOptimizer
 from app.patch_scheduler.constraints import SchedulingConstraints
 from app.patch_scheduler.scheduler import PatchScheduler
@@ -28,14 +25,14 @@ class PatchDecisionOut(BaseModel):
     priority_score: float
     decision: str
     expected_risk_reduction: float
-    justification: List[str]
+    justification: list[str]
     axes: dict
 
 
 class PatchScheduleRequest(BaseModel):
     downtime_budget_minutes: int = Field(60, ge=0, le=24 * 60)
     team_capacity: int = Field(5, ge=1, le=100)
-    allowed_windows: Optional[List[str]] = None
+    allowed_windows: list[str] | None = None
 
 
 @router.get("/priorities")
@@ -71,8 +68,16 @@ def get_patch_priorities(
                 "decision": d.decision,
                 "expected_risk_reduction": d.expected_risk_reduction,
                 "justification": d.justification,
-                "estimated_downtime_minutes": (patch_by_id.get(d.patch_id).estimated_downtime_minutes if patch_by_id.get(d.patch_id) else None),
-                "requires_reboot": (patch_by_id.get(d.patch_id).requires_reboot if patch_by_id.get(d.patch_id) else None),
+                "estimated_downtime_minutes": (
+                    patch_by_id.get(d.patch_id).estimated_downtime_minutes
+                    if patch_by_id.get(d.patch_id)
+                    else None
+                ),
+                "requires_reboot": (
+                    patch_by_id.get(d.patch_id).requires_reboot
+                    if patch_by_id.get(d.patch_id)
+                    else None
+                ),
                 "maintenance_window": window_by_patch.get(d.patch_id),
             }
             for d in decisions

@@ -1,7 +1,5 @@
 """Exposure graph and attack path APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -14,9 +12,9 @@ router = APIRouter(prefix="/api/graph", tags=["Exposure Graph"])
 
 @router.get("/attack-paths")
 def get_attack_paths(
-    tenant_slug: Optional[str] = Query(None, description="Tenant slug. Defaults to demo-public."),
-    asset_id: Optional[int] = Query(None, description="Filter attack paths to a specific asset."),
-    cve_id: Optional[str] = Query(None, description="Filter attack paths to a specific CVE ID."),
+    tenant_slug: str | None = Query(None, description="Tenant slug. Defaults to demo-public."),
+    asset_id: int | None = Query(None, description="Filter attack paths to a specific asset."),
+    cve_id: str | None = Query(None, description="Filter attack paths to a specific CVE ID."),
     limit: int = Query(5, ge=1, le=20, description="Number of top paths to return."),
     session: Session = Depends(get_sync_session),
 ):

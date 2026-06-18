@@ -7,13 +7,13 @@ Provider manifests are extended at apply-time with execution metadata.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Final, List
+from typing import Any, Final
 
 # Framework version bump when evidence payload shape changes materially.
 COLLECTOR_FRAMEWORK_VERSION: Final[str] = "1.0.0"
 
 # Default collector ordering when recipe omits the list (keep in sync with sheshnaag_service._normalize_recipe_content).
-DEFAULT_RECIPE_COLLECTORS: Final[List[str]] = [
+DEFAULT_RECIPE_COLLECTORS: Final[list[str]] = [
     "process_tree",
     "package_inventory",
     "file_diff",
@@ -53,11 +53,11 @@ PROVIDER_KEY_ERROR: Final[str] = "error"
 def build_provider_result_dict(
     *,
     provider_run_ref: str | None,
-    plan: Dict[str, Any],
+    plan: dict[str, Any],
     state: str | None = None,
     container_id: str | None = None,
     error: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Normalized dict collectors receive (matches ProviderResult.to_dict() fields used by collectors)."""
     return {
         PROVIDER_KEY_RUN_REF: provider_run_ref or "",
@@ -68,7 +68,7 @@ def build_provider_result_dict(
     }
 
 
-def recipe_collector_names(recipe_content: Dict[str, Any]) -> List[str]:
+def recipe_collector_names(recipe_content: dict[str, Any]) -> list[str]:
     """Ordered collector list from recipe content (defaults applied upstream)."""
     raw = recipe_content.get(MANIFEST_KEY_COLLECTORS)
     if raw is None:

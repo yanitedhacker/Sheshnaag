@@ -14,7 +14,7 @@ Why split: keeps the service unit-testable without a live IdP.
 from __future__ import annotations
 
 import os
-from typing import Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 from sqlalchemy.orm import Session
 
@@ -23,10 +23,7 @@ from app.models.oidc import OidcProvider
 from app.models.v2 import Tenant, TenantMembership, TenantUser
 from app.services.rbac import RbacService
 
-
-_VALID_V5_ROLES = frozenset(
-    {"read_only", "analyst", "senior_analyst", "reviewer", "lab_lead"}
-)
+_VALID_V5_ROLES = frozenset({"read_only", "analyst", "senior_analyst", "reviewer", "lab_lead"})
 
 _DEFAULT_SCOPES = ("openid", "email", "profile", "groups")
 
@@ -61,17 +58,11 @@ class OidcService:
 
     # ----- provider catalog ----------------------------------------------
 
-    def list_providers(self) -> List[OidcProvider]:
-        return (
-            self._session.query(OidcProvider)
-            .order_by(OidcProvider.name)
-            .all()
-        )
+    def list_providers(self) -> list[OidcProvider]:
+        return self._session.query(OidcProvider).order_by(OidcProvider.name).all()
 
     def get_provider(self, name: str) -> OidcProvider:
-        row = (
-            self._session.query(OidcProvider).filter_by(name=name).first()
-        )
+        row = self._session.query(OidcProvider).filter_by(name=name).first()
         if row is None:
             raise OidcProviderNotFoundError(name)
         return row
@@ -84,17 +75,14 @@ class OidcService:
         client_id: str,
         client_secret_ref: str,
         redirect_uri: str,
-        scopes: Optional[Iterable[str]] = None,
-        claim_mappings: Optional[dict] = None,
-        default_tenant_id: Optional[int] = None,
-        notes: Optional[str] = None,
+        scopes: Iterable[str] | None = None,
+        claim_mappings: dict | None = None,
+        default_tenant_id: int | None = None,
+        notes: str | None = None,
     ) -> OidcProvider:
         if not name or not issuer_url or not client_id:
             raise OidcConfigError("name, issuer_url, client_id required")
-        if (
-            self._session.query(OidcProvider).filter_by(name=name).first()
-            is not None
-        ):
+        if self._session.query(OidcProvider).filter_by(name=name).first() is not None:
             raise OidcConfigError(f"provider_exists:{name}")
 
         merged_mappings = {
@@ -139,9 +127,7 @@ class OidcService:
 
     # ----- claim mapping --------------------------------------------------
 
-    def map_claims_to_roles(
-        self, provider: OidcProvider, claims: dict
-    ) -> List[str]:
+    def map_claims_to_roles(self, provider: OidcProvider, claims: dict) -> list[str]:
         """Return the V5 role names produced by the IdP claim mapping.
 
         The IdP delivers a list (or single string) under the configured
@@ -161,7 +147,7 @@ class OidcService:
         else:
             raw_list = []
 
-        mapped: List[str] = []
+        mapped: list[str] = []
         seen: set[str] = set()
         for v in raw_list:
             translated = value_map.get(v, v)
@@ -171,9 +157,7 @@ class OidcService:
                     seen.add(translated)
         return mapped
 
-    def map_claims_to_tenant(
-        self, provider: OidcProvider, claims: dict
-    ) -> Optional[int]:
+    def map_claims_to_tenant(self, provider: OidcProvider, claims: dict) -> int | None:
         """Return the tenant_id this user should land in.
 
         Order:
@@ -187,44 +171,30 @@ class OidcService:
             if value is not None:
                 # Try lookup by id first, then by slug.
                 if isinstance(value, int):
-                    row = (
-                        self._session.query(Tenant)
-                        .filter_by(id=value)
-                        .first()
-                    )
+                    row = self._session.query(Tenant).filter_by(id=value).first()
                     if row is not None:
                         return row.id
-                row = (
-                    self._session.query(Tenant)
-                    .filter_by(slug=str(value))
-                    .first()
-                )
+                row = self._session.query(Tenant).filter_by(slug=str(value)).first()
                 if row is not None:
                     return row.id
         return provider.default_tenant_id
 
     # ----- JIT user provisioning -----------------------------------------
 
-    def jit_provision(
-        self, provider: OidcProvider, claims: dict
-    ) -> Tuple[TenantUser, List[dict]]:
+    def jit_provision(self, provider: OidcProvider, claims: dict) -> tuple[TenantUser, list[dict]]:
         """Get-or-create the TenantUser and ensure a TenantMembership row.
 
         Returns ``(user, memberships)`` where memberships is the
         JSON-serializable shape that lands inside the Sheshnaag JWT.
         """
-        username_claim = provider.claim_mappings.get(
-            "username_claim", "preferred_username"
-        )
+        username_claim = provider.claim_mappings.get("username_claim", "preferred_username")
         email_claim = provider.claim_mappings.get("email_claim", "email")
         username = claims.get(username_claim) or claims.get("sub")
         email = claims.get(email_claim) or username
         if not username or not email:
             raise OidcCallbackError("missing_identity_claims")
 
-        user = (
-            self._session.query(TenantUser).filter_by(email=email).first()
-        )
+        user = self._session.query(TenantUser).filter_by(email=email).first()
         if user is None:
             # JIT provisioned users have a placeholder password hash —
             # they can't log in via the password path.
@@ -264,9 +234,7 @@ class OidcService:
             membership.role = primary_role
         self._session.flush()
 
-        memberships_payload = [
-            {"tenant_id": tenant_id, "role": primary_role, "scopes": []}
-        ]
+        memberships_payload = [{"tenant_id": tenant_id, "role": primary_role, "scopes": []}]
         return user, memberships_payload
 
     # ----- session token mint --------------------------------------------
@@ -274,8 +242,8 @@ class OidcService:
     def mint_session_token(
         self,
         user: TenantUser,
-        roles: List[str],
-        memberships: List[dict],
+        roles: list[str],
+        memberships: list[dict],
     ) -> str:
         """Mint a Sheshnaag JWT for the JIT-provisioned user.
 

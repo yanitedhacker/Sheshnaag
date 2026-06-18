@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
 from pathlib import Path
 
 # Allow `python scripts/sheshnaag_audit_verify.py` alongside
@@ -32,9 +31,7 @@ from app.services.capability_policy import CapabilityPolicy  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Verify the Sheshnaag V4 Merkle audit chain."
-    )
+    parser = argparse.ArgumentParser(description="Verify the Sheshnaag V4 Merkle audit chain.")
     parser.add_argument(
         "--since",
         type=int,

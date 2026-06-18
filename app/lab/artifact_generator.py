@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 
 from app.lab.interfaces import ArtifactGenerator
 
@@ -12,20 +13,24 @@ from app.lab.interfaces import ArtifactGenerator
 class DefensiveArtifactGenerator(ArtifactGenerator):
     """Create deterministic defensive artifacts from observed evidence."""
 
-    def generate(self, *, run_context: Dict[str, Any], evidence: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    def generate(
+        self, *, run_context: dict[str, Any], evidence: Iterable[dict[str, Any]]
+    ) -> dict[str, Any]:
         evidence_list = list(evidence)
         candidate = run_context.get("candidate", {})
         cve_id = candidate.get("cve_id") or run_context.get("cve_id") or "UNKNOWN"
         title_root = candidate.get("title") or f"Validation for {cve_id}"
-        package_name = candidate.get("package_name") or candidate.get("product_name") or "unknown-package"
+        package_name = (
+            candidate.get("package_name") or candidate.get("product_name") or "unknown-package"
+        )
 
         process_terms = self._collect_process_terms(evidence_list)
         network_terms = self._collect_network_terms(evidence_list)
         file_terms = self._collect_file_terms(evidence_list)
         findings = self._collect_findings(evidence_list)
 
-        detection_artifacts: List[Dict[str, Any]] = []
-        mitigation_artifacts: List[Dict[str, Any]] = []
+        detection_artifacts: list[dict[str, Any]] = []
+        mitigation_artifacts: list[dict[str, Any]] = []
 
         if evidence_list:
             evidence_ref = evidence_list[0].get("id")
@@ -63,14 +68,21 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
             )
 
         if evidence_list and network_terms:
-            first_network = next((item for item in evidence_list if item.get("artifact_kind") in {"network_metadata", "pcap"}), evidence_list[0])
+            first_network = next(
+                (
+                    item
+                    for item in evidence_list
+                    if item.get("artifact_kind") in {"network_metadata", "pcap"}
+                ),
+                evidence_list[0],
+            )
             suricata_terms = [term for term in network_terms[:4] if term]
             if suricata_terms:
                 suricata_body = "\n".join(
                     [
                         "alert http any any -> any any (",
                         f'  msg:"{title_root} validation network indicator";',
-                        f'  flowbits:set,{cve_id.lower().replace("-", "_")};',
+                        f"  flowbits:set,{cve_id.lower().replace('-', '_')};",
                         f'  content:"{suricata_terms[0]}"; nocase;',
                         "  sid:4200001;",
                         "  rev:1;",
@@ -78,11 +90,16 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
                     ]
                 )
                 detection_artifacts.append(
-                    self._detection("suricata", f"{title_root} Suricata", suricata_body, first_network.get("id"))
+                    self._detection(
+                        "suricata", f"{title_root} Suricata", suricata_body, first_network.get("id")
+                    )
                 )
 
         if evidence_list and file_terms:
-            first_file = next((item for item in evidence_list if item.get("artifact_kind") == "file_diff"), evidence_list[0])
+            first_file = next(
+                (item for item in evidence_list if item.get("artifact_kind") == "file_diff"),
+                evidence_list[0],
+            )
             yara_strings = "\n".join(
                 f'    $s{i} = "{term}" ascii nocase'
                 for i, term in enumerate(file_terms[:4], start=1)
@@ -148,7 +165,9 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
         }
 
     @staticmethod
-    def _detection(artifact_type: str, name: str, body: str, evidence_artifact_id: Any) -> Dict[str, Any]:
+    def _detection(
+        artifact_type: str, name: str, body: str, evidence_artifact_id: Any
+    ) -> dict[str, Any]:
         return {
             "artifact_type": artifact_type,
             "name": name,
@@ -159,13 +178,18 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
         }
 
     @staticmethod
-    def _collect_process_terms(evidence: List[Dict[str, Any]]) -> List[str]:
-        terms: List[str] = []
+    def _collect_process_terms(evidence: list[dict[str, Any]]) -> list[str]:
+        terms: list[str] = []
         for item in evidence:
             payload = item.get("payload") or {}
             if not isinstance(payload, dict):
                 continue
-            processes = payload.get("processes") or payload.get("process_tree") or payload.get("events") or []
+            processes = (
+                payload.get("processes")
+                or payload.get("process_tree")
+                or payload.get("events")
+                or []
+            )
             if not isinstance(processes, list):
                 continue
             for entry in processes:
@@ -177,8 +201,8 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
         return terms
 
     @staticmethod
-    def _collect_network_terms(evidence: List[Dict[str, Any]]) -> List[str]:
-        terms: List[str] = []
+    def _collect_network_terms(evidence: list[dict[str, Any]]) -> list[str]:
+        terms: list[str] = []
         for item in evidence:
             payload = item.get("payload") or {}
             if not isinstance(payload, dict):
@@ -196,8 +220,8 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
         return terms
 
     @staticmethod
-    def _collect_file_terms(evidence: List[Dict[str, Any]]) -> List[str]:
-        terms: List[str] = []
+    def _collect_file_terms(evidence: list[dict[str, Any]]) -> list[str]:
+        terms: list[str] = []
         for item in evidence:
             payload = item.get("payload") or {}
             if not isinstance(payload, dict):
@@ -214,8 +238,8 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
         return terms
 
     @staticmethod
-    def _collect_findings(evidence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        findings: List[Dict[str, Any]] = []
+    def _collect_findings(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        findings: list[dict[str, Any]] = []
         for item in evidence:
             payload = item.get("payload") or {}
             if not isinstance(payload, dict):
@@ -229,7 +253,7 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
         return findings
 
     @staticmethod
-    def _suggest_vex_status(findings: List[Dict[str, Any]], network_terms: List[str]) -> str:
+    def _suggest_vex_status(findings: list[dict[str, Any]], network_terms: list[str]) -> str:
         if findings:
             return "affected"
         if network_terms:
@@ -237,8 +261,10 @@ class DefensiveArtifactGenerator(ArtifactGenerator):
         return "not_affected"
 
     @staticmethod
-    def _impact_statement(process_terms: List[str], network_terms: List[str], file_terms: List[str]) -> str:
-        parts: List[str] = []
+    def _impact_statement(
+        process_terms: list[str], network_terms: list[str], file_terms: list[str]
+    ) -> str:
+        parts: list[str] = []
         if process_terms:
             parts.append(f"Observed process activity: {', '.join(process_terms[:3])}")
         if network_terms:

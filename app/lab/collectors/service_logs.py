@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
-from app.lab.interfaces import Collector
+from typing import Any
 
 from app.lab.collectors.common import (
     build_evidence_dict,
@@ -13,7 +11,12 @@ from app.lab.collectors.common import (
     truncate_text,
     utc_iso,
 )
-from app.lab.collectors.runtime import is_executable_guest_context, resolve_container_id, run_in_container
+from app.lab.collectors.runtime import (
+    is_executable_guest_context,
+    resolve_container_id,
+    run_in_container,
+)
+from app.lab.interfaces import Collector
 
 MAX_LOG_BYTES = 120_000
 DEFAULT_PATHS = ["/var/log/dpkg.log", "/var/log/alternatives.log"]
@@ -23,9 +26,9 @@ class ServiceLogsCollector(Collector):
     collector_name = "service_logs"
     collector_version = "1.0.0"
 
-    def _sources(self, recipe: Dict[str, Any]) -> List[Dict[str, str]]:
+    def _sources(self, recipe: dict[str, Any]) -> list[dict[str, str]]:
         raw = recipe.get("log_sources") or recipe.get("service_logs") or []
-        out: List[Dict[str, str]] = []
+        out: list[dict[str, str]] = []
         if isinstance(raw, list):
             for item in raw:
                 if isinstance(item, str):
@@ -42,10 +45,14 @@ class ServiceLogsCollector(Collector):
                 out.append({"path": p, "service": "system"})
         return out
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         recipe = run_context.get("recipe_content") or {}
         sources = self._sources(recipe)
-        if not is_executable_guest_context(run_context=run_context, provider_result=provider_result):
+        if not is_executable_guest_context(
+            run_context=run_context, provider_result=provider_result
+        ):
             return [
                 synthetic_from_plan(
                     collector_name=self.collector_name,
@@ -59,7 +66,7 @@ class ServiceLogsCollector(Collector):
         cid = resolve_container_id(provider_result)
         assert cid
         started = utc_iso()
-        excerpts: List[Dict[str, Any]] = []
+        excerpts: list[dict[str, Any]] = []
         for src in sources:
             path = src["path"]
             code, out, err = run_in_container(

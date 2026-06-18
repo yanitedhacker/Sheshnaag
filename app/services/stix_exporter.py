@@ -27,8 +27,8 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -60,15 +60,13 @@ _STIX_ID_RE = re.compile(
 )
 
 #: Strict ISO-8601 UTC-with-Z timestamp (STIX 2.1 §3.3).
-_STIX_TIMESTAMP_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
-)
+_STIX_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
 
 #: STIX 2.1 common required properties for any SDO.
 _COMMON_REQUIRED = ("type", "id", "spec_version", "created", "modified")
 
 #: Per-SDO-type required property sets (beyond common).
-_TYPE_REQUIRED: Dict[str, tuple[str, ...]] = {
+_TYPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "indicator": ("pattern", "pattern_type", "valid_from", "indicator_types"),
     "malware": ("name", "is_family", "malware_types"),
     "observed-data": ("first_observed", "last_observed", "number_observed", "objects"),
@@ -78,7 +76,7 @@ _TYPE_REQUIRED: Dict[str, tuple[str, ...]] = {
 }
 
 #: Kinds we know how to pattern-match. See STIX 2.1 §7 cyber-observable types.
-_HASH_KINDS: Dict[str, str] = {
+_HASH_KINDS: dict[str, str] = {
     "sha256": "SHA-256",
     "sha1": "SHA-1",
     "md5": "MD5",
@@ -91,14 +89,14 @@ _HASH_KINDS: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _utc_z(value: Optional[datetime]) -> str:
+def _utc_z(value: datetime | None) -> str:
     """Render ``value`` as ISO-8601 UTC with trailing ``Z``, STIX-style."""
 
     if value is None:
-        value = datetime.now(timezone.utc)
+        value = datetime.now(UTC)
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    value = value.astimezone(timezone.utc)
+        value = value.replace(tzinfo=UTC)
+    value = value.astimezone(UTC)
     # STIX demands millisecond/microsecond precision to be explicit; Python's
     # isoformat emits microseconds only when nonzero. Normalize to always
     # include at least seconds, then swap +00:00 → Z.
@@ -122,7 +120,7 @@ def _escape_pattern_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def _confidence_to_int(conf: Optional[float]) -> int:
+def _confidence_to_int(conf: float | None) -> int:
     """STIX 2.1 confidence is an integer in [0, 100]."""
 
     if conf is None:
@@ -143,7 +141,7 @@ def _confidence_to_int(conf: Optional[float]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _build_indicator_pattern(kind: str, value: str) -> Optional[str]:
+def _build_indicator_pattern(kind: str, value: str) -> str | None:
     """Return a STIX 2.1 pattern string for ``(kind, value)``.
 
     Returns ``None`` for indicator kinds we do not know how to express
@@ -201,7 +199,7 @@ class StixExporter:
         case_id: int,
         *,
         include_observables: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Export a full STIX 2.1 bundle for one analysis case.
 
         The bundle contains one SDO per case entity:
@@ -227,7 +225,7 @@ class StixExporter:
 
         tenant_tag = tenant.slug or f"tenant-{tenant.id}"
 
-        case: Optional[AnalysisCase] = (
+        case: AnalysisCase | None = (
             self._session.query(AnalysisCase)
             .filter(AnalysisCase.tenant_id == tenant.id, AnalysisCase.id == case_id)
             .first()
@@ -236,7 +234,7 @@ class StixExporter:
             raise ValueError(f"Analysis case {case_id} not found for tenant {tenant.id}")
 
         specimen_ids = list(case.specimen_ids or [])
-        specimens: List[Specimen] = []
+        specimens: list[Specimen] = []
         if specimen_ids:
             specimens = (
                 self._session.query(Specimen)
@@ -247,7 +245,7 @@ class StixExporter:
                 .all()
             )
 
-        findings: List[BehaviorFinding] = (
+        findings: list[BehaviorFinding] = (
             self._session.query(BehaviorFinding)
             .filter(
                 BehaviorFinding.tenant_id == tenant.id,
@@ -256,7 +254,7 @@ class StixExporter:
             .all()
         )
 
-        indicators: List[IndicatorArtifact] = (
+        indicators: list[IndicatorArtifact] = (
             self._session.query(IndicatorArtifact)
             .filter(
                 IndicatorArtifact.tenant_id == tenant.id,
@@ -265,7 +263,7 @@ class StixExporter:
             .all()
         )
 
-        report_row: Optional[MalwareReport] = (
+        report_row: MalwareReport | None = (
             self._session.query(MalwareReport)
             .filter(
                 MalwareReport.tenant_id == tenant.id,
@@ -275,8 +273,8 @@ class StixExporter:
             .first()
         )
 
-        objects: List[Dict[str, Any]] = []
-        ref_cache: Dict[str, str] = {}
+        objects: list[dict[str, Any]] = []
+        ref_cache: dict[str, str] = {}
 
         for specimen in specimens:
             sdo = self._build_malware(tenant_tag, specimen)
@@ -343,32 +341,28 @@ class StixExporter:
         # share the same finding_type into a single observation whose
         # ``number_observed`` counts the cluster size.
         if include_observables and findings:
-            clusters: Dict[str, List[BehaviorFinding]] = {}
+            clusters: dict[str, list[BehaviorFinding]] = {}
             for finding in findings:
                 clusters.setdefault(finding.finding_type or "unknown", []).append(finding)
             for cluster_kind, cluster in clusters.items():
-                objects.append(
-                    self._build_observed_data(tenant_tag, cluster_kind, cluster)
-                )
+                objects.append(self._build_observed_data(tenant_tag, cluster_kind, cluster))
 
         # Report (if present, approved and has content)
         if report_row is not None:
             ref_ids = [o["id"] for o in objects]
             # A report needs at least one object_ref; skip if empty.
             if ref_ids:
-                objects.append(
-                    self._build_report(tenant_tag, case, report_row, ref_ids)
-                )
+                objects.append(self._build_report(tenant_tag, case, report_row, ref_ids))
 
         bundle_seed = f"bundle:{tenant_tag}:{case_id}"
-        bundle: Dict[str, Any] = {
+        bundle: dict[str, Any] = {
             "type": "bundle",
             "id": f"bundle--{_deterministic_uuid(bundle_seed)}",
             "objects": objects,
         }
         return bundle
 
-    def validate_bundle(self, bundle: Dict[str, Any]) -> List[str]:
+    def validate_bundle(self, bundle: dict[str, Any]) -> list[str]:
         """Return a list of spec violations. Empty list means the bundle is valid.
 
         We check the envelope and every SDO against STIX 2.1's common
@@ -377,7 +371,7 @@ class StixExporter:
         structural errors callers are most likely to introduce.
         """
 
-        errors: List[str] = []
+        errors: list[str] = []
         if not isinstance(bundle, dict):
             return ["bundle must be an object"]
 
@@ -421,18 +415,22 @@ class StixExporter:
                 seen_ids.add(sdo_id)
 
             if sdo.get("spec_version") != STIX_SPEC_VERSION:
-                errors.append(
-                    f"{prefix}: spec_version must be '{STIX_SPEC_VERSION}'"
-                )
+                errors.append(f"{prefix}: spec_version must be '{STIX_SPEC_VERSION}'")
 
             # Timestamps
-            for ts_field in ("created", "modified", "valid_from", "first_observed",
-                             "last_observed", "published"):
+            for ts_field in (
+                "created",
+                "modified",
+                "valid_from",
+                "first_observed",
+                "last_observed",
+                "published",
+            ):
                 if ts_field in sdo:
-                    if not isinstance(sdo[ts_field], str) or not _STIX_TIMESTAMP_RE.match(sdo[ts_field]):
-                        errors.append(
-                            f"{prefix}: {ts_field} must be ISO-8601 UTC with Z suffix"
-                        )
+                    if not isinstance(sdo[ts_field], str) or not _STIX_TIMESTAMP_RE.match(
+                        sdo[ts_field]
+                    ):
+                        errors.append(f"{prefix}: {ts_field} must be ISO-8601 UTC with Z suffix")
 
             # Per-type required properties
             for req in _TYPE_REQUIRED.get(sdo_type, ()):
@@ -471,7 +469,7 @@ class StixExporter:
     # Individual SDO builders
     # ------------------------------------------------------------------
 
-    def _build_malware(self, tenant_tag: str, specimen: Specimen) -> Dict[str, Any]:
+    def _build_malware(self, tenant_tag: str, specimen: Specimen) -> dict[str, Any]:
         sid = _deterministic_uuid(f"{tenant_tag}:malware:{specimen.id}")
         created = _utc_z(specimen.created_at)
         modified = _utc_z(specimen.updated_at or specimen.created_at)
@@ -491,9 +489,7 @@ class StixExporter:
             "labels": labels or ["sheshnaag-specimen"],
         }
 
-    def _build_indicator(
-        self, tenant_tag: str, indicator: IndicatorArtifact
-    ) -> Dict[str, Any]:
+    def _build_indicator(self, tenant_tag: str, indicator: IndicatorArtifact) -> dict[str, Any]:
         sid = _deterministic_uuid(f"{tenant_tag}:indicator:{indicator.id}")
         created = _utc_z(indicator.created_at)
         modified = _utc_z(indicator.updated_at or indicator.created_at)
@@ -508,7 +504,7 @@ class StixExporter:
         if indicator.source:
             labels.append(f"source-{indicator.source}")
 
-        sdo: Dict[str, Any] = {
+        sdo: dict[str, Any] = {
             "type": "indicator",
             "spec_version": STIX_SPEC_VERSION,
             "id": f"indicator--{sid}",
@@ -533,7 +529,7 @@ class StixExporter:
         source_ref: str,
         target_ref: str,
         key: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         sid = _deterministic_uuid(f"{tenant_tag}:rel:{key}:{relationship_type}")
         now = _utc_z(None)
         return {
@@ -553,7 +549,7 @@ class StixExporter:
         *,
         finding: BehaviorFinding,
         sighting_of_ref: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         sid = _deterministic_uuid(f"{tenant_tag}:sighting:{finding.id}")
         created = _utc_z(finding.created_at)
         modified = _utc_z(finding.updated_at or finding.created_at)
@@ -569,28 +565,34 @@ class StixExporter:
             "sighting_of_ref": sighting_of_ref,
             "description": finding.title or finding.finding_type,
             "confidence": _confidence_to_int(finding.confidence),
-            "labels": [f"severity-{finding.severity or 'medium'}",
-                       f"type-{finding.finding_type or 'unknown'}"],
+            "labels": [
+                f"severity-{finding.severity or 'medium'}",
+                f"type-{finding.finding_type or 'unknown'}",
+            ],
         }
 
     def _build_observed_data(
-        self, tenant_tag: str, cluster_kind: str, cluster: List[BehaviorFinding]
-    ) -> Dict[str, Any]:
+        self, tenant_tag: str, cluster_kind: str, cluster: list[BehaviorFinding]
+    ) -> dict[str, Any]:
         sid = _deterministic_uuid(
             f"{tenant_tag}:obs:{cluster_kind}:{','.join(str(f.id) for f in cluster)}"
         )
         first = min(
             (f.created_at for f in cluster if f.created_at is not None),
-            default=datetime.now(timezone.utc),
+            default=datetime.now(UTC),
         )
         last = max(
-            (f.updated_at or f.created_at for f in cluster if (f.updated_at or f.created_at) is not None),
+            (
+                f.updated_at or f.created_at
+                for f in cluster
+                if (f.updated_at or f.created_at) is not None
+            ),
             default=first,
         )
         # Observed-data wraps a ``objects`` map (deprecated) or
         # ``object_refs`` (preferred in 2.1). We use the inline ``objects``
         # map since we cannot guarantee all observables live in the bundle.
-        observable: Dict[str, Any] = {
+        observable: dict[str, Any] = {
             "0": {
                 "type": "x-sheshnaag-ebpf-cluster",
                 "finding_type": cluster_kind,
@@ -616,8 +618,8 @@ class StixExporter:
         tenant_tag: str,
         case: AnalysisCase,
         report: MalwareReport,
-        ref_ids: List[str],
-    ) -> Dict[str, Any]:
+        ref_ids: list[str],
+    ) -> dict[str, Any]:
         sid = _deterministic_uuid(f"{tenant_tag}:report:{report.id}")
         created = _utc_z(report.created_at)
         modified = _utc_z(report.updated_at or report.created_at)
@@ -629,7 +631,9 @@ class StixExporter:
             "created": created,
             "modified": modified,
             "name": report.title or case.title or f"case-{case.id}",
-            "description": (report.content or {}).get("executive_summary", "") if isinstance(report.content, dict) else "",
+            "description": (report.content or {}).get("executive_summary", "")
+            if isinstance(report.content, dict)
+            else "",
             "published": created,
             "report_types": [self._report_type(report.report_type)],
             "object_refs": ref_ids,
@@ -642,7 +646,7 @@ class StixExporter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _malware_type_from_kind(specimen_kind: Optional[str]) -> str:
+    def _malware_type_from_kind(specimen_kind: str | None) -> str:
         """Map Sheshnaag's specimen_kind → STIX ``malware-type-ov``."""
 
         if not specimen_kind:
@@ -661,7 +665,7 @@ class StixExporter:
         return "unknown"
 
     @staticmethod
-    def _report_type(report_type: Optional[str]) -> str:
+    def _report_type(report_type: str | None) -> str:
         """Map Sheshnaag's report_type → STIX ``report-type-ov``."""
 
         mapping = {

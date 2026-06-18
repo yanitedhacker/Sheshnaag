@@ -34,9 +34,9 @@ import math
 import os
 import re
 import struct
-from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Protocol
 
 import httpx
 
@@ -45,7 +45,8 @@ try:  # pragma: no cover - import guarded so the service works if rank_bm25 is m
 except Exception:  # pragma: no cover
     BM25Okapi = None  # type: ignore[assignment]
 
-from sqlalchemy import inspect as sa_inspect, or_
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import or_
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -53,7 +54,6 @@ from app.core.config import settings
 from app.core.time import utc_now
 from app.models.sheshnaag import KnowledgeWikiPage, RawKnowledgeSource
 from app.models.v2 import KnowledgeChunk, KnowledgeDocument, Tenant
-
 
 logger = logging.getLogger(__name__)
 
@@ -83,17 +83,17 @@ class EmbeddingProvider(Protocol):
     #: Short machine-readable label written to ``embedding_model`` columns.
     model_label: str
 
-    def embed(self, text: str) -> List[float]: ...
+    def embed(self, text: str) -> list[float]: ...
 
-    def embed_batch(self, texts: Sequence[str]) -> List[List[float]]: ...
+    def embed_batch(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
-def _l2_normalize(values: Sequence[float]) -> List[float]:
+def _l2_normalize(values: Sequence[float]) -> list[float]:
     magnitude = math.sqrt(sum(v * v for v in values)) or 1.0
     return [v / magnitude for v in values]
 
 
-def _project_to_dim(values: Sequence[float], dim: int = EMBEDDING_DIM) -> List[float]:
+def _project_to_dim(values: Sequence[float], dim: int = EMBEDDING_DIM) -> list[float]:
     """Pad with zeros or truncate a vector so it ends up exactly ``dim`` long.
 
     Used to coerce provider-native dimensionality (768 for nomic-embed-text,
@@ -126,7 +126,7 @@ class HashFallbackEmbeddingProvider:
     def __init__(self, dim: int = EMBEDDING_DIM) -> None:
         self.dim = dim
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         tokens = TOKEN_RE.findall((text or "").lower())
         vector = [0.0] * self.dim
         if not tokens:
@@ -139,16 +139,14 @@ class HashFallbackEmbeddingProvider:
             for i in range(8):
                 byte_offset = (i * 4) % (len(digest) - 4)
                 # 4 bytes -> uint32 -> bucket index
-                bucket = (
-                    struct.unpack_from(">I", digest, byte_offset)[0] % self.dim
-                )
+                bucket = struct.unpack_from(">I", digest, byte_offset)[0] % self.dim
                 sign_byte = digest[(byte_offset + 3) % len(digest)]
                 sign = 1.0 if (sign_byte & 1) == 0 else -1.0
                 # Weight by 1/sqrt(len(tokens)) so longer docs don't explode.
                 vector[bucket] += sign * (1.0 / math.sqrt(len(tokens)))
         return _l2_normalize(vector)
 
-    def embed_batch(self, texts: Sequence[str]) -> List[List[float]]:
+    def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
         return [self.embed(t) for t in texts]
 
 
@@ -162,18 +160,14 @@ class OllamaEmbeddingProvider:
     def __init__(
         self,
         *,
-        host: Optional[str] = None,
-        model: Optional[str] = None,
+        host: str | None = None,
+        model: str | None = None,
         timeout: float = 15.0,
-        fallback: Optional[EmbeddingProvider] = None,
-        client: Optional[httpx.Client] = None,
+        fallback: EmbeddingProvider | None = None,
+        client: httpx.Client | None = None,
     ) -> None:
         self.host = (host or os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-        self.model = (
-            model
-            or os.getenv("SHESHNAAG_EMBEDDING_MODEL")
-            or "nomic-embed-text"
-        )
+        self.model = model or os.getenv("SHESHNAAG_EMBEDDING_MODEL") or "nomic-embed-text"
         self.timeout = timeout
         self.fallback = fallback or HashFallbackEmbeddingProvider()
         self._client = client
@@ -184,7 +178,7 @@ class OllamaEmbeddingProvider:
             return self._client
         return httpx.Client(timeout=self.timeout)
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         client = self._client_or_new()
         close_after = self._client is None
         try:
@@ -208,14 +202,12 @@ class OllamaEmbeddingProvider:
 
         raw = payload.get("embedding") or payload.get("data") or []
         if not raw or not isinstance(raw, list):
-            logger.warning(
-                "Ollama returned unexpected embedding payload; using fallback"
-            )
+            logger.warning("Ollama returned unexpected embedding payload; using fallback")
             return self.fallback.embed(text)
         # nomic-embed-text is 768-dim; pad / truncate to 1024.
         return _project_to_dim(raw, EMBEDDING_DIM)
 
-    def embed_batch(self, texts: Sequence[str]) -> List[List[float]]:
+    def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
         return [self.embed(t) for t in texts]
 
 
@@ -225,20 +217,18 @@ class OpenAIEmbeddingProvider:
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
         timeout: float = 30.0,
-        fallback: Optional[EmbeddingProvider] = None,
-        client: Optional[httpx.Client] = None,
+        fallback: EmbeddingProvider | None = None,
+        client: httpx.Client | None = None,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com").rstrip("/")
-        self.model = (
-            model
-            or os.getenv("SHESHNAAG_EMBEDDING_MODEL")
-            or "text-embedding-3-small"
-        )
+        self.base_url = (
+            base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com"
+        ).rstrip("/")
+        self.model = model or os.getenv("SHESHNAAG_EMBEDDING_MODEL") or "text-embedding-3-small"
         self.timeout = timeout
         self.fallback = fallback or HashFallbackEmbeddingProvider()
         self._client = client
@@ -249,7 +239,7 @@ class OpenAIEmbeddingProvider:
             return self._client
         return httpx.Client(timeout=self.timeout)
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         if not self.api_key:
             logger.warning("OpenAI embedding provider has no API key; using fallback")
             return self.fallback.embed(text)
@@ -282,11 +272,11 @@ class OpenAIEmbeddingProvider:
         # text-embedding-3-small is 1536-dim; project to 1024.
         return _project_to_dim(raw, EMBEDDING_DIM)
 
-    def embed_batch(self, texts: Sequence[str]) -> List[List[float]]:
+    def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
         return [self.embed(t) for t in texts]
 
 
-_provider_singleton: Optional[EmbeddingProvider] = None
+_provider_singleton: EmbeddingProvider | None = None
 
 
 def get_embedding_provider() -> EmbeddingProvider:
@@ -348,13 +338,13 @@ def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
 
 def reciprocal_rank_fusion(
     rank_lists: Sequence[Sequence[Any]], *, k: int = RRF_K
-) -> Dict[Any, float]:
+) -> dict[Any, float]:
     """Fuse several ranked id lists with Reciprocal Rank Fusion.
 
     Returns a mapping from item id to RRF score. Higher is better.
     """
 
-    fused: Dict[Any, float] = {}
+    fused: dict[Any, float] = {}
     for ranking in rank_lists:
         for rank, item_id in enumerate(ranking, start=1):
             fused[item_id] = fused.get(item_id, 0.0) + 1.0 / (k + rank)
@@ -367,16 +357,16 @@ class _ChunkRow:
 
     id: int
     document_id: int
-    tenant_id: Optional[int]
-    cve_id: Optional[int]
+    tenant_id: int | None
+    cve_id: int | None
     title: str
     content: str
     document_type: str
-    source_label: Optional[str]
-    source_url: Optional[str]
-    meta: Dict[str, Any]
+    source_label: str | None
+    source_url: str | None
+    meta: dict[str, Any]
     search_text: str
-    embedding: List[float]
+    embedding: list[float]
     sha256: str
 
 
@@ -406,14 +396,12 @@ class KnowledgeRetrievalService:
         self,
         session: Session,
         *,
-        embedding_provider: Optional[EmbeddingProvider] = None,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.session = session
-        self.embedding_provider: EmbeddingProvider = (
-            embedding_provider or get_embedding_provider()
-        )
-        self._embedding_table_present: Optional[bool] = None
-        self._fallback_chunks: Dict[int, _ChunkRow] = {}
+        self.embedding_provider: EmbeddingProvider = embedding_provider or get_embedding_provider()
+        self._embedding_table_present: bool | None = None
+        self._fallback_chunks: dict[int, _ChunkRow] = {}
         # Cache the BM25 index per-query since our corpus is small and the
         # session is short-lived; rebuilding it is cheap.
 
@@ -432,9 +420,7 @@ class KnowledgeRetrievalService:
         # that same connection anyway).
         try:
             inspector = sa_inspect(self.session.connection())
-            self._embedding_table_present = inspector.has_table(
-                "knowledge_chunk_embeddings"
-            )
+            self._embedding_table_present = inspector.has_table("knowledge_chunk_embeddings")
         except Exception:
             self._embedding_table_present = False
         if not self._embedding_table_present:
@@ -448,9 +434,7 @@ class KnowledgeRetrievalService:
     # Indexing
     # ------------------------------------------------------------------
 
-    def reindex_documents(
-        self, *, document_ids: Optional[Sequence[int]] = None
-    ) -> int:
+    def reindex_documents(self, *, document_ids: Sequence[int] | None = None) -> int:
         """Chunk and index all or selected knowledge documents."""
 
         self.backfill_knowledge_layers()
@@ -467,9 +451,9 @@ class KnowledgeRetrievalService:
     def index_document(self, document: KnowledgeDocument) -> None:
         """Replace a document's retrieval chunks (and their embeddings)."""
 
-        self.session.query(KnowledgeChunk).filter(
-            KnowledgeChunk.document_id == document.id
-        ).delete(synchronize_session=False)
+        self.session.query(KnowledgeChunk).filter(KnowledgeChunk.document_id == document.id).delete(
+            synchronize_session=False
+        )
         # Drop any stale fallback rows for this document.
         for cid in [c.id for c in self._fallback_chunks.values() if c.document_id == document.id]:
             self._fallback_chunks.pop(cid, None)
@@ -477,8 +461,8 @@ class KnowledgeRetrievalService:
         if self._has_embedding_table():
             self._delete_persisted_embeddings_for_document(document.id)
 
-        texts: List[str] = []
-        chunk_texts: List[str] = []
+        texts: list[str] = []
+        chunk_texts: list[str] = []
         for chunk_text in self._chunk_text(document.content):
             normalized = self._normalize_text(f"{document.title}\n{chunk_text}")
             texts.append(normalized)
@@ -493,7 +477,7 @@ class KnowledgeRetrievalService:
             zip(chunk_texts, texts, vectors)
         ):
             sha256 = hashlib.sha256(
-                f"{document.id}:{chunk_index}:{chunk_text}".encode("utf-8")
+                f"{document.id}:{chunk_index}:{chunk_text}".encode()
             ).hexdigest()
             chunk = KnowledgeChunk(
                 document_id=document.id,
@@ -545,8 +529,8 @@ class KnowledgeRetrievalService:
     def ingest(
         self,
         *,
-        documents: Optional[Sequence[KnowledgeDocument]] = None,
-        document_ids: Optional[Sequence[int]] = None,
+        documents: Sequence[KnowledgeDocument] | None = None,
+        document_ids: Sequence[int] | None = None,
     ) -> int:
         """Index one or more documents. Mirrors the public V4 API."""
 
@@ -562,10 +546,10 @@ class KnowledgeRetrievalService:
         self,
         query: str,
         *,
-        tenant: Optional[Tenant] = None,
-        cve_db_ids: Optional[Sequence[int]] = None,
+        tenant: Tenant | None = None,
+        cve_db_ids: Sequence[int] | None = None,
         limit: int = 6,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Hybrid BM25 + cosine search with Reciprocal Rank Fusion.
 
         Each returned dict has the same shape as :meth:`retrieve` plus:
@@ -582,24 +566,20 @@ class KnowledgeRetrievalService:
         if not normalized_query:
             return []
 
-        candidate_chunks = self._candidate_chunks(
-            tenant=tenant, cve_db_ids=cve_db_ids
-        )
+        candidate_chunks = self._candidate_chunks(tenant=tenant, cve_db_ids=cve_db_ids)
         if not candidate_chunks:
             return []
 
         query_tokens = self._tokenize(normalized_query)
-        chunk_token_lists: List[List[str]] = [
+        chunk_token_lists: list[list[str]] = [
             self._tokenize(row.search_text) for row in candidate_chunks
         ]
 
         # BM25 ranking — use rank_bm25 if available, otherwise fall back to a
         # lexical-overlap score so the feature still works in minimal envs.
-        bm25_scores: List[float]
+        bm25_scores: list[float]
         if BM25Okapi is not None and any(chunk_token_lists):
-            bm25_scores = list(
-                BM25Okapi(chunk_token_lists).get_scores(query_tokens)
-            )
+            bm25_scores = list(BM25Okapi(chunk_token_lists).get_scores(query_tokens))
         else:  # pragma: no cover - exercised when rank_bm25 absent
             bm25_scores = [
                 float(
@@ -616,8 +596,7 @@ class KnowledgeRetrievalService:
 
         query_embedding = self.embedding_provider.embed(normalized_query)
         cosine_scores = [
-            cosine_similarity(query_embedding, row.embedding or [])
-            for row in candidate_chunks
+            cosine_similarity(query_embedding, row.embedding or []) for row in candidate_chunks
         ]
 
         # Build ranked id lists. Ties are broken by original order which
@@ -625,16 +604,12 @@ class KnowledgeRetrievalService:
         ids = [row.id for row in candidate_chunks]
         bm25_ranking = [
             cid
-            for cid, _ in sorted(
-                zip(ids, bm25_scores), key=lambda pair: pair[1], reverse=True
-            )
+            for cid, _ in sorted(zip(ids, bm25_scores), key=lambda pair: pair[1], reverse=True)
             if _ > 0  # ignore zero-score entries
         ]
         cosine_ranking = [
             cid
-            for cid, _ in sorted(
-                zip(ids, cosine_scores), key=lambda pair: pair[1], reverse=True
-            )
+            for cid, _ in sorted(zip(ids, cosine_scores), key=lambda pair: pair[1], reverse=True)
             if _ > 0
         ]
 
@@ -643,23 +618,17 @@ class KnowledgeRetrievalService:
         if not bm25_ranking and not cosine_ranking:
             return []
 
-        fused = reciprocal_rank_fusion(
-            [bm25_ranking, cosine_ranking], k=RRF_K
-        )
+        fused = reciprocal_rank_fusion([bm25_ranking, cosine_ranking], k=RRF_K)
         # Score-index lookups.
         score_by_id = {
             row.id: (bm25_scores[idx], cosine_scores[idx])
             for idx, row in enumerate(candidate_chunks)
         }
 
-        ordered_ids = sorted(
-            fused.items(), key=lambda item: item[1], reverse=True
-        )
-        results: List[Dict[str, Any]] = []
+        ordered_ids = sorted(fused.items(), key=lambda item: item[1], reverse=True)
+        results: list[dict[str, Any]] = []
         chunk_by_id = {row.id: row for row in candidate_chunks}
-        for rank, (chunk_id, fusion_score) in enumerate(
-            ordered_ids[:limit], start=1
-        ):
+        for rank, (chunk_id, fusion_score) in enumerate(ordered_ids[:limit], start=1):
             row = chunk_by_id[chunk_id]
             bm25_score, cosine_score = score_by_id[chunk_id]
             entry = {
@@ -685,7 +654,7 @@ class KnowledgeRetrievalService:
             results.append(entry)
         return results
 
-    def grounding_for(self, result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def grounding_for(self, result: dict[str, Any]) -> list[dict[str, Any]]:
         """Return provenance metadata for a single search result.
 
         The shape matches what :class:`AISidebar` consumes:
@@ -700,8 +669,7 @@ class KnowledgeRetrievalService:
                 "sha256": result.get("sha256"),
                 "rank": result.get("rank"),
                 "score": result.get("fusion_score") or result.get("score"),
-                "source": result.get("source_label")
-                or result.get("document_type"),
+                "source": result.get("source_label") or result.get("document_type"),
                 "source_url": result.get("source_url"),
                 "title": result.get("title"),
             }
@@ -715,10 +683,10 @@ class KnowledgeRetrievalService:
         self,
         *,
         query: str,
-        tenant: Optional[Tenant] = None,
-        cve_db_ids: Optional[Sequence[int]] = None,
+        tenant: Tenant | None = None,
+        cve_db_ids: Sequence[int] | None = None,
         limit: int = 6,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """Retrieve the most relevant indexed chunks for a grounded prompt.
 
         Implemented on top of :meth:`search` so every caller benefits from
@@ -741,19 +709,17 @@ class KnowledgeRetrievalService:
         *,
         source_kind: str,
         source_key: str,
-        source_label: Optional[str] = None,
-        source_url: Optional[str] = None,
-        raw_body: Optional[str] = None,
-        raw_payload: Optional[dict] = None,
-        tenant: Optional[Tenant] = None,
-        cve_id: Optional[int] = None,
-        provenance: Optional[dict] = None,
+        source_label: str | None = None,
+        source_url: str | None = None,
+        raw_body: str | None = None,
+        raw_payload: dict | None = None,
+        tenant: Tenant | None = None,
+        cve_id: int | None = None,
+        provenance: dict | None = None,
     ) -> RawKnowledgeSource:
         raw_payload = raw_payload or {}
         digest_input = (
-            raw_body
-            if raw_body
-            else json.dumps(raw_payload, sort_keys=True, default=str)
+            raw_body if raw_body else json.dumps(raw_payload, sort_keys=True, default=str)
         )
         sha256 = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
         record = (
@@ -794,16 +760,15 @@ class KnowledgeRetrievalService:
         page_type: str,
         title: str,
         summary: str,
-        source_ref_ids: Optional[List[int]] = None,
-        tenant: Optional[Tenant] = None,
-        cve_id: Optional[int] = None,
-        meta: Optional[dict] = None,
+        source_ref_ids: list[int] | None = None,
+        tenant: Tenant | None = None,
+        cve_id: int | None = None,
+        meta: dict | None = None,
     ) -> KnowledgeWikiPage:
         record = (
             self.session.query(KnowledgeWikiPage)
             .filter(
-                KnowledgeWikiPage.tenant_id
-                == (tenant.id if tenant else None),
+                KnowledgeWikiPage.tenant_id == (tenant.id if tenant else None),
                 KnowledgeWikiPage.page_type == page_type,
                 KnowledgeWikiPage.title == title,
                 KnowledgeWikiPage.cve_id == cve_id,
@@ -840,16 +805,11 @@ class KnowledgeRetrievalService:
                 continue
             tenant = None
             if document.tenant_id is not None:
-                tenant = (
-                    self.session.query(Tenant)
-                    .filter(Tenant.id == document.tenant_id)
-                    .first()
-                )
+                tenant = self.session.query(Tenant).filter(Tenant.id == document.tenant_id).first()
             if document.document_type in {"advisory", "sbom-note"}:
                 raw = self.create_raw_source(
                     source_kind=document.document_type,
-                    source_key=source_url
-                    or f"{document.document_type}:{document.title}",
+                    source_key=source_url or f"{document.document_type}:{document.title}",
                     source_label=document.source_label or document.document_type,
                     source_url=document.source_url,
                     raw_body=document.content,
@@ -954,24 +914,16 @@ class KnowledgeRetrievalService:
     def _candidate_chunks(
         self,
         *,
-        tenant: Optional[Tenant],
-        cve_db_ids: Optional[Sequence[int]],
-    ) -> List[_ChunkRow]:
+        tenant: Tenant | None,
+        cve_db_ids: Sequence[int] | None,
+    ) -> list[_ChunkRow]:
         if not self._has_embedding_table() and self._fallback_chunks:
             rows = list(self._fallback_chunks.values())
             if tenant is not None:
-                rows = [
-                    row
-                    for row in rows
-                    if row.tenant_id is None or row.tenant_id == tenant.id
-                ]
+                rows = [row for row in rows if row.tenant_id is None or row.tenant_id == tenant.id]
             if cve_db_ids:
                 cve_set = set(cve_db_ids)
-                rows = [
-                    row
-                    for row in rows
-                    if row.cve_id is None or row.cve_id in cve_set
-                ]
+                rows = [row for row in rows if row.cve_id is None or row.cve_id in cve_set]
             return rows
 
         chunk_query = self.session.query(KnowledgeChunk)
@@ -990,12 +942,15 @@ class KnowledgeRetrievalService:
                 )
             )
 
-        rows: List[_ChunkRow] = []
+        rows: list[_ChunkRow] = []
         for chunk in chunk_query.all():
             meta = chunk.meta or {}
-            sha256 = meta.get("sha256") or hashlib.sha256(
-                (chunk.search_text or chunk.content or "").encode("utf-8")
-            ).hexdigest()
+            sha256 = (
+                meta.get("sha256")
+                or hashlib.sha256(
+                    (chunk.search_text or chunk.content or "").encode("utf-8")
+                ).hexdigest()
+            )
             embedding = chunk.embedding_vector or []
             rows.append(
                 _ChunkRow(
@@ -1074,14 +1029,14 @@ class KnowledgeRetrievalService:
     def _normalize_text(value: str) -> str:
         return " ".join((value or "").lower().split())
 
-    def _chunk_text(self, content: str) -> List[str]:
+    def _chunk_text(self, content: str) -> list[str]:
         content = (content or "").strip()
         if not content:
             return []
 
         max_size = max(120, settings.knowledge_chunk_size)
         overlap = min(max_size // 2, max(0, settings.knowledge_chunk_overlap))
-        parts: List[str] = []
+        parts: list[str] = []
         start = 0
         while start < len(content):
             end = min(len(content), start + max_size)
@@ -1091,13 +1046,13 @@ class KnowledgeRetrievalService:
             start = max(0, end - overlap)
         return [part for part in parts if part]
 
-    def _embed(self, text: str) -> List[float]:
+    def _embed(self, text: str) -> list[float]:
         """Back-compat shim: delegate to the configured embedding provider."""
 
         return self.embedding_provider.embed(text)
 
     @staticmethod
-    def _tokenize(value: str) -> List[str]:
+    def _tokenize(value: str) -> list[str]:
         return TOKEN_RE.findall((value or "").lower())
 
 

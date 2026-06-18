@@ -13,7 +13,6 @@ from app.ingestion.misp_connector import (
 )
 from app.ingestion.opencti_connector import OpenCTIConnector
 
-
 SAMPLE_INDICATORS_RESPONSE = {
     "data": {
         "indicators": {
@@ -93,6 +92,7 @@ def _mock_response(status_code: int = 200, json_body=None, text: str = ""):
 # Health
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_health_false_when_env_missing(monkeypatch):
     monkeypatch.delenv("OPENCTI_URL", raising=False)
@@ -118,6 +118,7 @@ def test_health_true_when_both_env_set(monkeypatch):
 # Fetch -- env missing
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_returns_empty_without_env(monkeypatch):
     monkeypatch.delenv("OPENCTI_URL", raising=False)
@@ -131,6 +132,7 @@ def test_fetch_returns_empty_without_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # Fetch -- happy path
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_returns_normalized_records():
@@ -195,6 +197,7 @@ def test_fetch_returns_normalized_records():
 # ---------------------------------------------------------------------------
 # Error / rate-limit handling
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_handles_5xx_with_retries():
@@ -283,6 +286,7 @@ def test_fetch_handles_bad_json():
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_opencti_registered():

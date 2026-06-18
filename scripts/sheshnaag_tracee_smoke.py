@@ -17,7 +17,9 @@ def docker_ready() -> bool:
 
 def image_present(image: str) -> bool:
     try:
-        result = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(
+            ["docker", "image", "inspect", image], capture_output=True, text=True, timeout=15
+        )
         return result.returncode == 0
     except Exception:
         return False
@@ -30,7 +32,9 @@ def main() -> int:
 
     image = os.environ.get("SHESHNAAG_TRACEE_IMAGE", "sheshnaag-kali-tracee:2026.1")
     if not image_present(image):
-        print(f"SKIP: Tracee-capable image {image} is not present. Run scripts/build_sheshnaag_tracee_image.sh first.")
+        print(
+            f"SKIP: Tracee-capable image {image} is not present. Run scripts/build_sheshnaag_tracee_image.sh first."
+        )
         return 0
 
     print(

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -34,16 +35,18 @@ class MaintainerAssessmentService:
         tenant: Tenant,
         *,
         repository_url: str,
-        repository_name: Optional[str],
-        sbom: Dict[str, Any],
-        vex: Optional[Dict[str, Any]] = None,
-        source_refs: Optional[list[Dict[str, Any]]] = None,
+        repository_name: str | None,
+        sbom: dict[str, Any],
+        vex: dict[str, Any] | None = None,
+        source_refs: list[dict[str, Any]] | None = None,
         created_by: str,
         export_report: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Import maintainer context, score matching candidates, and persist a summary."""
         repo_url = self._normalize_repository_url(repository_url)
-        repo_name = self._normalize_repository_name(repository_name) or self._repo_name_from_url(repo_url)
+        repo_name = self._normalize_repository_name(repository_name) or self._repo_name_from_url(
+            repo_url
+        )
         actor = (created_by or "").strip()
         self._validate_inputs(repository_url=repo_url, created_by=actor, sbom=sbom)
         source_refs = self._normalize_source_refs(source_refs or [])
@@ -117,11 +120,11 @@ class MaintainerAssessmentService:
         self.session.flush()
         return self._assessment_payload(row, idempotent_replay=False)
 
-    def get_assessment(self, tenant: Tenant, *, assessment_id: int) -> Dict[str, Any]:
+    def get_assessment(self, tenant: Tenant, *, assessment_id: int) -> dict[str, Any]:
         row = self._get_assessment_row(tenant, assessment_id)
         return self._assessment_payload(row)
 
-    def export_assessment(self, tenant: Tenant, *, assessment_id: int) -> Dict[str, Any]:
+    def export_assessment(self, tenant: Tenant, *, assessment_id: int) -> dict[str, Any]:
         row = self._get_assessment_row(tenant, assessment_id)
         self._attach_report(tenant, row)
         self.session.flush()
@@ -256,14 +259,16 @@ class MaintainerAssessmentService:
         }
         return True
 
-    def _top_findings(self, tenant: Tenant, *, package_names: set[str], limit: int = 10) -> list[Dict[str, Any]]:
+    def _top_findings(
+        self, tenant: Tenant, *, package_names: set[str], limit: int = 10
+    ) -> list[dict[str, Any]]:
         rows = (
             self.session.query(ResearchCandidate)
             .filter(ResearchCandidate.tenant_id == tenant.id)
             .order_by(desc(ResearchCandidate.candidate_score), ResearchCandidate.id.asc())
             .all()
         )
-        findings: list[Dict[str, Any]] = []
+        findings: list[dict[str, Any]] = []
         for row in rows:
             payload = self.sheshnaag._candidate_payload(row)
             explainability = payload.get("explainability") or {}
@@ -272,7 +277,9 @@ class MaintainerAssessmentService:
                 str(payload.get("package_name") or "").lower(),
                 str(payload.get("product_name") or "").lower(),
             }
-            matched = bool(applicability.get("sbom_match_count")) or bool(package_names & candidate_packages)
+            matched = bool(applicability.get("sbom_match_count")) or bool(
+                package_names & candidate_packages
+            )
             if not matched:
                 continue
             findings.append(
@@ -294,7 +301,9 @@ class MaintainerAssessmentService:
                 break
         return findings
 
-    def _assessment_payload(self, row: MaintainerAssessment, *, idempotent_replay: bool = False) -> Dict[str, Any]:
+    def _assessment_payload(
+        self, row: MaintainerAssessment, *, idempotent_replay: bool = False
+    ) -> dict[str, Any]:
         summary = row.summary or {}
         return {
             "id": row.id,
@@ -322,7 +331,10 @@ class MaintainerAssessmentService:
     def _get_assessment_row(self, tenant: Tenant, assessment_id: int) -> MaintainerAssessment:
         row = (
             self.session.query(MaintainerAssessment)
-            .filter(MaintainerAssessment.tenant_id == tenant.id, MaintainerAssessment.id == assessment_id)
+            .filter(
+                MaintainerAssessment.tenant_id == tenant.id,
+                MaintainerAssessment.id == assessment_id,
+            )
             .first()
         )
         if row is None:
@@ -330,14 +342,18 @@ class MaintainerAssessmentService:
         return row
 
     @staticmethod
-    def _document_hash(document: Optional[Dict[str, Any]]) -> str:
+    def _document_hash(document: dict[str, Any] | None) -> str:
         if document is None:
             return ""
-        raw = json.dumps(document, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        raw = json.dumps(document, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
         return hashlib.sha256(raw).hexdigest()
 
     @classmethod
-    def _validate_inputs(cls, *, repository_url: str, created_by: str, sbom: Dict[str, Any]) -> None:
+    def _validate_inputs(
+        cls, *, repository_url: str, created_by: str, sbom: dict[str, Any]
+    ) -> None:
         if not repository_url:
             raise ValueError("repository_url is required.")
         if not created_by:
@@ -347,7 +363,7 @@ class MaintainerAssessmentService:
             raise ValueError("sbom.components must contain at least one component.")
 
     @staticmethod
-    def _component_names(sbom: Dict[str, Any]) -> set[str]:
+    def _component_names(sbom: dict[str, Any]) -> set[str]:
         names: set[str] = set()
         for item in sbom.get("components", []) or []:
             name = str(item.get("name") or "").strip().lower()
@@ -364,17 +380,19 @@ class MaintainerAssessmentService:
         return (repository_url or "").strip().rstrip("/")
 
     @staticmethod
-    def _normalize_repository_name(repository_name: Optional[str]) -> Optional[str]:
+    def _normalize_repository_name(repository_name: str | None) -> str | None:
         value = (repository_name or "").strip()
         return value or None
 
     @classmethod
-    def _normalize_source_refs(cls, source_refs: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-        normalized: list[Dict[str, Any]] = []
+    def _normalize_source_refs(cls, source_refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
         for item in source_refs[: cls.MAX_SOURCE_REFS]:
             if not isinstance(item, dict):
                 continue
-            compact = {str(key): value for key, value in item.items() if value not in (None, "", [], {})}
+            compact = {
+                str(key): value for key, value in item.items() if value not in (None, "", [], {})
+            }
             if compact:
                 normalized.append(compact)
         return normalized
@@ -385,7 +403,7 @@ class MaintainerAssessmentService:
         return trimmed.rsplit("/", 1)[-1] or "oss-repository"
 
     @staticmethod
-    def _recommended_next_steps(findings: Iterable[Dict[str, Any]]) -> list[str]:
+    def _recommended_next_steps(findings: Iterable[dict[str, Any]]) -> list[str]:
         findings = list(findings)
         if not findings:
             return [

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta
-from app.core.time import utc_now
-from typing import Dict, Iterable, List, Optional
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.models.cve import CVE
 from app.models.v2 import (
     AttackTechnique,
@@ -27,7 +27,7 @@ class ThreatIntelService:
         self.session = session
         self.knowledge = KnowledgeRetrievalService(session)
 
-    def get_latest_epss_map(self, cve_ids: Iterable[str]) -> Dict[str, EPSSSnapshot]:
+    def get_latest_epss_map(self, cve_ids: Iterable[str]) -> dict[str, EPSSSnapshot]:
         """Return latest EPSS snapshot keyed by CVE id."""
         wanted = {c.upper() for c in cve_ids if c}
         if not wanted:
@@ -40,14 +40,14 @@ class ThreatIntelService:
             .all()
         )
 
-        latest: Dict[str, EPSSSnapshot] = {}
+        latest: dict[str, EPSSSnapshot] = {}
         for row in rows:
             key = row.cve_id.upper()
             if key not in latest:
                 latest[key] = row
         return latest
 
-    def get_kev_map(self, cve_ids: Iterable[str]) -> Dict[str, KEVEntry]:
+    def get_kev_map(self, cve_ids: Iterable[str]) -> dict[str, KEVEntry]:
         """Return KEV membership keyed by CVE id."""
         wanted = {c.upper() for c in cve_ids if c}
         if not wanted:
@@ -56,7 +56,9 @@ class ThreatIntelService:
         rows = self.session.query(KEVEntry).filter(KEVEntry.cve_id.in_(wanted)).all()
         return {row.cve_id.upper(): row for row in rows}
 
-    def get_attack_techniques_for_cves(self, cve_db_ids: Iterable[int]) -> Dict[int, List[AttackTechnique]]:
+    def get_attack_techniques_for_cves(
+        self, cve_db_ids: Iterable[int]
+    ) -> dict[int, list[AttackTechnique]]:
         """Return ATT&CK technique lists keyed by DB CVE id."""
         wanted = {c for c in cve_db_ids if c is not None}
         if not wanted:
@@ -68,12 +70,14 @@ class ThreatIntelService:
             .all()
         )
 
-        result: Dict[int, List[AttackTechnique]] = {}
+        result: dict[int, list[AttackTechnique]] = {}
         for mapping in mappings:
             result.setdefault(mapping.cve_id, []).append(mapping.technique)
         return result
 
-    def get_knowledge_documents(self, *, cve_id: Optional[int] = None, limit: int = 10) -> List[KnowledgeDocument]:
+    def get_knowledge_documents(
+        self, *, cve_id: int | None = None, limit: int = 10
+    ) -> list[KnowledgeDocument]:
         """Fetch knowledge documents for citations."""
         self.knowledge.backfill_knowledge_layers()
         query = self.session.query(KnowledgeDocument)
@@ -85,7 +89,8 @@ class ThreatIntelService:
         """Create a compact, source-backed baseline for the public demo."""
         cves = {
             c.cve_id: c
-            for c in self.session.query(CVE).filter(
+            for c in self.session.query(CVE)
+            .filter(
                 CVE.cve_id.in_(
                     [
                         "CVE-2024-10001",
@@ -93,7 +98,8 @@ class ThreatIntelService:
                         "CVE-2024-10003",
                     ]
                 )
-            ).all()
+            )
+            .all()
         }
         if not cves:
             return
@@ -140,8 +146,16 @@ class ThreatIntelService:
             source_url="https://attack.mitre.org/techniques/T1078/",
         )
 
-        self._upsert_cve_technique(cves["CVE-2024-10001"].id, technique_exec.id, "Internet-facing RCE on the demo API gateway.")
-        self._upsert_cve_technique(cves["CVE-2024-10003"].id, technique_move.id, "Privileged access path through the admin portal.")
+        self._upsert_cve_technique(
+            cves["CVE-2024-10001"].id,
+            technique_exec.id,
+            "Internet-facing RCE on the demo API gateway.",
+        )
+        self._upsert_cve_technique(
+            cves["CVE-2024-10003"].id,
+            technique_move.id,
+            "Privileged access path through the admin portal.",
+        )
 
         self._upsert_document(
             document_type="advisory",
@@ -187,7 +201,9 @@ class ThreatIntelService:
             setattr(record, key, value)
         return record
 
-    def _upsert_epss(self, cve_id: str, score: float, percentile: float, scored_at: datetime) -> EPSSSnapshot:
+    def _upsert_epss(
+        self, cve_id: str, score: float, percentile: float, scored_at: datetime
+    ) -> EPSSSnapshot:
         record = (
             self.session.query(EPSSSnapshot)
             .filter(EPSSSnapshot.cve_id == cve_id, EPSSSnapshot.scored_at == scored_at)
@@ -210,7 +226,11 @@ class ThreatIntelService:
         return record
 
     def _upsert_technique(self, **payload) -> AttackTechnique:
-        record = self.session.query(AttackTechnique).filter(AttackTechnique.external_id == payload["external_id"]).first()
+        record = (
+            self.session.query(AttackTechnique)
+            .filter(AttackTechnique.external_id == payload["external_id"])
+            .first()
+        )
         if record is None:
             record = AttackTechnique(**payload)
             self.session.add(record)
@@ -222,14 +242,20 @@ class ThreatIntelService:
         self.session.flush()
         return record
 
-    def _upsert_cve_technique(self, cve_id: int, technique_id: int, rationale: str) -> CVEAttackTechnique:
+    def _upsert_cve_technique(
+        self, cve_id: int, technique_id: int, rationale: str
+    ) -> CVEAttackTechnique:
         record = (
             self.session.query(CVEAttackTechnique)
-            .filter(CVEAttackTechnique.cve_id == cve_id, CVEAttackTechnique.technique_id == technique_id)
+            .filter(
+                CVEAttackTechnique.cve_id == cve_id, CVEAttackTechnique.technique_id == technique_id
+            )
             .first()
         )
         if record is None:
-            record = CVEAttackTechnique(cve_id=cve_id, technique_id=technique_id, rationale=rationale)
+            record = CVEAttackTechnique(
+                cve_id=cve_id, technique_id=technique_id, rationale=rationale
+            )
             self.session.add(record)
             return record
         record.rationale = rationale

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -28,8 +27,8 @@ class GHSAConnector(FeedConnector):
         self,
         session: Session,
         *,
-        since: Optional[datetime] = None,
-        cursor: Optional[str] = None,
+        since: datetime | None = None,
+        cursor: str | None = None,
         limit: int = 2000,
     ) -> ConnectorResult:
         result = ConnectorResult(source=self.name, started_at=utc_now().isoformat())

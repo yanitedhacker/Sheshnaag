@@ -15,10 +15,10 @@ transition can be made by a role without permission", and silent
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -74,9 +74,9 @@ TRANSITIONS: tuple[TransitionRule, ...] = (
 
 
 # Indexed lookup: (from, to) -> rule. Built once at import time.
-_TRANSITION_INDEX: dict[
-    tuple[CaseLifecycleState, CaseLifecycleState], TransitionRule
-] = {(t.from_state, t.to_state): t for t in TRANSITIONS}
+_TRANSITION_INDEX: dict[tuple[CaseLifecycleState, CaseLifecycleState], TransitionRule] = {
+    (t.from_state, t.to_state): t for t in TRANSITIONS
+}
 
 
 class IllegalTransitionError(ValueError):
@@ -104,7 +104,7 @@ class CaseWorkflowService:
         to_state: CaseLifecycleState,
         actor: str,
         actor_roles: Iterable[str],
-        reason: Optional[str] = None,
+        reason: str | None = None,
     ) -> CaseStateTransition:
         """Attempt a transition. Returns the audit row on success.
 
@@ -115,24 +115,18 @@ class CaseWorkflowService:
                 is in ``rule.allowed_roles``.
         """
 
-        case = (
-            self._session.query(AnalysisCase).filter_by(id=case_id).first()
-        )
+        case = self._session.query(AnalysisCase).filter_by(id=case_id).first()
         if case is None:
             raise CaseNotFoundError(f"case_id={case_id}")
 
         from_state = CaseLifecycleState(case.lifecycle_state)
         to_state_enum = (
-            to_state
-            if isinstance(to_state, CaseLifecycleState)
-            else CaseLifecycleState(to_state)
+            to_state if isinstance(to_state, CaseLifecycleState) else CaseLifecycleState(to_state)
         )
 
         rule = _TRANSITION_INDEX.get((from_state, to_state_enum))
         if rule is None:
-            raise IllegalTransitionError(
-                f"no rule: {from_state.value} -> {to_state_enum.value}"
-            )
+            raise IllegalTransitionError(f"no rule: {from_state.value} -> {to_state_enum.value}")
 
         held = set(actor_roles or ())
         intersection = held & rule.allowed_roles
@@ -147,7 +141,7 @@ class CaseWorkflowService:
         # Order matches the role catalog precedence.
         role_for_audit = self._pick_role_for_audit(intersection)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         case.lifecycle_state = to_state_enum.value
         case.state_changed_at = now
         case.state_changed_by = actor
@@ -165,20 +159,16 @@ class CaseWorkflowService:
         self._session.flush()
         return audit
 
-    def legal_transitions_for_state(
-        self, state: CaseLifecycleState
-    ) -> List[CaseLifecycleState]:
+    def legal_transitions_for_state(self, state: CaseLifecycleState) -> list[CaseLifecycleState]:
         """All ``to_state`` values reachable from ``state`` (any role)."""
         return [t.to_state for t in TRANSITIONS if t.from_state == state]
 
     def legal_transitions_for_role(
         self, state: CaseLifecycleState, role: str
-    ) -> List[CaseLifecycleState]:
+    ) -> list[CaseLifecycleState]:
         """All ``to_state`` values reachable from ``state`` for the given role."""
         return [
-            t.to_state
-            for t in TRANSITIONS
-            if t.from_state == state and role in t.allowed_roles
+            t.to_state for t in TRANSITIONS if t.from_state == state and role in t.allowed_roles
         ]
 
     @staticmethod

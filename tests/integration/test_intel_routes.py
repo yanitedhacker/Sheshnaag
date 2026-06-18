@@ -4,7 +4,7 @@ Self-contained tests that use an in-memory SQLite database and a
 test-specific FastAPI app so no external services are required.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -35,7 +35,7 @@ def _fix_naive_datetimes(target, context):
         if isinstance(col.type, DateTime):
             val = target.__dict__.get(col.key)
             if isinstance(val, datetime) and val.tzinfo is None:
-                target.__dict__[col.key] = val.replace(tzinfo=timezone.utc)
+                target.__dict__[col.key] = val.replace(tzinfo=UTC)
 
 
 for _cls in (SourceFeed, FeedSyncRun, FeedSyncState):

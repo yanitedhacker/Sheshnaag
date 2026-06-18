@@ -32,7 +32,12 @@ def lima_ready() -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=None, help="Optional path to write a secure-mode smoke summary JSON.")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to write a secure-mode smoke summary JSON.",
+    )
     args = parser.parse_args()
     if not lima_ready():
         print("SKIP: limactl unavailable; secure-mode smoke not run.")
@@ -81,7 +86,9 @@ def main() -> int:
             print(f"SKIP: secure-mode smoke blocked: {result.error or result.transcript}")
             return 0
         if result.state not in {RunState.RUNNING, RunState.COMPLETED}:
-            raise RuntimeError(f"secure smoke failed: state={result.state.value} transcript={result.transcript}")
+            raise RuntimeError(
+                f"secure smoke failed: state={result.state.value} transcript={result.transcript}"
+            )
 
         provider_result = build_provider_result_dict(
             provider_run_ref=result.provider_run_ref,
@@ -90,7 +97,9 @@ def main() -> int:
         )
         evidence = []
         for collector in instantiate_collectors(revision_content["collectors"]):
-            evidence.extend(collector.collect(run_context=run_context, provider_result=provider_result))
+            evidence.extend(
+                collector.collect(run_context=run_context, provider_result=provider_result)
+            )
 
         kinds = {row["artifact_kind"] for row in evidence}
         expected = {"process_tree", "file_diff", "network_metadata", "pcap"}
@@ -116,7 +125,10 @@ def main() -> int:
         destroyed_audit = destroyed.plan.get("secure_mode_audit") or {}
         if destroyed.state != RunState.DESTROYED:
             raise RuntimeError(f"secure smoke destroy failed: {destroyed.state.value}")
-        if not any(item.get("event") in {"deleted", "teardown"} for item in (destroyed_audit.get("lifecycle") or [])):
+        if not any(
+            item.get("event") in {"deleted", "teardown"}
+            for item in (destroyed_audit.get("lifecycle") or [])
+        ):
             raise RuntimeError("secure smoke missing teardown/delete lifecycle audit")
 
         payload = {

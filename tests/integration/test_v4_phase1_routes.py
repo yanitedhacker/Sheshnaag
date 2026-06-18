@@ -16,7 +16,6 @@ from app.api.routes.ops_routes import router as ops_router
 from app.core.database import Base, get_sync_session
 from app.core.security import TokenData, verify_token
 
-
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -198,5 +197,7 @@ def test_ops_health_shape():
     assert body["api"] == "ok"
     assert body["db"] == "ok"
     assert "redis" in body
-    assert {"nft", "dnsmasq", "inetsim", "virsh", "limactl", "vol", "zeek", "tetragon"}.issubset(body["lab_deps"])
+    assert {"nft", "dnsmasq", "inetsim", "virsh", "limactl", "vol", "zeek", "tetragon"}.issubset(
+        body["lab_deps"]
+    )
     assert "openai" in body["ai_providers"]

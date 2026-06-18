@@ -1,8 +1,8 @@
-import pytest
 from hashlib import sha256
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -77,7 +77,9 @@ def test_private_tenant_recipe_run_bundle_flow_creates_evidence_provenance_and_l
             environment="production",
             criticality="high",
             business_criticality="high",
-            installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+            installed_software=[
+                {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+            ],
         )
     )
     session.commit()
@@ -86,7 +88,9 @@ def test_private_tenant_recipe_run_bundle_flow_creates_evidence_provenance_and_l
     candidates = service.list_candidates(tenant, limit=10)
     candidate = candidates["items"][0]
 
-    assigned = service.assign_candidate(tenant, candidate_id=candidate["id"], analyst_name="Owner Analyst")
+    assigned = service.assign_candidate(
+        tenant, candidate_id=candidate["id"], analyst_name="Owner Analyst"
+    )
     recipe = service.create_recipe(
         tenant,
         candidate_id=candidate["id"],
@@ -100,13 +104,20 @@ def test_private_tenant_recipe_run_bundle_flow_creates_evidence_provenance_and_l
             "network_policy": {"allow_egress_hosts": []},
         },
     )
-    approved = service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    approved = service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Owner Analyst",
-        workstation={"hostname": "analyst-mbp", "os_family": "macOS", "architecture": "arm64", "fingerprint": "mbp-local"},
+        workstation={
+            "hostname": "analyst-mbp",
+            "os_family": "macOS",
+            "architecture": "arm64",
+            "fingerprint": "mbp-local",
+        },
         launch_mode="simulated",
         acknowledge_sensitive=True,
     )
@@ -179,7 +190,9 @@ def test_disclosure_bundle_download_metadata_and_provenance_are_linked():
             environment="production",
             criticality="critical",
             business_criticality="critical",
-            installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+            installed_software=[
+                {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+            ],
         )
     )
     session.commit()
@@ -197,13 +210,20 @@ def test_disclosure_bundle_download_metadata_and_provenance_are_linked():
             "network_policy": {"allow_egress_hosts": []},
         },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Bundle Owner",
-        workstation={"hostname": "bundle-mbp", "os_family": "macOS", "architecture": "arm64", "fingerprint": "bundle-fp"},
+        workstation={
+            "hostname": "bundle-mbp",
+            "os_family": "macOS",
+            "architecture": "arm64",
+            "fingerprint": "bundle-fp",
+        },
         launch_mode="simulated",
         acknowledge_sensitive=False,
     )
@@ -242,7 +262,13 @@ def test_create_recipe_rejects_unsafe_mounts():
             content={
                 "command": ["bash", "-lc", "echo unsafe"],
                 "network_policy": {"allow_egress_hosts": []},
-                "mounts": [{"source": "/Users/demo/Documents", "target": "/workspace/input", "read_only": True}],
+                "mounts": [
+                    {
+                        "source": "/Users/demo/Documents",
+                        "target": "/workspace/input",
+                        "read_only": True,
+                    }
+                ],
             },
         )
 
@@ -269,13 +295,20 @@ def test_create_lima_recipe_records_secure_mode_provider_contract():
             "network_policy": {"allow_egress_hosts": []},
         },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Demo Analyst",
-        workstation={"hostname": "secure-host", "os_family": "macOS", "architecture": "arm64", "fingerprint": "secure-fp"},
+        workstation={
+            "hostname": "secure-host",
+            "os_family": "macOS",
+            "architecture": "arm64",
+            "fingerprint": "secure-fp",
+        },
         launch_mode="simulated",
         acknowledge_sensitive=False,
     )
@@ -307,7 +340,9 @@ def test_launch_run_transfers_artifact_inputs_into_workspace():
             environment="production",
             criticality="high",
             business_criticality="high",
-            installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+            installed_software=[
+                {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+            ],
         )
     )
     session.commit()
@@ -339,13 +374,20 @@ def test_launch_run_transfers_artifact_inputs_into_workspace():
             ],
         },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Artifact Owner",
-        workstation={"hostname": "artifact-mbp", "os_family": "macOS", "architecture": "arm64", "fingerprint": "artifact-fp"},
+        workstation={
+            "hostname": "artifact-mbp",
+            "os_family": "macOS",
+            "architecture": "arm64",
+            "fingerprint": "artifact-fp",
+        },
         launch_mode="simulated",
         acknowledge_sensitive=False,
     )
@@ -402,13 +444,20 @@ def test_review_queue_surfaces_sensitive_evidence_and_bundle_blockers():
             "collectors": ["process_tree", "pcap"],
         },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Demo Analyst",
-        workstation={"hostname": "queue-host", "os_family": "macOS", "architecture": "arm64", "fingerprint": "queue-fp"},
+        workstation={
+            "hostname": "queue-host",
+            "os_family": "macOS",
+            "architecture": "arm64",
+            "fingerprint": "queue-fp",
+        },
         launch_mode="simulated",
         acknowledge_sensitive=False,
     )
@@ -425,5 +474,11 @@ def test_review_queue_surfaces_sensitive_evidence_and_bundle_blockers():
 
     queue = service.list_review_queue(tenant)
     attention_queue = service.list_review_queue(tenant, needs_attention=True)
-    assert any(item["entity_type"] == "evidence" and "sensitive_evidence" in item["blocking_reasons"] for item in attention_queue["items"])
-    assert any(item["entity_type"] == "bundle" and item["entity_id"] == bundle["id"] for item in queue["items"])
+    assert any(
+        item["entity_type"] == "evidence" and "sensitive_evidence" in item["blocking_reasons"]
+        for item in attention_queue["items"]
+    )
+    assert any(
+        item["entity_type"] == "bundle" and item["entity_id"] == bundle["id"]
+        for item in queue["items"]
+    )

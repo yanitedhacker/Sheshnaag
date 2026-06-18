@@ -10,10 +10,9 @@ For production with multiple instances, consider using Redis-based rate limiting
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime, timedelta
 
-from fastapi import Request, HTTPException, status
+from fastapi import HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +25,7 @@ class RateLimiter:
     """
 
     def __init__(
-        self,
-        requests_per_minute: int = 60,
-        requests_per_hour: int = 1000,
-        burst_limit: int = 10
+        self, requests_per_minute: int = 60, requests_per_hour: int = 1000, burst_limit: int = 10
     ):
         """
         Initialize rate limiter.
@@ -44,11 +40,11 @@ class RateLimiter:
         self.burst_limit = burst_limit
 
         # Storage: IP -> list of request timestamps
-        self.requests: Dict[str, List[datetime]] = defaultdict(list)
+        self.requests: dict[str, list[datetime]] = defaultdict(list)
         self._lock = asyncio.Lock()
 
         # Cleanup interval
-        self._last_cleanup = datetime.now(timezone.utc)
+        self._last_cleanup = datetime.now(UTC)
         self._cleanup_interval = timedelta(minutes=5)
 
     async def check(self, request: Request) -> None:
@@ -62,7 +58,7 @@ class RateLimiter:
             HTTPException: If rate limit exceeded
         """
         client_ip = self._get_client_ip(request)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         async with self._lock:
             # Periodic cleanup
@@ -86,7 +82,7 @@ class RateLimiter:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Too many requests. Please slow down.",
-                    headers={"Retry-After": "1"}
+                    headers={"Retry-After": "1"},
                 )
 
             # Check per-minute limit
@@ -97,7 +93,7 @@ class RateLimiter:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Rate limit exceeded. Try again in a minute.",
-                    headers={"Retry-After": "60"}
+                    headers={"Retry-After": "60"},
                 )
 
             # Check per-hour limit
@@ -106,7 +102,7 @@ class RateLimiter:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Hourly rate limit exceeded. Try again later.",
-                    headers={"Retry-After": "3600"}
+                    headers={"Retry-After": "3600"},
                 )
 
             # Record this request
@@ -140,7 +136,7 @@ class RateLimiter:
 
     async def _cleanup_old_requests(self) -> None:
         """Remove old request records to prevent memory growth."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+        cutoff = datetime.now(UTC) - timedelta(hours=1)
         empty_ips = []
 
         for ip, times in self.requests.items():
@@ -155,7 +151,7 @@ class RateLimiter:
         if empty_ips:
             logger.debug(f"Cleaned up rate limit records for {len(empty_ips)} IPs")
 
-    def get_remaining(self, request: Request) -> Dict[str, int]:
+    def get_remaining(self, request: Request) -> dict[str, int]:
         """
         Get remaining request allowance for a client.
 
@@ -166,7 +162,7 @@ class RateLimiter:
             Dict with remaining requests per window
         """
         client_ip = self._get_client_ip(request)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         request_times = self.requests.get(client_ip, [])
 
         one_minute_ago = now - timedelta(minutes=1)
@@ -179,16 +175,12 @@ class RateLimiter:
             "remaining_per_minute": max(0, self.requests_per_minute - minute_count),
             "remaining_per_hour": max(0, self.requests_per_hour - hour_count),
             "limit_per_minute": self.requests_per_minute,
-            "limit_per_hour": self.requests_per_hour
+            "limit_per_hour": self.requests_per_hour,
         }
 
 
 # Default rate limiter instance
-rate_limiter = RateLimiter(
-    requests_per_minute=100,
-    requests_per_hour=2000,
-    burst_limit=20
-)
+rate_limiter = RateLimiter(requests_per_minute=100, requests_per_hour=2000, burst_limit=20)
 
 
 # Whitelist for IPs that bypass rate limiting (e.g., monitoring)

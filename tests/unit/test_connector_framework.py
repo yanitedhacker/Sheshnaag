@@ -20,7 +20,9 @@ from app.ingestion.feed_aggregator import FeedAggregator
 
 
 def _make_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine)()
 
@@ -49,6 +51,7 @@ class _StubConnector(FeedConnector):
 
 
 # ---- Registry tests --------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_builtin_connectors_are_registered():
@@ -84,6 +87,7 @@ def test_register_connector_requires_name():
 
 # ---- Aggregator invocation order -------------------------------------------
 
+
 @pytest.mark.unit
 def test_aggregator_iterates_all_connectors():
     stub1 = _StubConnector()
@@ -105,9 +109,7 @@ def test_aggregator_sync_connector_uses_state():
     session = _make_session()
     aggregator = FeedAggregator(session, connectors=[stub])
 
-    result = asyncio.get_event_loop().run_until_complete(
-        aggregator.sync_connector("__test_stub__")
-    )
+    result = asyncio.get_event_loop().run_until_complete(aggregator.sync_connector("__test_stub__"))
     assert result.items_fetched == 3
     assert result.items_new == 2
     assert stub.call_count == 1

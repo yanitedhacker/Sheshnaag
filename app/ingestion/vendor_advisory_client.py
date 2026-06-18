@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-NormalizedAdvisory = Dict[str, Any]
+NormalizedAdvisory = dict[str, Any]
 """
 Expected shape:
 {
@@ -54,7 +54,7 @@ class VendorAdvisoryParser(ABC):
         """Return the canonical lowercase vendor identifier."""
 
     @abstractmethod
-    def parse(self, raw_data: dict) -> List[NormalizedAdvisory]:
+    def parse(self, raw_data: dict) -> list[NormalizedAdvisory]:
         """Normalise raw upstream data into a list of advisory dicts."""
 
 
@@ -67,17 +67,17 @@ class VendorAdvisoryRegistry:
     """Manual registry mapping vendor names to parser instances."""
 
     def __init__(self) -> None:
-        self._parsers: Dict[str, VendorAdvisoryParser] = {}
+        self._parsers: dict[str, VendorAdvisoryParser] = {}
 
     def register(self, parser: VendorAdvisoryParser) -> None:
         name = parser.vendor_name()
         self._parsers[name] = parser
         logger.debug("Registered vendor advisory parser: %s", name)
 
-    def get(self, vendor: str) -> Optional[VendorAdvisoryParser]:
+    def get(self, vendor: str) -> VendorAdvisoryParser | None:
         return self._parsers.get(vendor)
 
-    def all_parsers(self) -> Dict[str, VendorAdvisoryParser]:
+    def all_parsers(self) -> dict[str, VendorAdvisoryParser]:
         return dict(self._parsers)
 
 
@@ -92,7 +92,7 @@ default_registry = VendorAdvisoryRegistry()
 # Example parser for testing / reference
 # ---------------------------------------------------------------------------
 
-EXAMPLE_FIXTURE: Dict[str, Any] = {
+EXAMPLE_FIXTURE: dict[str, Any] = {
     "id": "EX-2025-001",
     "title": "Example Widget RCE",
     "description": "A remote code execution in Example Widget <=2.3.0",
@@ -112,8 +112,8 @@ class ExampleVendorParser(VendorAdvisoryParser):
     def vendor_name(self) -> str:
         return "example_vendor"
 
-    def parse(self, raw_data: dict) -> List[NormalizedAdvisory]:
-        published_at: Optional[datetime] = None
+    def parse(self, raw_data: dict) -> list[NormalizedAdvisory]:
+        published_at: datetime | None = None
         if raw_data.get("date"):
             try:
                 published_at = datetime.fromisoformat(raw_data["date"])

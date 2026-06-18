@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -43,17 +43,17 @@ class PendingAuthorizationRequest(BaseModel):
     action_arguments: dict[str, Any]
     requester: str = "ui"
     reason: str = Field(min_length=4, max_length=2000)
-    requested_ttl_seconds: Optional[int] = Field(
+    requested_ttl_seconds: int | None = Field(
         default=None,
         gt=0,
         le=31_536_000,
     )
-    engagement_ref: Optional[str] = None
+    engagement_ref: str | None = None
 
 
 class AuthorizationDecisionRequest(BaseModel):
     decision: str
-    note: Optional[str] = Field(default=None, max_length=2000)
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class RevokeRequest(BaseModel):
@@ -141,8 +141,8 @@ def _raise_workflow_http(exc: AuthorizationWorkflowError) -> None:
 
 @router.get("")
 def list_authorizations(
-    capability: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
+    capability: str | None = Query(None),
+    state: str | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
@@ -299,7 +299,7 @@ def authorization_chain_root(
 
 @router.get("/chain/verify")
 def authorization_chain_verify(
-    since: Optional[int] = Query(None),
+    since: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):

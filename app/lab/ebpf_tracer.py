@@ -23,7 +23,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +37,19 @@ class EbpfTracer:
         self,
         *,
         backend: str = "auto",
-        config_path: Optional[str] = None,
+        config_path: str | None = None,
     ) -> None:
         if backend not in _SUPPORTED_BACKENDS:
             raise ValueError(f"backend must be one of {_SUPPORTED_BACKENDS}, got {backend!r}")
         self.requested_backend = backend
         self.config_path = config_path
         self.backend, self._binary_path = self._resolve_backend(backend)
-        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._sessions: dict[str, dict[str, Any]] = {}
 
     # -- Backend resolution ---------------------------------------------------
 
     @staticmethod
-    def _tetragon_binary() -> Optional[str]:
+    def _tetragon_binary() -> str | None:
         override = os.environ.get("SHESHNAAG_TETRAGON_BIN")
         if override and os.path.exists(override):
             return override
@@ -58,7 +58,7 @@ class EbpfTracer:
         return shutil.which("tetra") or shutil.which("tetragon")
 
     @staticmethod
-    def _tracee_binary() -> Optional[str]:
+    def _tracee_binary() -> str | None:
         override = os.environ.get("SHESHNAAG_TRACEE_BIN")
         if override and os.path.exists(override):
             return override
@@ -67,7 +67,7 @@ class EbpfTracer:
         return shutil.which("tracee") or shutil.which("tracee-ebpf")
 
     @classmethod
-    def _resolve_backend(cls, backend: str) -> tuple[str, Optional[str]]:
+    def _resolve_backend(cls, backend: str) -> tuple[str, str | None]:
         if backend == "none":
             return "none", None
         if backend == "tetragon":
@@ -87,7 +87,7 @@ class EbpfTracer:
 
     # -- Health ---------------------------------------------------------------
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         return {
             "tool": "ebpf_tracer",
             "requested_backend": self.requested_backend,
@@ -100,7 +100,7 @@ class EbpfTracer:
 
     # -- Lifecycle ------------------------------------------------------------
 
-    def start(self, *, target: Dict[str, Any]) -> str:
+    def start(self, *, target: dict[str, Any]) -> str:
         """Start a tracing session bound to ``target``.
 
         ``target`` may contain any of::
@@ -120,7 +120,7 @@ class EbpfTracer:
         )
         events_path = events_file.name
         events_file.close()
-        session: Dict[str, Any] = {
+        session: dict[str, Any] = {
             "session_id": session_id,
             "backend": self.backend,
             "target": dict(target or {}),
@@ -167,7 +167,7 @@ class EbpfTracer:
         self._sessions[session_id] = session
         return session_id
 
-    def stop(self, session_id: str) -> List[Dict[str, Any]]:
+    def stop(self, session_id: str) -> list[dict[str, Any]]:
         """Terminate the session identified by ``session_id`` and parse events."""
         session = self._sessions.get(session_id)
         if session is None:
@@ -176,7 +176,7 @@ class EbpfTracer:
         if session.get("stopped"):
             return self._parse_events(session)
 
-        proc: Optional[subprocess.Popen] = session.get("proc")
+        proc: subprocess.Popen | None = session.get("proc")
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
@@ -219,7 +219,7 @@ class EbpfTracer:
 
     # -- Internals ------------------------------------------------------------
 
-    def _build_argv(self, target: Dict[str, Any]) -> List[str]:
+    def _build_argv(self, target: dict[str, Any]) -> list[str]:
         binary = self._binary_path
         if not binary:
             return []
@@ -250,12 +250,12 @@ class EbpfTracer:
             return argv
         return []
 
-    def _parse_events(self, session: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _parse_events(self, session: dict[str, Any]) -> list[dict[str, Any]]:
         events_path = session.get("events_path")
         if not events_path or not os.path.exists(events_path):
             return []
         try:
-            with open(events_path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(events_path, encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
         except OSError as exc:
             logger.warning("ebpf_tracer: failed to read %s: %s", events_path, exc)
@@ -263,7 +263,7 @@ class EbpfTracer:
         if not text.strip():
             return []
 
-        raw_events: List[Dict[str, Any]] = []
+        raw_events: list[dict[str, Any]] = []
         # Tetragon/Tracee both emit JSON-lines, but be tolerant of a single
         # JSON array too.
         stripped = text.strip()
@@ -293,7 +293,7 @@ class EbpfTracer:
         return [self._normalize_event(evt, backend) for evt in raw_events]
 
     @staticmethod
-    def _normalize_event(event: Dict[str, Any], backend: str) -> Dict[str, Any]:
+    def _normalize_event(event: dict[str, Any], backend: str) -> dict[str, Any]:
         """Canonicalize a raw event into the Sheshnaag timeline shape."""
         if backend == "tetragon":
             # Tetragon events look like {"process_kprobe": {...}, "node_name": ...}
@@ -311,7 +311,9 @@ class EbpfTracer:
                 "ts": body.get("time") or event.get("time"),
                 "pid": _coerce_int(proc.get("pid")),
                 "ppid": _coerce_int(parent.get("pid")),
-                "comm": proc.get("binary") or proc.get("exec_id") or proc.get("pod", {}).get("name"),
+                "comm": proc.get("binary")
+                or proc.get("exec_id")
+                or proc.get("pod", {}).get("name"),
                 "event_type": event_type,
                 "syscall": body.get("function_name"),
                 "args": body.get("args") or proc.get("arguments"),
@@ -349,7 +351,7 @@ class EbpfTracer:
         }
 
 
-def _coerce_int(value: Any) -> Optional[int]:
+def _coerce_int(value: Any) -> int | None:
     if value is None:
         return None
     try:

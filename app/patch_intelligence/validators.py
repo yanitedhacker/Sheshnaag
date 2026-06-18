@@ -20,4 +20,3 @@ def validate_non_negative_int(value: int) -> int:
     if v < 0:
         raise ValueError("Value must be non-negative")
     return v
-

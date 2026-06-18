@@ -173,9 +173,11 @@ def test_duplicate_advisory_updates_instead_of_inserting():
     session.flush()
     assert is_new_2 is False
 
-    count = session.query(AdvisoryRecord).filter(
-        AdvisoryRecord.external_id == "GHSA-ABCD-1234-EFGH"
-    ).count()
+    count = (
+        session.query(AdvisoryRecord)
+        .filter(AdvisoryRecord.external_id == "GHSA-ABCD-1234-EFGH")
+        .count()
+    )
     assert count == 1
 
 

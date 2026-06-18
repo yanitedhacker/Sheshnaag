@@ -15,9 +15,9 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.launchers.base import Launcher, LauncherResult
+from app.lab.launchers.base import LauncherResult
 
 _EMAIL_KINDS = frozenset({"email/eml", "email/msg", "email"})
 
@@ -31,7 +31,7 @@ class EmailLauncher:
     def _has_binary(self, name: str) -> bool:
         return shutil.which(name) is not None
 
-    def _exec(self, argv: List[str], *, timeout: int) -> subprocess.CompletedProcess:
+    def _exec(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess:
         return subprocess.run(
             argv,
             check=False,
@@ -40,13 +40,13 @@ class EmailLauncher:
             timeout=timeout,
         )
 
-    def _parse_attachments(self, eml_path: str, stage_dir: str) -> List[str]:
+    def _parse_attachments(self, eml_path: str, stage_dir: str) -> list[str]:
         try:
             with open(eml_path, "rb") as fh:
                 msg = email.message_from_binary_file(fh, policy=email.policy.default)
         except Exception:
             return []
-        attachments: List[str] = []
+        attachments: list[str] = []
         os.makedirs(stage_dir, exist_ok=True)
         for part in msg.walk():
             filename = part.get_filename()
@@ -79,9 +79,9 @@ class EmailLauncher:
         snapshot_snap: Any,
     ) -> LauncherResult:
         start = time.monotonic()
-        logs: List[str] = []
-        artifacts: List[str] = []
-        metadata: Dict[str, Any] = {"launcher": "email"}
+        logs: list[str] = []
+        artifacts: list[str] = []
+        metadata: dict[str, Any] = {"launcher": "email"}
 
         profile_cfg = getattr(profile, "config", {}) or {}
         timeout = int(profile_cfg.get("detonation_timeout_s", 45))

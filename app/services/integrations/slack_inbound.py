@@ -13,28 +13,22 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
-from typing import Mapping, Optional
+from collections.abc import Mapping
 
 from sqlalchemy.orm import Session
 
 from app.services.integrations._common import (
-    lookup_case_by_link,
     parse_mention,
     perform_transition,
     upsert_link,
 )
 
-
 _REPLAY_WINDOW_SECONDS = 60 * 5
 
 
 def verify_signature(headers: Mapping[str, str], body: bytes, secret: str) -> bool:
-    timestamp = headers.get("x-slack-request-timestamp") or headers.get(
-        "X-Slack-Request-Timestamp"
-    )
-    signature = headers.get("x-slack-signature") or headers.get(
-        "X-Slack-Signature"
-    )
+    timestamp = headers.get("x-slack-request-timestamp") or headers.get("X-Slack-Request-Timestamp")
+    signature = headers.get("x-slack-signature") or headers.get("X-Slack-Signature")
     if not timestamp or not signature or not secret:
         return False
     try:
@@ -44,15 +38,13 @@ def verify_signature(headers: Mapping[str, str], body: bytes, secret: str) -> bo
     if abs(time.time() - ts) > _REPLAY_WINDOW_SECONDS:
         return False
 
-    base = f"v0:{timestamp}:".encode("utf-8") + body
-    expected = (
-        "v0=" + hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
-    )
+    base = f"v0:{timestamp}:".encode() + body
+    expected = "v0=" + hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 
 
 def handle_event(
-    session: Session, event: dict, *, default_actor_roles: Optional[list[str]] = None
+    session: Session, event: dict, *, default_actor_roles: list[str] | None = None
 ) -> dict:
     """Process a parsed Slack event payload.
 

@@ -13,7 +13,6 @@ from app.ingestion.misp_connector import (
 )
 from app.ingestion.virustotal_connector import VirusTotalConnector, _vt_url_id
 
-
 SAMPLE_VT_FILE = {
     "data": {
         "id": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -45,6 +44,7 @@ def _mock_response(status_code: int = 200, json_body=None):
 # Health
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_health_false_without_api_key(monkeypatch):
     monkeypatch.delenv("VT_API_KEY", raising=False)
@@ -61,6 +61,7 @@ def test_health_true_with_api_key(monkeypatch):
 # fetch() shape
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_returns_empty_without_api_key(monkeypatch):
     monkeypatch.delenv("VT_API_KEY", raising=False)
@@ -76,7 +77,9 @@ def test_fetch_file_normalizes_stats():
     session.get.return_value = _mock_response(200, SAMPLE_VT_FILE)
     connector = VirusTotalConnector(api_key="vt-key", session=session)
 
-    record = connector.fetch_file("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    record = connector.fetch_file(
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
 
     assert record is not None
     assert record["source"] == "virustotal"
@@ -91,7 +94,9 @@ def test_fetch_file_normalizes_stats():
 
     call = session.get.call_args
     assert call.kwargs["headers"]["x-apikey"] == "vt-key"
-    assert call.args[0].endswith("/files/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    assert call.args[0].endswith(
+        "/files/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
 
 
 @pytest.mark.unit
@@ -147,6 +152,7 @@ def test_fetch_fans_out_over_iocs():
 # ---------------------------------------------------------------------------
 # Rate-limit & errors
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_retries_on_429_then_succeeds():
@@ -218,6 +224,7 @@ def test_fetch_handles_network_error():
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_virustotal_registered():

@@ -1,38 +1,44 @@
 """Database models."""
 
-from app.models.cve import CVE, CVEReference, AffectedProduct
-from app.models.exploit import Exploit
-from app.models.risk_score import RiskScore, RiskHistory
 from app.models.asset import Asset, AssetVulnerability
-from app.models.patch import Patch, AssetPatch, patch_cves
-from app.models.ops import FeedSyncRun, FeedSyncState, PatchDependency, PatchPlan, PatchPlanItem
-from app.models.v2 import (
-    AnalystFeedback,
-    AssetSoftware,
-    AttackTechnique,
-    CVEAttackTechnique,
-    DecisionAuditEvent,
-    EPSSSnapshot,
-    EvidenceItem,
-    ExposureGraphEdge,
-    ExposureGraphNode,
-    IdentityPrincipal,
-    KEVEntry,
-    KnowledgeChunk,
-    KnowledgeDocument,
-    NetworkExposure,
-    PatchApproval,
-    Service,
-    SimulationRun,
-    SoftwareComponent,
-    Tenant,
-    TenantMembership,
-    TenantUser,
-    VexStatement,
+from app.models.capability import (
+    AuditLogEntry,
+    AuthorizationArtifact,
+    AuthorizationDecisionRecord,
+    AuthorizationRequestRecord,
 )
+from app.models.cve import CVE, AffectedProduct, CVEReference
+from app.models.embeddings import (
+    VECTOR_DIM,
+    KnowledgeChunkEmbedding,
+    SpecimenBehaviorEmbedding,
+    VectorOrJSON,
+)
+from app.models.exploit import Exploit
+from app.models.integrations import CaseIntegrationLink
+from app.models.malware_lab import (
+    AISession,
+    AnalysisCase,
+    BehaviorFinding,
+    CaseFieldSchema,
+    CaseStateTransition,
+    DefangAction,
+    IndicatorArtifact,
+    MalwareReport,
+    PreventionArtifact,
+    SandboxProfile,
+    ScopePolicy,
+    Specimen,
+    SpecimenRevision,
+)
+from app.models.oidc import OidcProvider
+from app.models.ops import FeedSyncRun, FeedSyncState, PatchDependency, PatchPlan, PatchPlanItem
+from app.models.patch import AssetPatch, Patch, patch_cves
+from app.models.rbac import Permission, Role, RolePermission
+from app.models.risk_score import RiskHistory, RiskScore
 from app.models.sheshnaag import (
-    AdvisoryRecord,
     AdvisoryPackageLink,
+    AdvisoryRecord,
     AnalystIdentity,
     AttestationRecord,
     CandidateScoreRecalculationRun,
@@ -59,41 +65,35 @@ from app.models.sheshnaag import (
     VersionRange,
     WorkstationFingerprint,
 )
-from app.models.malware_lab import (
-    AISession,
-    AnalysisCase,
-    BehaviorFinding,
-    CaseFieldSchema,
-    CaseStateTransition,
-    DefangAction,
-    IndicatorArtifact,
-    MalwareReport,
-    PreventionArtifact,
-    SandboxProfile,
-    ScopePolicy,
-    Specimen,
-    SpecimenRevision,
+from app.models.v2 import (
+    AnalystFeedback,
+    AssetSoftware,
+    AttackTechnique,
+    CVEAttackTechnique,
+    DecisionAuditEvent,
+    EPSSSnapshot,
+    EvidenceItem,
+    ExposureGraphEdge,
+    ExposureGraphNode,
+    IdentityPrincipal,
+    KEVEntry,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    NetworkExposure,
+    PatchApproval,
+    Service,
+    SimulationRun,
+    SoftwareComponent,
+    Tenant,
+    TenantMembership,
+    TenantUser,
+    VexStatement,
 )
-from app.models.embeddings import (
-    KnowledgeChunkEmbedding,
-    SpecimenBehaviorEmbedding,
-    VectorOrJSON,
-    VECTOR_DIM,
-)
-from app.models.capability import (
-    AuditLogEntry,
-    AuthorizationArtifact,
-    AuthorizationDecisionRecord,
-    AuthorizationRequestRecord,
-)
-from app.models.rbac import Permission, Role, RolePermission
 from app.models.worker_pool import Worker, WorkerCaKey, WorkerEnrollmentToken
-from app.models.oidc import OidcProvider
-from app.models.integrations import CaseIntegrationLink
 
 __all__ = [
     "CVE",
-    "CVEReference", 
+    "CVEReference",
     "AffectedProduct",
     "Exploit",
     "RiskScore",

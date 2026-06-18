@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import redis
 
@@ -12,17 +12,19 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_redis_client: Optional[redis.Redis] = None
+_redis_client: redis.Redis | None = None
 
 
-def get_redis_client() -> Optional[redis.Redis]:
+def get_redis_client() -> redis.Redis | None:
     """Return a Redis client when available, otherwise None."""
     global _redis_client
     if _redis_client is not None:
         return _redis_client
 
     try:
-        _redis_client = redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1)
+        _redis_client = redis.from_url(
+            settings.redis_url, socket_connect_timeout=1, socket_timeout=1
+        )
         _redis_client.ping()
         return _redis_client
     except Exception as exc:  # pragma: no cover - depends on runtime infra
@@ -31,7 +33,7 @@ def get_redis_client() -> Optional[redis.Redis]:
         return None
 
 
-def cache_get_json(key: str) -> Optional[Any]:
+def cache_get_json(key: str) -> Any | None:
     """Fetch cached JSON payload."""
     client = get_redis_client()
     if client is None:

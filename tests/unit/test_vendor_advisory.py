@@ -158,7 +158,7 @@ class _SecondVendorParser(VendorAdvisoryParser):
     def vendor_name(self) -> str:
         return "second_vendor"
 
-    def parse(self, raw_data: dict) -> List[NormalizedAdvisory]:
+    def parse(self, raw_data: dict) -> list[NormalizedAdvisory]:
         return [
             {
                 "vendor": self.vendor_name(),

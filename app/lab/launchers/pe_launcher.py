@@ -19,10 +19,9 @@ import os
 import shutil
 import subprocess
 import time
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.launchers.base import Launcher, LauncherResult
+from app.lab.launchers.base import LauncherResult
 
 # PE-ish specimen kinds. We accept the legacy ``file`` kind too because
 # the V3 schema stores all binary specimens as ``file`` and leans on
@@ -57,7 +56,7 @@ class PeLauncher:
     def _has_binary(self, name: str) -> bool:
         return shutil.which(name) is not None
 
-    def _exec(self, argv: List[str], *, timeout: int) -> subprocess.CompletedProcess:
+    def _exec(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess:
         return subprocess.run(
             argv,
             check=False,
@@ -78,12 +77,16 @@ class PeLauncher:
         snapshot_snap: Any,
     ) -> LauncherResult:
         start = time.monotonic()
-        logs: List[str] = []
-        artifacts: List[str] = []
-        metadata: Dict[str, Any] = {"launcher": "pe"}
+        logs: list[str] = []
+        artifacts: list[str] = []
+        metadata: dict[str, Any] = {"launcher": "pe"}
 
-        duration_target = int((getattr(profile, "config", {}) or {}).get("detonation_timeout_s", 120))
-        guest_name = (getattr(profile, "config", {}) or {}).get("vm_name", "sheshnaag-win-detonation")
+        duration_target = int(
+            (getattr(profile, "config", {}) or {}).get("detonation_timeout_s", 120)
+        )
+        guest_name = (getattr(profile, "config", {}) or {}).get(
+            "vm_name", "sheshnaag-win-detonation"
+        )
 
         pcap_path = os.path.join(quarantine_path, f"run-{getattr(run, 'id', 'x')}.pcap")
         memdump_path = os.path.join(quarantine_path, f"run-{getattr(run, 'id', 'x')}.mem")
@@ -100,12 +103,13 @@ class PeLauncher:
                     "-U",
                     (getattr(profile, "config", {}) or {}).get("guest_creds", "Analyst%analyst"),
                     f"//{guest_name}",
-                    f"cmd.exe /c \"C:\\\\stage\\\\{os.path.basename(specimen_ref)}\"",
+                    f'cmd.exe /c "C:\\\\stage\\\\{os.path.basename(specimen_ref)}"',
                 ]
             elif self._has_binary("psexec.py"):
                 exec_argv = [
                     "psexec.py",
-                    (getattr(profile, "config", {}) or {}).get("guest_creds", "Analyst:analyst") + f"@{guest_name}",
+                    (getattr(profile, "config", {}) or {}).get("guest_creds", "Analyst:analyst")
+                    + f"@{guest_name}",
                     f"C:\\stage\\{os.path.basename(specimen_ref)}",
                 ]
             else:

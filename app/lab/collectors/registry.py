@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Type
-
-from app.lab.interfaces import Collector
-
 from app.lab.collectors.falco_collector import FalcoEventsCollector
 from app.lab.collectors.file_diff import FileDiffCollector
 from app.lab.collectors.network_metadata import NetworkMetadataCollector
@@ -17,8 +13,9 @@ from app.lab.collectors.service_logs import ServiceLogsCollector
 from app.lab.collectors.synthetic import SyntheticCollector
 from app.lab.collectors.tetragon_collector import TetragonEventsCollector
 from app.lab.collectors.tracee_collector import TraceeEventsCollector
+from app.lab.interfaces import Collector
 
-COLLECTOR_REGISTRY: Dict[str, Type[Collector]] = {
+COLLECTOR_REGISTRY: dict[str, type[Collector]] = {
     "process_tree": ProcessTreeCollector,
     "package_inventory": PackageInventoryCollector,
     "file_diff": FileDiffCollector,
@@ -32,10 +29,10 @@ COLLECTOR_REGISTRY: Dict[str, Type[Collector]] = {
 }
 
 
-def instantiate_collectors(names: List[str]) -> List[Collector]:
+def instantiate_collectors(names: list[str]) -> list[Collector]:
     """Build collector instances in recipe order (dedupe by first occurrence)."""
     seen: set[str] = set()
-    out: List[Collector] = []
+    out: list[Collector] = []
     for name in names:
         if name in seen:
             continue
@@ -54,7 +51,7 @@ def instantiate_collectors(names: List[str]) -> List[Collector]:
     return out
 
 
-def default_collectors() -> List[Collector]:
+def default_collectors() -> list[Collector]:
     """Backward-compatible default set (recipe defaults mirror this list)."""
     default_names = [
         "process_tree",

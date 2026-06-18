@@ -9,14 +9,16 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.time import utc_now
 from app.lab.image_catalog import resolve_catalog_entry
 from app.lab.interfaces import HealthStatus, LabProvider, ProviderResult, RunState
 
 LIMA_WORKSPACE_ROOT = Path(os.environ.get("SHESHNAAG_LIMA_WORKSPACE_ROOT", "/tmp/sheshnaag-lima"))
-LIMA_TEMPLATE_PATH = os.environ.get("SHESHNAAG_LIMA_TEMPLATE_PATH", "templates/lima/sheshnaag-default.yaml")
+LIMA_TEMPLATE_PATH = os.environ.get(
+    "SHESHNAAG_LIMA_TEMPLATE_PATH", "templates/lima/sheshnaag-default.yaml"
+)
 
 
 class LimaProvider(LabProvider):
@@ -26,9 +28,11 @@ class LimaProvider(LabProvider):
     is_active = True
 
     def __init__(self) -> None:
-        self._instances: Dict[str, Dict[str, Any]] = {}
+        self._instances: dict[str, dict[str, Any]] = {}
 
-    def build_plan(self, *, revision_content: Dict[str, Any], run_context: Dict[str, Any]) -> Dict[str, Any]:
+    def build_plan(
+        self, *, revision_content: dict[str, Any], run_context: dict[str, Any]
+    ) -> dict[str, Any]:
         collectors = revision_content.get("collectors", []) or []
         execution_policy = revision_content.get("execution_policy") or {}
         catalog_entry = resolve_catalog_entry(
@@ -71,8 +75,10 @@ class LimaProvider(LabProvider):
             },
             "execution_policy": {
                 "secure_mode_required": True,
-                "preferred_provider": execution_policy.get("preferred_provider") or self.provider_name,
-                "allowed_modes": execution_policy.get("allowed_modes") or ["dry_run", "simulated", "execute"],
+                "preferred_provider": execution_policy.get("preferred_provider")
+                or self.provider_name,
+                "allowed_modes": execution_policy.get("allowed_modes")
+                or ["dry_run", "simulated", "execute"],
             },
             "workspace_sync": {
                 "mode": "host-to-guest-staging",
@@ -124,7 +130,9 @@ class LimaProvider(LabProvider):
             },
         }
 
-    def launch(self, *, revision_content: Dict[str, Any], run_context: Dict[str, Any]) -> ProviderResult:
+    def launch(
+        self, *, revision_content: dict[str, Any], run_context: dict[str, Any]
+    ) -> ProviderResult:
         plan = self.build_plan(revision_content=revision_content, run_context=run_context)
         launch_mode = run_context.get("launch_mode") or "simulated"
         if launch_mode == "dry_run":
@@ -149,7 +157,7 @@ class LimaProvider(LabProvider):
             return created
         return self.boot(provider_run_ref=created.provider_run_ref)
 
-    def create(self, *, plan: Dict[str, Any], run_context: Dict[str, Any]) -> ProviderResult:
+    def create(self, *, plan: dict[str, Any], run_context: dict[str, Any]) -> ProviderResult:
         provider_run_ref = self._generate_run_ref()
         workspace = self._workspace_for_ref(provider_run_ref)
         workspace.mkdir(parents=True, exist_ok=True)
@@ -262,13 +270,17 @@ class LimaProvider(LabProvider):
             snapshot_audit["booted_snapshot_ref"] = f"{provider_run_ref}:booted"
             secure_audit["snapshot_revert_audit"] = snapshot_audit
             plan["secure_mode_audit"] = secure_audit
-            self._record_lifecycle_event(plan, event="booted", detail=f"instance {instance_name} booted")
+            self._record_lifecycle_event(
+                plan, event="booted", detail=f"instance {instance_name} booted"
+            )
             ready_code, ready_out, ready_err = self._guest_shell(
                 instance_name,
                 "test -d /workspace && echo ready",
                 timeout=30,
             )
-            readiness_state = "ready" if ready_code == 0 and "ready" in (ready_out or "") else "degraded"
+            readiness_state = (
+                "ready" if ready_code == 0 and "ready" in (ready_out or "") else "degraded"
+            )
             self._record_lifecycle_event(
                 plan,
                 event="readiness_check",
@@ -292,8 +304,12 @@ class LimaProvider(LabProvider):
                         if execute["exit_code"] == 0
                         else f"Lima guest command failed in {instance_name}: {execute['stderr'][:400]}"
                     ),
-                    health=HealthStatus.READY if execute["exit_code"] == 0 else HealthStatus.ERRORED,
-                    error=None if execute["exit_code"] == 0 else execute["stderr"][:1000] or "execute_failed",
+                    health=HealthStatus.READY
+                    if execute["exit_code"] == 0
+                    else HealthStatus.ERRORED,
+                    error=None
+                    if execute["exit_code"] == 0
+                    else execute["stderr"][:1000] or "execute_failed",
                 )
             return ProviderResult(
                 state=RunState.RUNNING,
@@ -377,9 +393,17 @@ class LimaProvider(LabProvider):
         instance_name = plan.get("instance_name")
         if instance_name and shutil.which("limactl"):
             try:
-                subprocess.run(["limactl", "stop", instance_name], check=True, capture_output=True, text=True, timeout=90)
+                subprocess.run(
+                    ["limactl", "stop", instance_name],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
                 plan["guest_status"] = "stopped"
-                self._record_lifecycle_event(plan, event="stopped", detail=f"instance {instance_name} stopped")
+                self._record_lifecycle_event(
+                    plan, event="stopped", detail=f"instance {instance_name} stopped"
+                )
             except (subprocess.SubprocessError, OSError) as exc:
                 self._record_lifecycle_event(plan, event="stop_failed", detail=str(exc))
                 return ProviderResult(
@@ -421,7 +445,9 @@ class LimaProvider(LabProvider):
                 "snapshot_refs": plan.get("snapshot_refs") or {},
             }
         )
-        plan.setdefault("workspace_sync", {})["status"] = "retained" if retain_workspace else "removed"
+        plan.setdefault("workspace_sync", {})["status"] = (
+            "retained" if retain_workspace else "removed"
+        )
         plan["guest_status"] = "destroyed"
         secure_audit = dict(plan.get("secure_mode_audit") or {})
         snapshot_audit = dict(secure_audit.get("snapshot_revert_audit") or {})
@@ -458,8 +484,16 @@ class LimaProvider(LabProvider):
         instance_name = plan.get("instance_name")
         if instance_name and shutil.which("limactl"):
             try:
-                subprocess.run(["limactl", "delete", "-f", instance_name], check=True, capture_output=True, text=True, timeout=90)
-                self._record_lifecycle_event(plan, event="deleted", detail=f"instance {instance_name} deleted")
+                subprocess.run(
+                    ["limactl", "delete", "-f", instance_name],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+                self._record_lifecycle_event(
+                    plan, event="deleted", detail=f"instance {instance_name} deleted"
+                )
             except (subprocess.SubprocessError, OSError):
                 pass
         result = self.teardown(provider_run_ref=provider_run_ref, retain_workspace=False)
@@ -470,15 +504,17 @@ class LimaProvider(LabProvider):
         self,
         *,
         provider_run_ref: str,
-        artifacts: List[Dict[str, Any]],
+        artifacts: list[dict[str, Any]],
         workspace_path: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         os.makedirs(workspace_path, exist_ok=True)
-        transfers: List[Dict[str, Any]] = []
+        transfers: list[dict[str, Any]] = []
         for artifact in artifacts:
             src = str(artifact.get("source_path") or "")
             if not src or not os.path.isfile(src):
-                transfers.append({"name": artifact.get("name"), "status": "missing", "error": "source not found"})
+                transfers.append(
+                    {"name": artifact.get("name"), "status": "missing", "error": "source not found"}
+                )
                 continue
             name = str(artifact.get("name") or os.path.basename(src))
             destination = str(artifact.get("destination") or f"/workspace/{name}")
@@ -498,7 +534,7 @@ class LimaProvider(LabProvider):
             )
         return {"provider_run_ref": provider_run_ref, "transfers": transfers}
 
-    def _provider_readiness(self, *, template_path: str) -> Dict[str, Any]:
+    def _provider_readiness(self, *, template_path: str) -> dict[str, Any]:
         limactl_available = shutil.which("limactl") is not None
         template_exists = Path(template_path).exists()
         workspace_ready = self._safe_workspace_root_ready()
@@ -518,12 +554,16 @@ class LimaProvider(LabProvider):
             {
                 "name": "template",
                 "status": "ready" if template_exists else "degraded",
-                "detail": f"Lima template {template_path} found." if template_exists else f"Lima template {template_path} is missing; simulated mode still works.",
+                "detail": f"Lima template {template_path} found."
+                if template_exists
+                else f"Lima template {template_path} is missing; simulated mode still works.",
             },
             {
                 "name": "workspace_root",
                 "status": "ready" if workspace_ready else "unavailable",
-                "detail": f"Lima workspace root {LIMA_WORKSPACE_ROOT} is writable." if workspace_ready else f"Lima workspace root {LIMA_WORKSPACE_ROOT} is not writable.",
+                "detail": f"Lima workspace root {LIMA_WORKSPACE_ROOT} is writable."
+                if workspace_ready
+                else f"Lima workspace root {LIMA_WORKSPACE_ROOT} is not writable.",
             },
         ]
         statuses = {item["status"] for item in checks}
@@ -544,9 +584,9 @@ class LimaProvider(LabProvider):
     @staticmethod
     def _collector_capabilities(
         *,
-        collectors: List[str],
-        tooling_profile: Dict[str, Any] | None = None,
-    ) -> List[Dict[str, Any]]:
+        collectors: list[str],
+        tooling_profile: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         selected = set(collectors or [])
         tooling_profile = tooling_profile or {}
         pcap_enabled = os.environ.get("SHESHNAAG_ENABLE_PCAP", "").strip().lower() in {
@@ -598,7 +638,12 @@ class LimaProvider(LabProvider):
                 "Requires a Tracee-capable secure image profile with tracee installed in the guest.",
                 ["tracee"],
             ),
-            "falco_events": ("extended", "degraded", "Deferred in v2; capability reporting only.", ["falco"]),
+            "falco_events": (
+                "extended",
+                "degraded",
+                "Deferred in v2; capability reporting only.",
+                ["falco"],
+            ),
             "tetragon_events": (
                 "extended",
                 "degraded",
@@ -654,12 +699,14 @@ class LimaProvider(LabProvider):
         if shutil.which("limactl") is None:
             return None
         try:
-            proc = subprocess.run(["limactl", "--version"], check=False, capture_output=True, text=True, timeout=15)
+            proc = subprocess.run(
+                ["limactl", "--version"], check=False, capture_output=True, text=True, timeout=15
+            )
             return (proc.stdout or proc.stderr or "").strip() or None
         except (subprocess.SubprocessError, OSError):
             return None
 
-    def _template_metadata(self, template_path: str) -> Dict[str, Any]:
+    def _template_metadata(self, template_path: str) -> dict[str, Any]:
         path = Path(template_path)
         return {
             "path": str(path),
@@ -667,7 +714,7 @@ class LimaProvider(LabProvider):
             "sha256": self._file_sha256(str(path)) if path.exists() else None,
         }
 
-    def _materialize_template(self, *, plan: Dict[str, Any], workspace: Path) -> str:
+    def _materialize_template(self, *, plan: dict[str, Any], workspace: Path) -> str:
         source_path = Path(plan.get("vm", {}).get("lima_yaml_template_path") or LIMA_TEMPLATE_PATH)
         generated_path = workspace / "sheshnaag-generated-lima.yaml"
         source_text = source_path.read_text() if source_path.exists() else ""
@@ -676,7 +723,7 @@ class LimaProvider(LabProvider):
         disk_gb = int((plan.get("vm") or {}).get("disk_gb") or 20)
         if source_text:
             lines = source_text.splitlines()
-            output: List[str] = []
+            output: list[str] = []
             inserted_mount = False
             for line in lines:
                 if line.startswith("cpus:"):
@@ -709,40 +756,47 @@ class LimaProvider(LabProvider):
                 )
             generated_text = "\n".join(output) + "\n"
         else:
-            generated_text = "\n".join(
-                [
-                    "images:",
-                    '  - location: "https://cloud-images.ubuntu.com/minimal/releases/24.04/release-20260331/ubuntu-24.04-minimal-cloudimg-amd64.img"',
-                    '    arch: "x86_64"',
-                    '  - location: "https://cloud-images.ubuntu.com/minimal/releases/24.04/release-20260331/ubuntu-24.04-minimal-cloudimg-arm64.img"',
-                    '    arch: "aarch64"',
-                    f"cpus: {cpu}",
-                    f'memory: "{memory_mb}MiB"',
-                    f'disk: "{disk_gb}GiB"',
-                    "mounts:",
-                    f'  - location: "{workspace}"',
-                    '    mountPoint: "/workspace"',
-                    "    writable: true",
-                    "provision:",
-                    "  - mode: system",
-                    "    script: |",
-                    "      #!/bin/sh",
-                    "      set -eu",
-                    "      apt-get update",
-                    "      apt-get install -y ca-certificates curl dnsutils findutils iproute2 jq net-tools nftables procps tcpdump",
-                ]
-            ) + "\n"
+            generated_text = (
+                "\n".join(
+                    [
+                        "images:",
+                        '  - location: "https://cloud-images.ubuntu.com/minimal/releases/24.04/release-20260331/ubuntu-24.04-minimal-cloudimg-amd64.img"',
+                        '    arch: "x86_64"',
+                        '  - location: "https://cloud-images.ubuntu.com/minimal/releases/24.04/release-20260331/ubuntu-24.04-minimal-cloudimg-arm64.img"',
+                        '    arch: "aarch64"',
+                        f"cpus: {cpu}",
+                        f'memory: "{memory_mb}MiB"',
+                        f'disk: "{disk_gb}GiB"',
+                        "mounts:",
+                        f'  - location: "{workspace}"',
+                        '    mountPoint: "/workspace"',
+                        "    writable: true",
+                        "provision:",
+                        "  - mode: system",
+                        "    script: |",
+                        "      #!/bin/sh",
+                        "      set -eu",
+                        "      apt-get update",
+                        "      apt-get install -y ca-certificates curl dnsutils findutils iproute2 jq net-tools nftables procps tcpdump",
+                    ]
+                )
+                + "\n"
+            )
         generated_path.write_text(generated_text)
         return str(generated_path)
 
-    def _guest_shell(self, instance_name: str, command: str, *, timeout: int = 120) -> tuple[int, str, str]:
+    def _guest_shell(
+        self, instance_name: str, command: str, *, timeout: int = 120
+    ) -> tuple[int, str, str]:
         return self._guest_argv(
             instance_name,
             ["/bin/sh", "-lc", command],
             timeout=timeout,
         )
 
-    def _guest_argv(self, instance_name: str, argv: List[str], *, timeout: int = 120) -> tuple[int, str, str]:
+    def _guest_argv(
+        self, instance_name: str, argv: list[str], *, timeout: int = 120
+    ) -> tuple[int, str, str]:
         try:
             proc = subprocess.run(
                 ["limactl", "shell", instance_name, "--", *argv],
@@ -756,9 +810,11 @@ class LimaProvider(LabProvider):
         except (subprocess.SubprocessError, OSError) as exc:
             return 1, "", str(exc)
 
-    def _execute_in_guest(self, *, plan: Dict[str, Any], instance_name: str) -> Dict[str, Any]:
+    def _execute_in_guest(self, *, plan: dict[str, Any], instance_name: str) -> dict[str, Any]:
         command = plan.get("command") or ["sleep", "1"]
-        command_text = command if isinstance(command, str) else shlex.join([str(part) for part in command])
+        command_text = (
+            command if isinstance(command, str) else shlex.join([str(part) for part in command])
+        )
         started_at = utc_now().isoformat()
         code, out, err = self._guest_shell(
             instance_name,
@@ -792,7 +848,13 @@ class LimaProvider(LabProvider):
         return result
 
     @staticmethod
-    def _record_lifecycle_event(plan: Dict[str, Any], *, event: str, detail: str | None = None, payload: Dict[str, Any] | None = None) -> None:
+    def _record_lifecycle_event(
+        plan: dict[str, Any],
+        *,
+        event: str,
+        detail: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
         secure_audit = dict(plan.get("secure_mode_audit") or {})
         lifecycle = list(secure_audit.get("lifecycle") or [])
         lifecycle.append(

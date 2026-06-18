@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
-
-from app.lab.interfaces import Collector
+from typing import Any
 
 from app.lab.collectors.common import (
     build_evidence_dict,
@@ -13,7 +11,12 @@ from app.lab.collectors.common import (
     synthetic_from_plan,
     utc_iso,
 )
-from app.lab.collectors.runtime import is_executable_guest_context, resolve_container_id, run_in_container
+from app.lab.collectors.runtime import (
+    is_executable_guest_context,
+    resolve_container_id,
+    run_in_container,
+)
+from app.lab.interfaces import Collector
 
 QUERIES = [
     "SELECT pid, name, path FROM processes LIMIT 200;",
@@ -26,8 +29,12 @@ class OsquerySnapshotCollector(Collector):
     collector_name = "osquery_snapshot"
     collector_version = "1.0.0"
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        if not is_executable_guest_context(run_context=run_context, provider_result=provider_result):
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        if not is_executable_guest_context(
+            run_context=run_context, provider_result=provider_result
+        ):
             return [
                 synthetic_from_plan(
                     collector_name=self.collector_name,
@@ -102,7 +109,7 @@ class OsquerySnapshotCollector(Collector):
                     collector_version=self.collector_version,
                 )
             ]
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         had_error = False
         for q in QUERIES:
             qc, qout, qerr = run_in_container(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.services.attack_mapper import TECHNIQUE_TACTICS, _ATTACK_BUNDLE_PATH
+from app.services.attack_mapper import _ATTACK_BUNDLE_PATH, TECHNIQUE_TACTICS
 
 
 def test_bundle_file_exists():
