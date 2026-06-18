@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from datetime import datetime
-from app.core.time import utc_now
-from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.core.time import utc_now
 from app.ingestion.feed_aggregator import FeedAggregator
 
 logger = logging.getLogger(__name__)
@@ -22,7 +19,7 @@ class FeedScheduler:
     """APScheduler wrapper to run feed sync jobs."""
 
     def __init__(self):
-        self.scheduler: Optional[AsyncIOScheduler] = None
+        self.scheduler: AsyncIOScheduler | None = None
 
     def start(self):
         if not settings.feed_scheduler_enabled:

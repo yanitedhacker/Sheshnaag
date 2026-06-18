@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -29,17 +28,17 @@ class VendorAdvisoryConnector(FeedConnector):
     supports_cursor = False
     default_freshness_seconds = 21600
 
-    def __init__(self, registry: Optional[VendorAdvisoryRegistry] = None) -> None:
+    def __init__(self, registry: VendorAdvisoryRegistry | None = None) -> None:
         self._registry = registry or default_registry
 
     async def fetch(
         self,
         session: Session,
         *,
-        since: Optional[datetime] = None,
-        cursor: Optional[str] = None,
+        since: datetime | None = None,
+        cursor: str | None = None,
         limit: int = 2000,
-        raw_batches: Optional[dict] = None,
+        raw_batches: dict | None = None,
     ) -> ConnectorResult:
         """Ingest vendor advisory data through registered parsers.
 

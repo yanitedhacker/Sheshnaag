@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 VALID_LAUNCH_MODES = {"dry_run", "simulated", "execute"}
 
@@ -38,7 +39,7 @@ class HealthStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
-VALID_TRANSITIONS: Dict[RunState, List[RunState]] = {
+VALID_TRANSITIONS: dict[RunState, list[RunState]] = {
     RunState.PLANNED: [RunState.BOOTING, RunState.BLOCKED, RunState.ERRORED],
     RunState.BOOTING: [RunState.READY, RunState.RUNNING, RunState.ERRORED, RunState.UNHEALTHY],
     RunState.READY: [RunState.RUNNING, RunState.STOPPING, RunState.ERRORED],
@@ -62,12 +63,12 @@ class ProviderResult:
         *,
         state: RunState,
         provider_run_ref: str,
-        plan: Optional[Dict[str, Any]] = None,
+        plan: dict[str, Any] | None = None,
         transcript: str = "",
-        container_id: Optional[str] = None,
+        container_id: str | None = None,
         health: HealthStatus = HealthStatus.UNKNOWN,
-        error: Optional[str] = None,
-        retry_after_seconds: Optional[int] = None,
+        error: str | None = None,
+        retry_after_seconds: int | None = None,
     ):
         self.state = state
         self.provider_run_ref = provider_run_ref
@@ -78,7 +79,7 @@ class ProviderResult:
         self.error = error
         self.retry_after_seconds = retry_after_seconds
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "state": self.state.value,
             "provider_run_ref": self.provider_run_ref,
@@ -96,13 +97,15 @@ def validate_transition(current: RunState, target: RunState) -> bool:
     return target in VALID_TRANSITIONS.get(current, [])
 
 
-def normalize_launch_mode(value: Optional[str]) -> str:
+def normalize_launch_mode(value: str | None) -> str:
     """Normalize launch-mode aliases to the canonical wire/storage contract."""
     normalized = (value or "simulated").strip().lower().replace("-", "_")
     if normalized == "live":
         return "execute"
     if normalized not in VALID_LAUNCH_MODES:
-        raise ValueError(f"Invalid launch mode '{value}'. Expected one of dry_run, simulated, execute.")
+        raise ValueError(
+            f"Invalid launch mode '{value}'. Expected one of dry_run, simulated, execute."
+        )
     return normalized
 
 
@@ -112,14 +115,18 @@ class LabProvider(ABC):
     provider_name: str = "unknown"
 
     @abstractmethod
-    def build_plan(self, *, revision_content: Dict[str, Any], run_context: Dict[str, Any]) -> Dict[str, Any]:
+    def build_plan(
+        self, *, revision_content: dict[str, Any], run_context: dict[str, Any]
+    ) -> dict[str, Any]:
         """Return a launch and safety plan for a run."""
 
     @abstractmethod
-    def launch(self, *, revision_content: Dict[str, Any], run_context: Dict[str, Any]) -> ProviderResult:
+    def launch(
+        self, *, revision_content: dict[str, Any], run_context: dict[str, Any]
+    ) -> ProviderResult:
         """Launch a run or return a simulated launch result."""
 
-    def create(self, *, plan: Dict[str, Any], run_context: Dict[str, Any]) -> ProviderResult:
+    def create(self, *, plan: dict[str, Any], run_context: dict[str, Any]) -> ProviderResult:
         """Allocate resources for a run without starting execution."""
         raise NotImplementedError(f"{self.provider_name} does not implement create")
 
@@ -147,9 +154,9 @@ class LabProvider(ABC):
         self,
         *,
         provider_run_ref: str,
-        artifacts: List[Dict[str, Any]],
+        artifacts: list[dict[str, Any]],
         workspace_path: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Copy input artifacts into the guest workspace and return checksums."""
         raise NotImplementedError(f"{self.provider_name} does not implement transfer_artifacts")
 
@@ -160,14 +167,16 @@ class Collector(ABC):
     collector_name: str = "unknown"
     collector_version: str = "0.0.0"
 
-    def pre_run(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> None:
+    def pre_run(self, *, run_context: dict[str, Any], provider_result: dict[str, Any]) -> None:
         """Optional hook before main collection (e.g. baseline snapshots)."""
 
-    def post_run(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> None:
+    def post_run(self, *, run_context: dict[str, Any], provider_result: dict[str, Any]) -> None:
         """Optional hook after main collection."""
 
     @abstractmethod
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Collect normalized evidence artifacts."""
 
 
@@ -175,7 +184,9 @@ class ArtifactGenerator(ABC):
     """Generate defensive artifacts from evidence."""
 
     @abstractmethod
-    def generate(self, *, run_context: Dict[str, Any], evidence: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    def generate(
+        self, *, run_context: dict[str, Any], evidence: Iterable[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Return generated defensive artifacts."""
 
 
@@ -183,5 +194,5 @@ class AttestationSigner(ABC):
     """Sign or attest run and bundle manifests."""
 
     @abstractmethod
-    def sign(self, *, payload: Dict[str, Any], signer: str) -> Dict[str, str]:
+    def sign(self, *, payload: dict[str, Any], signer: str) -> dict[str, str]:
         """Return attestation metadata for a payload."""

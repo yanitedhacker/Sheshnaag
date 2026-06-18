@@ -19,8 +19,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_URL = (
-    "https://raw.githubusercontent.com/mitre/cti/master/"
-    "enterprise-attack/enterprise-attack.json"
+    "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
 )
 
 
@@ -36,7 +35,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--url", default=DEFAULT_URL)
     parser.add_argument(
         "--output",
-        default=str(Path(__file__).resolve().parents[2] / "app" / "data" / "attack" / "enterprise-attack.json"),
+        default=str(
+            Path(__file__).resolve().parents[2]
+            / "app"
+            / "data"
+            / "attack"
+            / "enterprise-attack.json"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -83,7 +88,9 @@ def main(argv: list[str] | None = None) -> int:
         "source": args.url,
         "techniques": techniques,
     }
-    Path(args.output).write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    Path(args.output).write_text(
+        json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(f"[fetch_attack_data] wrote {len(techniques)} techniques to {args.output}")
     return 0
 

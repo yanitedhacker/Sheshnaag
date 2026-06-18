@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -32,8 +31,8 @@ def _sse(event: dict) -> str:
 def stream_run_events(
     run_id: int,
     last_id: str = "$",
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
@@ -43,11 +42,7 @@ def stream_run_events(
     tenant = resolve_tenant(
         session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False
     )
-    run = (
-        session.query(LabRun)
-        .filter(LabRun.id == run_id, LabRun.tenant_id == tenant.id)
-        .first()
-    )
+    run = session.query(LabRun).filter(LabRun.id == run_id, LabRun.tenant_id == tenant.id).first()
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
 

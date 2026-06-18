@@ -74,39 +74,41 @@ def app_and_session():
         )
         seed.add(case)
         seed.flush()
-        seed.add_all([
-            IndicatorArtifact(
-                tenant_id=tenant.id,
-                analysis_case_id=case.id,
-                indicator_kind="domain",
-                value="c2.evil.example.com",
-                confidence=0.9,
-            ),
-            IndicatorArtifact(
-                tenant_id=tenant.id,
-                analysis_case_id=case.id,
-                indicator_kind="ipv4",
-                value="198.51.100.42",
-                confidence=0.8,
-            ),
-            BehaviorFinding(
-                tenant_id=tenant.id,
-                analysis_case_id=case.id,
-                finding_type="network_c2",
-                title="Beacon to c2.evil.example.com",
-                severity="critical",
-                confidence=0.92,
-                payload={"attack_techniques": [{"technique_id": "T1071.001"}]},
-            ),
-            BehaviorFinding(
-                tenant_id=tenant.id,
-                analysis_case_id=case.id,
-                finding_type="persistence",
-                title="Cron job persistence noisy",
-                severity="medium",
-                confidence=0.6,
-            ),
-        ])
+        seed.add_all(
+            [
+                IndicatorArtifact(
+                    tenant_id=tenant.id,
+                    analysis_case_id=case.id,
+                    indicator_kind="domain",
+                    value="c2.evil.example.com",
+                    confidence=0.9,
+                ),
+                IndicatorArtifact(
+                    tenant_id=tenant.id,
+                    analysis_case_id=case.id,
+                    indicator_kind="ipv4",
+                    value="198.51.100.42",
+                    confidence=0.8,
+                ),
+                BehaviorFinding(
+                    tenant_id=tenant.id,
+                    analysis_case_id=case.id,
+                    finding_type="network_c2",
+                    title="Beacon to c2.evil.example.com",
+                    severity="critical",
+                    confidence=0.92,
+                    payload={"attack_techniques": [{"technique_id": "T1071.001"}]},
+                ),
+                BehaviorFinding(
+                    tenant_id=tenant.id,
+                    analysis_case_id=case.id,
+                    finding_type="persistence",
+                    title="Cron job persistence noisy",
+                    severity="medium",
+                    confidence=0.6,
+                ),
+            ]
+        )
         seed.commit()
         tenant_id = tenant.id
         case_id = case.id
@@ -178,14 +180,16 @@ def test_brief_service_generates_and_persists(app_and_session):
     with SessionLocal() as s:
         tenant = s.get(Tenant, tenant_id)
         # Drop a fresh autonomous run so the brief includes agent activity
-        s.add(AutonomousAgentRun(
-            tenant_id=tenant.id,
-            run_id="run_test_001",
-            goal="brief sanity",
-            status="completed",
-            actor="alice",
-            steps=[{"step": 1, "tool": "noop"}],
-        ))
+        s.add(
+            AutonomousAgentRun(
+                tenant_id=tenant.id,
+                run_id="run_test_001",
+                goal="brief sanity",
+                status="completed",
+                actor="alice",
+                steps=[{"step": 1, "tool": "noop"}],
+            )
+        )
         s.commit()
 
         row = BriefService(s).generate_brief(tenant, period_hours=48)
@@ -256,7 +260,8 @@ def test_stix_export_service_builds_valid_bundle(app_and_session):
     assert "report" in types
     # Domain indicator should have the right STIX pattern
     domain_ind = next(
-        o for o in bundle["objects"]
+        o
+        for o in bundle["objects"]
         if o["type"] == "indicator" and "c2.evil.example.com" in o["pattern"]
     )
     assert "domain-name:value" in domain_ind["pattern"]

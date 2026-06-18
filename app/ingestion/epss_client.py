@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -31,8 +31,8 @@ class EPSSClient:
         self._max_retries = max_retries
 
     async def fetch_scores(
-        self, *, date: Optional[str] = None, offset: int = 0, limit: int = 100
-    ) -> Dict[str, Any]:
+        self, *, date: str | None = None, offset: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
         """Fetch a page of EPSS scores with retry.
 
         Parameters
@@ -44,20 +44,20 @@ class EPSSClient:
         """
         import asyncio
 
-        params: Dict[str, Any] = {"offset": offset, "limit": limit}
+        params: dict[str, Any] = {"offset": offset, "limit": limit}
         if date:
             params["date"] = date
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, self._max_retries + 1):
             try:
-                async with aiohttp.ClientSession() as http:
-                    async with http.get(
-                        self._url, params=params, timeout=self._timeout
-                    ) as resp:
-                        resp.raise_for_status()
-                        return await resp.json(content_type=None)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                async with (
+                    aiohttp.ClientSession() as http,
+                    http.get(self._url, params=params, timeout=self._timeout) as resp,
+                ):
+                    resp.raise_for_status()
+                    return await resp.json(content_type=None)
+            except (TimeoutError, aiohttp.ClientError) as exc:
                 last_exc = exc
                 logger.warning(
                     "EPSS fetch attempt %d/%d failed: %s",
@@ -68,13 +68,11 @@ class EPSSClient:
                 if attempt < self._max_retries:
                     await asyncio.sleep(RETRY_BACKOFF_SECONDS * attempt)
 
-        raise RuntimeError(
-            f"EPSS fetch failed after {self._max_retries} retries"
-        ) from last_exc
+        raise RuntimeError(f"EPSS fetch failed after {self._max_retries} retries") from last_exc
 
-    async def fetch_all_scores(self, *, date: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def fetch_all_scores(self, *, date: str | None = None) -> list[dict[str, Any]]:
         """Paginate through all EPSS scores for a given date."""
-        all_data: List[Dict[str, Any]] = []
+        all_data: list[dict[str, Any]] = []
         offset = 0
         page_size = 1000
 
@@ -91,10 +89,10 @@ class EPSSClient:
         return all_data
 
     def parse_scores(
-        self, rows: List[Dict[str, Any]], *, scored_at: datetime
-    ) -> List[Dict[str, Any]]:
+        self, rows: list[dict[str, Any]], *, scored_at: datetime
+    ) -> list[dict[str, Any]]:
         """Normalise raw EPSS rows into dicts ready for persistence."""
-        parsed: List[Dict[str, Any]] = []
+        parsed: list[dict[str, Any]] = []
         for row in rows:
             cve = row.get("cve", "")
             if not cve:

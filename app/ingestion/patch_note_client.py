@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-NormalizedPatchNote = Dict[str, Any]
+NormalizedPatchNote = dict[str, Any]
 """
 Expected shape:
 {
@@ -55,7 +55,7 @@ class PatchNoteParser(ABC):
         """Return the canonical lowercase source identifier."""
 
     @abstractmethod
-    def parse(self, raw_data: dict) -> List[NormalizedPatchNote]:
+    def parse(self, raw_data: dict) -> list[NormalizedPatchNote]:
         """Normalise raw upstream data into a list of patch note dicts."""
 
 
@@ -68,17 +68,17 @@ class PatchNoteRegistry:
     """Manual registry mapping source names to parser instances."""
 
     def __init__(self) -> None:
-        self._parsers: Dict[str, PatchNoteParser] = {}
+        self._parsers: dict[str, PatchNoteParser] = {}
 
     def register(self, parser: PatchNoteParser) -> None:
         name = parser.source_name()
         self._parsers[name] = parser
         logger.debug("Registered patch note parser: %s", name)
 
-    def get(self, source: str) -> Optional[PatchNoteParser]:
+    def get(self, source: str) -> PatchNoteParser | None:
         return self._parsers.get(source)
 
-    def all_parsers(self) -> Dict[str, PatchNoteParser]:
+    def all_parsers(self) -> dict[str, PatchNoteParser]:
         return dict(self._parsers)
 
 
@@ -93,7 +93,7 @@ default_registry = PatchNoteRegistry()
 # Example parser for testing / reference
 # ---------------------------------------------------------------------------
 
-EXAMPLE_PATCH_NOTE_FIXTURE: Dict[str, Any] = {
+EXAMPLE_PATCH_NOTE_FIXTURE: dict[str, Any] = {
     "id": "PN-2025-042",
     "title": "Acme Firewall v3.2.1 Security Patch",
     "description": "Fixes critical RCE and two privilege-escalation issues in Acme Firewall.",
@@ -114,8 +114,8 @@ class ExamplePatchNoteParser(PatchNoteParser):
     def source_name(self) -> str:
         return "example_patch_source"
 
-    def parse(self, raw_data: dict) -> List[NormalizedPatchNote]:
-        published_at: Optional[datetime] = None
+    def parse(self, raw_data: dict) -> list[NormalizedPatchNote]:
+        published_at: datetime | None = None
         if raw_data.get("date"):
             try:
                 published_at = datetime.fromisoformat(raw_data["date"])
@@ -123,8 +123,7 @@ class ExamplePatchNoteParser(PatchNoteParser):
                 pass
 
         package_hints = [
-            {"ecosystem": p["ecosystem"], "name": p["name"]}
-            for p in raw_data.get("packages", [])
+            {"ecosystem": p["ecosystem"], "name": p["name"]} for p in raw_data.get("packages", [])
         ]
 
         note: NormalizedPatchNote = {

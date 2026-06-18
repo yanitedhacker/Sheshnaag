@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -18,8 +16,8 @@ router = APIRouter(prefix="/api/v4/export/stix", tags=["Sheshnaag V4 STIX Export
 @router.get("/{case_id}")
 def export_case_stix(
     case_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):

@@ -1,22 +1,21 @@
 """V5 W1b worker pool API routes.
 
-  * ``POST /api/v5/workers/enrollment-tokens`` (lab_lead) — mint
-    single-use token; returned plaintext exactly once.
-  * ``POST /api/v5/workers/bootstrap`` (no auth — token-gated) —
-    consume token, sign CSR, register worker, return cert + CA + Redis URL.
-  * ``POST /api/v5/workers/{id}/heartbeat`` (no auth — cert-gated at
-    Redis layer) — refresh last_heartbeat; returns current state so
-    the worker sees drain signals.
-  * ``POST /api/v5/workers/{id}/drain`` (lab_lead) — flip state to
-    ``draining``.
-  * ``GET /api/v5/workers`` (any authenticated) — list fleet.
-  * ``GET /api/v5/workers/{id}`` (any authenticated) — single worker.
+* ``POST /api/v5/workers/enrollment-tokens`` (lab_lead) — mint
+  single-use token; returned plaintext exactly once.
+* ``POST /api/v5/workers/bootstrap`` (no auth — token-gated) —
+  consume token, sign CSR, register worker, return cert + CA + Redis URL.
+* ``POST /api/v5/workers/{id}/heartbeat`` (no auth — cert-gated at
+  Redis layer) — refresh last_heartbeat; returns current state so
+  the worker sees drain signals.
+* ``POST /api/v5/workers/{id}/drain`` (lab_lead) — flip state to
+  ``draining``.
+* ``GET /api/v5/workers`` (any authenticated) — list fleet.
+* ``GET /api/v5/workers/{id}`` (any authenticated) — single worker.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -35,7 +34,6 @@ from app.services.worker_pool import (
     WorkerPoolService,
 )
 
-
 router = APIRouter(prefix="/api/v5/workers", tags=["Sheshnaag V5 Worker Pool"])
 
 
@@ -52,7 +50,7 @@ class EnrollmentTokenIssueResponse(BaseModel):
 class BootstrapRequest(BaseModel):
     enrollment_token: str
     csr_pem: str
-    capability_flags: List[str] = Field(default_factory=list)
+    capability_flags: list[str] = Field(default_factory=list)
 
 
 class BootstrapResponse(BaseModel):
@@ -65,22 +63,22 @@ class BootstrapResponse(BaseModel):
 
 
 class HeartbeatRequest(BaseModel):
-    capability_flags: Optional[List[str]] = None
+    capability_flags: list[str] | None = None
 
 
 class HeartbeatResponse(BaseModel):
     worker_id: int
     state: str
-    last_heartbeat: Optional[datetime]
+    last_heartbeat: datetime | None
 
 
 class WorkerSummary(BaseModel):
     id: int
     worker_uuid: str
     cert_fingerprint: str
-    capability_flags: List[str]
+    capability_flags: list[str]
     state: str
-    last_heartbeat: Optional[datetime]
+    last_heartbeat: datetime | None
     enrolled_at: datetime
     enrolled_by: str
 
@@ -146,9 +144,7 @@ def issue_enrollment_token(
     svc = WorkerPoolService(session)
     actor = token_data.username or "lab_lead"
     issued = svc.issue_enrollment_token(issued_by=actor)
-    return EnrollmentTokenIssueResponse(
-        token=issued.token, expires_at=issued.expires_at
-    )
+    return EnrollmentTokenIssueResponse(token=issued.token, expires_at=issued.expires_at)
 
 
 @router.post("/bootstrap", response_model=BootstrapResponse)
@@ -171,13 +167,9 @@ def bootstrap_worker(
             redis_url=_worker_redis_url(),
         )
     except EnrollmentTokenInvalidError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
     return BootstrapResponse(
         worker_id=result.worker_id,
@@ -189,9 +181,7 @@ def bootstrap_worker(
     )
 
 
-@router.post(
-    "/{worker_id}/heartbeat", response_model=HeartbeatResponse
-)
+@router.post("/{worker_id}/heartbeat", response_model=HeartbeatResponse)
 def heartbeat(
     worker_id: int,
     req: HeartbeatRequest,
@@ -206,13 +196,9 @@ def heartbeat(
     """
     svc = WorkerPoolService(session)
     try:
-        worker = svc.heartbeat(
-            worker_id, capability_flags=req.capability_flags
-        )
+        worker = svc.heartbeat(worker_id, capability_flags=req.capability_flags)
     except WorkerNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return HeartbeatResponse(
         worker_id=worker.id,
         state=worker.state,
@@ -233,17 +219,15 @@ def drain_worker(
     try:
         worker = svc.drain(worker_id)
     except WorkerNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return DrainResponse(worker_id=worker.id, state=worker.state)
 
 
-@router.get("", response_model=List[WorkerSummary])
+@router.get("", response_model=list[WorkerSummary])
 def list_workers(
     _td: TokenData = Depends(verify_token),
     session: Session = Depends(get_sync_session),
-) -> List[WorkerSummary]:
+) -> list[WorkerSummary]:
     svc = WorkerPoolService(session)
     return [_summary(w) for w in svc.list_workers()]
 
@@ -258,6 +242,4 @@ def get_worker(
     try:
         return _summary(svc.get_worker(worker_id))
     except WorkerNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e

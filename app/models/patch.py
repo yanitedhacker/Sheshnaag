@@ -1,7 +1,5 @@
 """Patch intelligence models (patch-first remediation layer)."""
 
-from datetime import datetime
-
 from sqlalchemy import (
     Boolean,
     Column,
@@ -18,14 +16,17 @@ from sqlalchemy.orm import relationship
 
 from app.core.database import Base
 from app.core.time import utc_now
-from app.core.time import utc_now
-
 
 # Many-to-many association between patches and CVEs.
 patch_cves = Table(
     "patch_cves",
     Base.metadata,
-    Column("patch_id", String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "patch_id",
+        String(120),
+        ForeignKey("patches.patch_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
     Column("cve_id", Integer, ForeignKey("cves.id", ondelete="CASCADE"), primary_key=True),
 )
 
@@ -64,7 +65,9 @@ class Patch(Base):
 
     # Relationships
     cves = relationship("CVE", secondary=patch_cves, back_populates="patches")
-    asset_mappings = relationship("AssetPatch", back_populates="patch", cascade="all, delete-orphan")
+    asset_mappings = relationship(
+        "AssetPatch", back_populates="patch", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Patch {self.patch_id} vendor={self.vendor} software={self.affected_software}>"
@@ -74,14 +77,16 @@ class AssetPatch(Base):
     """Mapping between assets and patches, including scheduling metadata."""
 
     __tablename__ = "asset_patches"
-    __table_args__ = (
-        UniqueConstraint("asset_id", "patch_id", name="uq_asset_patch"),
-    )
+    __table_args__ = (UniqueConstraint("asset_id", "patch_id", name="uq_asset_patch"),)
 
     id = Column(Integer, primary_key=True, index=True)
 
-    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    patch_id = Column(String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True)
+    asset_id = Column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    patch_id = Column(
+        String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Context
     environment = Column(String(50))  # optional override for scheduling context

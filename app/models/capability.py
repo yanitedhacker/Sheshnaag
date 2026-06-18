@@ -16,11 +16,11 @@ or DELETE against that table.
 from __future__ import annotations
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Column,
     DateTime,
     Index,
-    JSON,
     LargeBinary,
     String,
     Text,

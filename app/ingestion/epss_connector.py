@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -29,8 +28,8 @@ class EPSSConnector(FeedConnector):
         self,
         session: Session,
         *,
-        since: Optional[datetime] = None,
-        cursor: Optional[str] = None,
+        since: datetime | None = None,
+        cursor: str | None = None,
         limit: int = 2000,
     ) -> ConnectorResult:
         result = ConnectorResult(source=self.name, started_at=utc_now().isoformat())
@@ -73,9 +72,7 @@ class EPSSConnector(FeedConnector):
                     )
                     result.items_new += 1
             except Exception as exc:
-                result.errors.append(
-                    {"cve_id": entry.get("cve_id", "unknown"), "error": str(exc)}
-                )
+                result.errors.append({"cve_id": entry.get("cve_id", "unknown"), "error": str(exc)})
 
         result.completed_at = utc_now().isoformat()
         result.cursor = utc_now().isoformat()

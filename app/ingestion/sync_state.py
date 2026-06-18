@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from app.core.time import utc_now
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.ingestion.connector import ConnectorResult
 from app.models.ops import FeedSyncRun, FeedSyncState
 
@@ -29,7 +28,7 @@ def mark_running(session: Session, state: FeedSyncState):
     session.add(state)
 
 
-def mark_success(session: Session, state: FeedSyncState, cursor: Optional[str] = None):
+def mark_success(session: Session, state: FeedSyncState, cursor: str | None = None):
     now = utc_now()
     state.status = "success"
     state.last_success_at = now
@@ -50,8 +49,8 @@ def record_sync_run(
     result: ConnectorResult,
     *,
     status: str = "success",
-    error_summary: Optional[str] = None,
-    raw_payload_hash: Optional[str] = None,
+    error_summary: str | None = None,
+    raw_payload_hash: str | None = None,
 ) -> FeedSyncRun:
     """Persist a FeedSyncRun row from a ConnectorResult."""
     started = None

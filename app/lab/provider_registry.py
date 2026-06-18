@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Type
+from collections.abc import Iterable
 
 from app.lab.docker_kali_provider import DockerKaliProvider
 from app.lab.interfaces import LabProvider
 from app.lab.lima_provider import LimaProvider
-
 
 SUPPORTED_PROVIDER_NAMES = ("docker_kali", "lima")
 
@@ -16,9 +15,9 @@ class ProviderRegistry:
     """Create providers by name and expose support metadata."""
 
     def __init__(self) -> None:
-        self._providers: Dict[str, Type[LabProvider]] = {}
+        self._providers: dict[str, type[LabProvider]] = {}
 
-    def register(self, provider_cls: Type[LabProvider]) -> None:
+    def register(self, provider_cls: type[LabProvider]) -> None:
         self._providers[provider_cls.provider_name] = provider_cls
 
     def create(self, provider_name: str) -> LabProvider:

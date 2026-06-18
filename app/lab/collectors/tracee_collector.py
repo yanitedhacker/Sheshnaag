@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.interfaces import Collector
-
-from app.lab.collectors.common import build_advanced_telemetry_evidence, synthetic_from_plan, utc_iso
+from app.lab.collectors.common import (
+    build_advanced_telemetry_evidence,
+    synthetic_from_plan,
+    utc_iso,
+)
 from app.lab.collectors.runtime import is_executable_guest_context, run_in_guest
+from app.lab.interfaces import Collector
 from app.lab.telemetry_envelope import normalize_tracee_line, validate_runtime_event
 from app.lab.telemetry_translation import translate_with_enterprise_pack
 
@@ -17,9 +20,13 @@ class TraceeEventsCollector(Collector):
     collector_name = "tracee_events"
     collector_version = "1.0.0"
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         plan = provider_result.get("plan") or {}
-        tooling_profile = plan.get("tooling_profile") if isinstance(plan.get("tooling_profile"), dict) else {}
+        tooling_profile = (
+            plan.get("tooling_profile") if isinstance(plan.get("tooling_profile"), dict) else {}
+        )
         if not bool(tooling_profile.get("tracee_available")):
             return [
                 synthetic_from_plan(
@@ -31,7 +38,9 @@ class TraceeEventsCollector(Collector):
                     collector_version=self.collector_version,
                 )
             ]
-        if not is_executable_guest_context(run_context=run_context, provider_result=provider_result):
+        if not is_executable_guest_context(
+            run_context=run_context, provider_result=provider_result
+        ):
             return [
                 synthetic_from_plan(
                     collector_name=self.collector_name,
@@ -78,15 +87,15 @@ class TraceeEventsCollector(Collector):
         session_command = (
             f"tmp=$(mktemp); "
             f"(timeout {time_limit} sh -lc 'tracee --output json 2>/dev/null' || true) >\"$tmp\" 2>/dev/null; "
-            f"head -n {event_limit} \"$tmp\"; "
-            "rm -f \"$tmp\""
+            f'head -n {event_limit} "$tmp"; '
+            'rm -f "$tmp"'
         )
         code, out, err = run_in_guest(
             provider_result,
             ["sh", "-lc", session_command],
             timeout_sec=time_limit + 20,
         )
-        events: List[Dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
         for line in (out or "").splitlines():
             ne = normalize_tracee_line(line)
             if ne:

@@ -25,13 +25,11 @@ imply a leak of the CA key (and vice-versa) without the HKDF info string.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import os
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Optional
+from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -43,13 +41,11 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.time import utc_now
 from app.models.worker_pool import (
     Worker,
     WorkerCaKey,
     WorkerEnrollmentToken,
 )
-
 
 _KEK_HKDF_INFO = b"v5/worker-pool-ca/kek"
 _AES_GCM_KEY_LEN = 32  # 256-bit
@@ -162,7 +158,7 @@ class WorkerCa:
             public_exponent=65537,
             key_size=_CA_KEY_BITS,
         )
-        not_before = datetime.now(timezone.utc)
+        not_before = datetime.now(UTC)
         not_after = not_before + _CA_VALIDITY
         subject = x509.Name(
             [
@@ -179,9 +175,7 @@ class WorkerCa:
             .serial_number(x509.random_serial_number())
             .not_valid_before(not_before)
             .not_valid_after(not_after)
-            .add_extension(
-                x509.BasicConstraints(ca=True, path_length=0), critical=True
-            )
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
             .add_extension(
                 x509.KeyUsage(
                     digital_signature=True,
@@ -229,7 +223,7 @@ class WorkerCa:
         if not csr.is_signature_valid:
             raise ValueError("csr_signature_invalid")
 
-        not_before = datetime.now(timezone.utc)
+        not_before = datetime.now(UTC)
         not_after = not_before + _WORKER_CERT_VALIDITY
         cert = (
             x509.CertificateBuilder()
@@ -283,7 +277,7 @@ class WorkerCa:
 
     # ----- internals ------------------------------------------------------
 
-    def _active_row(self) -> Optional[WorkerCaKey]:
+    def _active_row(self) -> WorkerCaKey | None:
         return (
             self._session.query(WorkerCaKey)
             .filter_by(is_active=True)
@@ -291,9 +285,7 @@ class WorkerCa:
             .first()
         )
 
-    def _encrypt_private_key(
-        self, private_key: rsa.RSAPrivateKey
-    ) -> tuple[bytes, bytes]:
+    def _encrypt_private_key(self, private_key: rsa.RSAPrivateKey) -> tuple[bytes, bytes]:
         pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -304,9 +296,7 @@ class WorkerCa:
         ciphertext = AESGCM(kek).encrypt(nonce, pem, associated_data=b"worker-pool-ca")
         return ciphertext, nonce
 
-    def _decrypt_private_key(
-        self, ciphertext: bytes, nonce: bytes
-    ) -> rsa.RSAPrivateKey:
+    def _decrypt_private_key(self, ciphertext: bytes, nonce: bytes) -> rsa.RSAPrivateKey:
         kek = _derive_kek(settings.secret_key)
         pem = AESGCM(kek).decrypt(nonce, ciphertext, associated_data=b"worker-pool-ca")
         return serialization.load_pem_private_key(pem, password=None)
@@ -334,11 +324,11 @@ class WorkerPoolService:
     ) -> EnrollmentToken:
         """Mint a single-use token. Plaintext returned exactly once."""
         plaintext = secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + ttl
+        expires_at = datetime.now(UTC) + ttl
         row = WorkerEnrollmentToken(
             token_hash=_hash_token(plaintext),
             issued_by=issued_by,
-            issued_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            issued_at=datetime.now(UTC).replace(tzinfo=None),
             expires_at=expires_at.replace(tzinfo=None),
         )
         self._session.add(row)
@@ -355,7 +345,7 @@ class WorkerPoolService:
             raise EnrollmentTokenInvalidError("unknown_token")
         if row.consumed_at is not None:
             raise EnrollmentTokenInvalidError("token_already_consumed")
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_naive = datetime.now(UTC).replace(tzinfo=None)
         if row.expires_at < now_naive:
             raise EnrollmentTokenInvalidError("token_expired")
         return row
@@ -367,7 +357,7 @@ class WorkerPoolService:
         *,
         enrollment_token: str,
         csr_pem: str,
-        capability_flags: List[str],
+        capability_flags: list[str],
         redis_url: str,
         actor: str = "worker-bootstrap",
     ) -> BootstrapResult:
@@ -387,14 +377,14 @@ class WorkerPoolService:
             cert_pem=cert_pem,
             capability_flags=list(capability_flags or []),
             state="online",
-            last_heartbeat=datetime.now(timezone.utc).replace(tzinfo=None),
-            enrolled_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            last_heartbeat=datetime.now(UTC).replace(tzinfo=None),
+            enrolled_at=datetime.now(UTC).replace(tzinfo=None),
             enrolled_by=token_row.issued_by,
         )
         self._session.add(worker)
         self._session.flush()
 
-        token_row.consumed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        token_row.consumed_at = datetime.now(UTC).replace(tzinfo=None)
         token_row.consumed_by_worker_id = worker.id
         self._session.flush()
 
@@ -409,7 +399,7 @@ class WorkerPoolService:
 
     # ----- registry CRUD --------------------------------------------------
 
-    def list_workers(self) -> List[Worker]:
+    def list_workers(self) -> list[Worker]:
         return self._session.query(Worker).order_by(Worker.id).all()
 
     def get_worker(self, worker_id: int) -> Worker:
@@ -422,10 +412,10 @@ class WorkerPoolService:
         self,
         worker_id: int,
         *,
-        capability_flags: Optional[List[str]] = None,
+        capability_flags: list[str] | None = None,
     ) -> Worker:
         worker = self.get_worker(worker_id)
-        worker.last_heartbeat = datetime.now(timezone.utc).replace(tzinfo=None)
+        worker.last_heartbeat = datetime.now(UTC).replace(tzinfo=None)
         if capability_flags is not None:
             worker.capability_flags = list(capability_flags)
         if worker.state == "offline":

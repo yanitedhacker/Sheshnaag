@@ -7,17 +7,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401  registers tables
+from app.core.database import Base
 from app.models.malware_lab import AnalysisCase, CaseStateTransition
 from app.models.v2 import Tenant
 from app.services.case_workflow import (
+    TRANSITIONS,
     CaseLifecycleState,
     CaseNotFoundError,
     CaseWorkflowService,
     IllegalTransitionError,
     RoleNotPermittedError,
-    TRANSITIONS,
 )
 
 
@@ -74,11 +74,21 @@ def test_happy_path_triage_to_analysis(session):
 def test_full_forward_path(session):
     cid = _new_case(session)
     svc = CaseWorkflowService(session)
-    svc.transition(case_id=cid, to_state=CaseLifecycleState.ANALYSIS, actor="a", actor_roles=["analyst"])
-    svc.transition(case_id=cid, to_state=CaseLifecycleState.REVIEW, actor="a", actor_roles=["analyst"])
-    svc.transition(case_id=cid, to_state=CaseLifecycleState.READY_TO_SHIP, actor="r", actor_roles=["reviewer"])
-    svc.transition(case_id=cid, to_state=CaseLifecycleState.SHIPPED, actor="s", actor_roles=["senior_analyst"])
-    svc.transition(case_id=cid, to_state=CaseLifecycleState.ARCHIVED, actor="ll", actor_roles=["lab_lead"])
+    svc.transition(
+        case_id=cid, to_state=CaseLifecycleState.ANALYSIS, actor="a", actor_roles=["analyst"]
+    )
+    svc.transition(
+        case_id=cid, to_state=CaseLifecycleState.REVIEW, actor="a", actor_roles=["analyst"]
+    )
+    svc.transition(
+        case_id=cid, to_state=CaseLifecycleState.READY_TO_SHIP, actor="r", actor_roles=["reviewer"]
+    )
+    svc.transition(
+        case_id=cid, to_state=CaseLifecycleState.SHIPPED, actor="s", actor_roles=["senior_analyst"]
+    )
+    svc.transition(
+        case_id=cid, to_state=CaseLifecycleState.ARCHIVED, actor="ll", actor_roles=["lab_lead"]
+    )
 
     case = session.query(AnalysisCase).filter_by(id=cid).first()
     assert case.lifecycle_state == "archived"

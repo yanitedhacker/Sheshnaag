@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import datetime
-from app.core.time import utc_now
-from typing import Dict, Iterable, List, Optional, Sequence
+from collections.abc import Sequence
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.models.asset import Asset
 from app.models.patch import AssetPatch, Patch
 from app.models.risk_score import RiskScore
@@ -35,8 +33,8 @@ class WorkbenchService:
         tenant: Tenant,
         *,
         limit: int = 10,
-        scenario: Optional[dict] = None,
-    ) -> Dict[str, object]:
+        scenario: dict | None = None,
+    ) -> dict[str, object]:
         """Return ranked remediation actions for a tenant."""
         scenario = scenario or {}
 
@@ -52,7 +50,9 @@ class WorkbenchService:
         ]
 
         approval_map = self.governance_service.get_latest_patch_approval_map(tenant, patch_ids)
-        feedback_map = self.governance_service.get_latest_feedback_map(tenant, [f"patch:{patch_id}" for patch_id in patch_ids])
+        feedback_map = self.governance_service.get_latest_feedback_map(
+            tenant, [f"patch:{patch_id}" for patch_id in patch_ids]
+        )
 
         actions = [
             self._build_patch_action(
@@ -79,7 +79,9 @@ class WorkbenchService:
             "actions": actions[:limit],
         }
 
-    def _build_patch_action(self, tenant: Tenant, patch_id: str, *, scenario: dict, approval=None, feedback=None) -> Optional[dict]:
+    def _build_patch_action(
+        self, tenant: Tenant, patch_id: str, *, scenario: dict, approval=None, feedback=None
+    ) -> dict | None:
         patch = self.session.query(Patch).filter(Patch.patch_id == patch_id).first()
         if patch is None:
             return None
@@ -103,14 +105,42 @@ class WorkbenchService:
         attack_paths = self.graph_service.get_attack_paths(tenant, limit=25)
 
         base_patch = float(decision.priority_score)
-        base_risk = max((float(latest_risk.get(cve.id).overall_score) / 100.0 for cve in cves if latest_risk.get(cve.id)), default=0.0)
-        epss_score = max((float(epss_map.get(cve.cve_id.upper()).score) for cve in cves if epss_map.get(cve.cve_id.upper())), default=0.0)
+        base_risk = max(
+            (
+                float(latest_risk.get(cve.id).overall_score) / 100.0
+                for cve in cves
+                if latest_risk.get(cve.id)
+            ),
+            default=0.0,
+        )
+        epss_score = max(
+            (
+                float(epss_map.get(cve.cve_id.upper()).score)
+                for cve in cves
+                if epss_map.get(cve.cve_id.upper())
+            ),
+            default=0.0,
+        )
         kev_flag = any(cve.cve_id.upper() in kev_map for cve in cves)
         exploit_flag = any(cve.exploit_available for cve in cves)
         public_exposure = self._public_exposure_signal(assets)
         crown_jewel = any(asset.is_crown_jewel for asset in assets)
-        criticality_signal = max((self._criticality_score(asset.criticality or asset.business_criticality) for asset in assets), default=0.4)
-        lateral_signal = 1.0 if any(path for path in attack_paths["paths"] if any(asset.name in path["labels"] for asset in assets)) else 0.0
+        criticality_signal = max(
+            (
+                self._criticality_score(asset.criticality or asset.business_criticality)
+                for asset in assets
+            ),
+            default=0.4,
+        )
+        lateral_signal = (
+            1.0
+            if any(
+                path
+                for path in attack_paths["paths"]
+                if any(asset.name in path["labels"] for asset in assets)
+            )
+            else 0.0
+        )
         time_pressure = float(decision.axes.TPM)
         public_weight = float(scenario.get("public_exposure_weight", 1.0) or 1.0)
         crown_weight = float(scenario.get("crown_jewel_weight", 1.0) or 1.0)
@@ -145,7 +175,17 @@ class WorkbenchService:
                 0.95,
                 (
                     0.45
-                    + (0.07 * self._signal_count(kev_flag, exploit_flag, public_exposure > 0, crown_jewel, epss_score > 0, base_risk > 0))
+                    + (
+                        0.07
+                        * self._signal_count(
+                            kev_flag,
+                            exploit_flag,
+                            public_exposure > 0,
+                            crown_jewel,
+                            epss_score > 0,
+                            base_risk > 0,
+                        )
+                    )
                 )
                 * self.governance_service.feedback_confidence_multiplier(feedback),
             ),
@@ -176,7 +216,9 @@ class WorkbenchService:
         )
 
         related_paths = [
-            path for path in attack_paths["paths"] if any(label in {cve.cve_id for cve in cves} for label in path["labels"])
+            path
+            for path in attack_paths["paths"]
+            if any(label in {cve.cve_id for cve in cves} for label in path["labels"])
         ]
 
         return {
@@ -208,7 +250,7 @@ class WorkbenchService:
             "citations": citations,
         }
 
-    def _latest_risk_by_cve_id(self, cve_ids: Sequence[int]) -> Dict[int, RiskScore]:
+    def _latest_risk_by_cve_id(self, cve_ids: Sequence[int]) -> dict[int, RiskScore]:
         if not cve_ids:
             return {}
 
@@ -218,7 +260,7 @@ class WorkbenchService:
             .order_by(desc(RiskScore.created_at))
             .all()
         )
-        latest: Dict[int, RiskScore] = {}
+        latest: dict[int, RiskScore] = {}
         for score in scores:
             if score.cve_id not in latest:
                 latest[score.cve_id] = score
@@ -236,7 +278,7 @@ class WorkbenchService:
         return min(1.0, count / max(1, len(asset_ids)))
 
     @staticmethod
-    def _criticality_score(value: Optional[str]) -> float:
+    def _criticality_score(value: str | None) -> float:
         mapping = {"critical": 1.0, "high": 0.8, "medium": 0.6, "low": 0.4}
         return mapping.get((value or "medium").lower(), 0.5)
 
@@ -266,13 +308,13 @@ class WorkbenchService:
         kev_map,
         epss_map,
         public_exposure: bool,
-        attack_paths: List[dict],
+        attack_paths: list[dict],
         approval,
         feedback,
         vex_summary,
     ) -> tuple[list[dict], list[dict]]:
-        evidence: List[dict] = []
-        citations: Dict[str, dict] = {}
+        evidence: list[dict] = []
+        citations: dict[str, dict] = {}
 
         if public_exposure:
             evidence.append(
@@ -334,7 +376,10 @@ class WorkbenchService:
         for cve in cves:
             for document in self.intel_service.get_knowledge_documents(cve_id=cve.id, limit=3):
                 if document.source_url:
-                    citations[document.source_url] = {"label": document.source_label or document.document_type, "url": document.source_url}
+                    citations[document.source_url] = {
+                        "label": document.source_label or document.document_type,
+                        "url": document.source_url,
+                    }
 
         if vex_summary["status"] != "unknown":
             evidence.append(
@@ -342,7 +387,9 @@ class WorkbenchService:
                     "kind": "vex",
                     "title": f"VEX posture: {vex_summary['status']}",
                     "summary": vex_summary["summary"],
-                    "severity": "medium" if vex_summary["status"] == "under_investigation" else ("low" if vex_summary["status"] == "resolved" else "high"),
+                    "severity": "medium"
+                    if vex_summary["status"] == "under_investigation"
+                    else ("low" if vex_summary["status"] == "resolved" else "high"),
                 }
             )
 
@@ -351,7 +398,8 @@ class WorkbenchService:
                 {
                     "kind": "analyst",
                     "title": f"Analyst feedback: {feedback.feedback_type}",
-                    "summary": feedback.note or "Manual analyst feedback has been recorded for this recommendation.",
+                    "summary": feedback.note
+                    or "Manual analyst feedback has been recorded for this recommendation.",
                     "severity": "medium",
                 }
             )
@@ -361,7 +409,8 @@ class WorkbenchService:
                 {
                     "kind": "governance",
                     "title": f"Approval status: {approval.approval_state}",
-                    "summary": approval.note or f"{approval.approval_type} recorded for maintenance window {approval.maintenance_window or 'TBD'}.",
+                    "summary": approval.note
+                    or f"{approval.approval_type} recorded for maintenance window {approval.maintenance_window or 'TBD'}.",
                     "severity": "medium",
                 }
             )
@@ -373,12 +422,13 @@ class WorkbenchService:
 
     def _vex_summary(self, tenant: Tenant, *, assets: Sequence[Asset], cves) -> dict:
         component_ids = [
-            link.software_component_id
-            for asset in assets
-            for link in asset.software_components
+            link.software_component_id for asset in assets for link in asset.software_components
         ]
         if not component_ids:
-            return {"status": "unknown", "summary": "No component inventory was available for VEX evaluation."}
+            return {
+                "status": "unknown",
+                "summary": "No component inventory was available for VEX evaluation.",
+            }
 
         cve_ids = [cve.cve_id.upper() for cve in cves]
         statements = (
@@ -391,19 +441,34 @@ class WorkbenchService:
             .all()
         )
         if not statements:
-            return {"status": "unknown", "summary": "No VEX statement has been imported for the affected components."}
+            return {
+                "status": "unknown",
+                "summary": "No VEX statement has been imported for the affected components.",
+            }
 
         statuses = {statement.status.lower() for statement in statements}
         if statuses.issubset({"fixed", "not_affected"}):
-            return {"status": "resolved", "summary": "Imported VEX states indicate the affected components are fixed or not affected."}
+            return {
+                "status": "resolved",
+                "summary": "Imported VEX states indicate the affected components are fixed or not affected.",
+            }
         if "affected" in statuses:
-            return {"status": "affected", "summary": "Imported VEX confirms the vulnerable component is affected in this tenant."}
+            return {
+                "status": "affected",
+                "summary": "Imported VEX confirms the vulnerable component is affected in this tenant.",
+            }
         if "under_investigation" in statuses:
-            return {"status": "under_investigation", "summary": "Imported VEX leaves exploitability under investigation, so confidence is slightly reduced."}
-        return {"status": "unknown", "summary": "VEX statements exist but did not clearly resolve exploitability."}
+            return {
+                "status": "under_investigation",
+                "summary": "Imported VEX leaves exploitability under investigation, so confidence is slightly reduced.",
+            }
+        return {
+            "status": "unknown",
+            "summary": "VEX statements exist but did not clearly resolve exploitability.",
+        }
 
     @staticmethod
-    def _approval_summary(approval) -> Optional[dict]:
+    def _approval_summary(approval) -> dict | None:
         if approval is None:
             return None
         return {
@@ -416,7 +481,7 @@ class WorkbenchService:
         }
 
     @staticmethod
-    def _feedback_summary(feedback) -> Optional[dict]:
+    def _feedback_summary(feedback) -> dict | None:
         if feedback is None:
             return None
         return {
@@ -441,4 +506,8 @@ class WorkbenchService:
         )
 
     def _count_crown_jewel_assets(self, tenant: Tenant) -> int:
-        return self.session.query(Asset).filter(Asset.tenant_id == tenant.id, Asset.is_crown_jewel.is_(True)).count()
+        return (
+            self.session.query(Asset)
+            .filter(Asset.tenant_id == tenant.id, Asset.is_crown_jewel.is_(True))
+            .count()
+        )

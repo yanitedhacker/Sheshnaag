@@ -29,9 +29,9 @@ each shape directly.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
@@ -46,7 +46,6 @@ from app.models.malware_lab import (
 )
 from app.services.case_workflow import CaseLifecycleState
 
-
 # ---------- shapes ----------
 
 
@@ -55,7 +54,7 @@ class MttrSample:
     """Single MTTR sample (case-grain)."""
 
     case_id: int
-    analyst: Optional[str]
+    analyst: str | None
     triage_left_at: datetime
     closed_at: datetime
     closed_state: str
@@ -69,10 +68,10 @@ class MttrReport:
     window_start: datetime
     window_end: datetime
     sample_count: int
-    overall_mean_seconds: Optional[float]
-    overall_p50_seconds: Optional[float]
-    overall_p95_seconds: Optional[float]
-    by_analyst: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    overall_mean_seconds: float | None
+    overall_p50_seconds: float | None
+    overall_p95_seconds: float | None
+    by_analyst: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -80,27 +79,27 @@ class ReviewLatencyReport:
     window_start: datetime
     window_end: datetime
     sample_count: int
-    overall_mean_seconds: Optional[float]
-    overall_p50_seconds: Optional[float]
-    overall_p95_seconds: Optional[float]
-    by_reviewer: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    overall_mean_seconds: float | None
+    overall_p50_seconds: float | None
+    overall_p95_seconds: float | None
+    by_reviewer: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass
 class AttackDriftReport:
     window_seconds: int
-    current_window: List[str]
-    prior_window: List[str]
-    new_in_current: List[str]
-    dropped_from_prior: List[str]
+    current_window: list[str]
+    prior_window: list[str]
+    new_in_current: list[str]
+    dropped_from_prior: list[str]
 
 
 @dataclass
 class CapabilityUsageReport:
     window_start: datetime
     window_end: datetime
-    by_capability: Dict[str, int]
-    by_actor: Dict[str, Dict[str, int]]
+    by_capability: dict[str, int]
+    by_actor: dict[str, dict[str, int]]
     distinct_actors: int
 
 
@@ -109,21 +108,19 @@ class QueueAgingReport:
     """Heatmap rows: state × age-bucket → count."""
 
     generated_at: datetime
-    bucket_boundaries_days: List[float]
-    state_buckets: Dict[str, List[int]]
+    bucket_boundaries_days: list[float]
+    state_buckets: dict[str, list[int]]
 
 
 # ---------- service ----------
 
 
-_TERMINAL_STATES = frozenset(
-    {CaseLifecycleState.SHIPPED.value, CaseLifecycleState.ARCHIVED.value}
-)
+_TERMINAL_STATES = frozenset({CaseLifecycleState.SHIPPED.value, CaseLifecycleState.ARCHIVED.value})
 _AGE_BUCKETS_DAYS: tuple[float, ...] = (1.0, 3.0, 7.0, 14.0)
 _DEFAULT_WINDOW_DAYS = 30
 
 
-def _percentile(samples: List[float], pct: float) -> Optional[float]:
+def _percentile(samples: list[float], pct: float) -> float | None:
     if not samples:
         return None
     ordered = sorted(samples)
@@ -136,18 +133,16 @@ def _percentile(samples: List[float], pct: float) -> Optional[float]:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * frac
 
 
-def _mean(samples: List[float]) -> Optional[float]:
+def _mean(samples: list[float]) -> float | None:
     if not samples:
         return None
     return sum(samples) / len(samples)
 
 
-def _resolve_window(
-    window_days: int, *, now: Optional[datetime] = None
-) -> tuple[datetime, datetime]:
+def _resolve_window(window_days: int, *, now: datetime | None = None) -> tuple[datetime, datetime]:
     end = now or utc_now()
     if end.tzinfo is None:
-        end = end.replace(tzinfo=timezone.utc)
+        end = end.replace(tzinfo=UTC)
     start = end - timedelta(days=window_days)
     return start, end
 
@@ -165,7 +160,7 @@ class TeamAnalyticsService:
         tenant_id: int,
         *,
         window_days: int = _DEFAULT_WINDOW_DAYS,
-        now: Optional[datetime] = None,
+        now: datetime | None = None,
     ) -> MttrReport:
         window_start, window_end = _resolve_window(window_days, now=now)
 
@@ -190,11 +185,11 @@ class TeamAnalyticsService:
         # Group by case, then for each case pick the first
         # "from_state=triage" timestamp and the first transition into
         # shipped/archived after that.
-        by_case: Dict[int, List[CaseStateTransition]] = defaultdict(list)
+        by_case: dict[int, list[CaseStateTransition]] = defaultdict(list)
         for t in transitions:
             by_case[t.case_id].append(t)
 
-        analyst_lookup: Dict[int, Optional[str]] = {}
+        analyst_lookup: dict[int, str | None] = {}
         if by_case:
             rows = (
                 self.session.query(AnalysisCase.id, AnalysisCase.analyst_name)
@@ -203,16 +198,13 @@ class TeamAnalyticsService:
             )
             analyst_lookup = {row.id: row.analyst_name for row in rows}
 
-        samples: List[MttrSample] = []
+        samples: list[MttrSample] = []
         for case_id, edges in by_case.items():
-            triage_out: Optional[datetime] = None
-            close_at: Optional[datetime] = None
-            close_state: Optional[str] = None
+            triage_out: datetime | None = None
+            close_at: datetime | None = None
+            close_state: str | None = None
             for edge in edges:
-                if (
-                    triage_out is None
-                    and edge.from_state == CaseLifecycleState.TRIAGE.value
-                ):
+                if triage_out is None and edge.from_state == CaseLifecycleState.TRIAGE.value:
                     triage_out = edge.occurred_at
                 if (
                     triage_out is not None
@@ -240,7 +232,7 @@ class TeamAnalyticsService:
             )
 
         durations = [s.duration_seconds for s in samples]
-        by_analyst: Dict[str, List[float]] = defaultdict(list)
+        by_analyst: dict[str, list[float]] = defaultdict(list)
         for s in samples:
             by_analyst[s.analyst or "unassigned"].append(s.duration_seconds)
 
@@ -268,7 +260,7 @@ class TeamAnalyticsService:
         tenant_id: int,
         *,
         window_days: int = _DEFAULT_WINDOW_DAYS,
-        now: Optional[datetime] = None,
+        now: datetime | None = None,
     ) -> ReviewLatencyReport:
         window_start, window_end = _resolve_window(window_days, now=now)
 
@@ -289,23 +281,20 @@ class TeamAnalyticsService:
         # For each case, pair every "entered review" with the next
         # "left review" edge; record per-pair latency tagged with the
         # actor on the *exit* edge (the reviewer who decided).
-        by_case: Dict[int, List[CaseStateTransition]] = defaultdict(list)
+        by_case: dict[int, list[CaseStateTransition]] = defaultdict(list)
         for t in transitions:
             by_case[t.case_id].append(t)
 
-        durations: List[float] = []
-        by_reviewer: Dict[str, List[float]] = defaultdict(list)
+        durations: list[float] = []
+        by_reviewer: dict[str, list[float]] = defaultdict(list)
 
         for edges in by_case.values():
-            entered_at: Optional[datetime] = None
+            entered_at: datetime | None = None
             for edge in edges:
                 if edge.to_state == CaseLifecycleState.REVIEW.value:
                     entered_at = edge.occurred_at
                     continue
-                if (
-                    entered_at is not None
-                    and edge.from_state == CaseLifecycleState.REVIEW.value
-                ):
+                if entered_at is not None and edge.from_state == CaseLifecycleState.REVIEW.value:
                     duration = (edge.occurred_at - entered_at).total_seconds()
                     if duration >= 0:
                         durations.append(duration)
@@ -336,11 +325,11 @@ class TeamAnalyticsService:
         tenant_id: int,
         *,
         window_days: int = _DEFAULT_WINDOW_DAYS,
-        now: Optional[datetime] = None,
+        now: datetime | None = None,
     ) -> AttackDriftReport:
         end = now or utc_now()
         if end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
+            end = end.replace(tzinfo=UTC)
         current_start = end - timedelta(days=window_days)
         prior_start = current_start - timedelta(days=window_days)
 
@@ -376,7 +365,7 @@ class TeamAnalyticsService:
         techniques = payload.get("attack_techniques")
         if not isinstance(techniques, list):
             return ()
-        out: List[str] = []
+        out: list[str] = []
         for entry in techniques:
             if isinstance(entry, dict):
                 tid = entry.get("technique_id") or entry.get("id")
@@ -393,7 +382,7 @@ class TeamAnalyticsService:
         tenant_id: int,
         *,
         window_days: int = _DEFAULT_WINDOW_DAYS,
-        now: Optional[datetime] = None,
+        now: datetime | None = None,
     ) -> CapabilityUsageReport:
         # AuditLogEntry has no tenant_id column — it's a global chain.
         # We scope by tenant via the AISession.tenant_id link where the
@@ -409,7 +398,7 @@ class TeamAnalyticsService:
         )
 
         by_capability: Counter[str] = Counter()
-        by_actor: Dict[str, Counter[str]] = defaultdict(Counter)
+        by_actor: dict[str, Counter[str]] = defaultdict(Counter)
         actors: set[str] = set()
         for row in rows:
             if not self._scope_matches_tenant(row.scope, tenant_id):
@@ -448,16 +437,14 @@ class TeamAnalyticsService:
         self,
         tenant_id: int,
         *,
-        now: Optional[datetime] = None,
+        now: datetime | None = None,
     ) -> QueueAgingReport:
         ref = now or utc_now()
         if ref.tzinfo is None:
-            ref = ref.replace(tzinfo=timezone.utc)
+            ref = ref.replace(tzinfo=UTC)
 
         rows = (
-            self.session.query(
-                AnalysisCase.lifecycle_state, AnalysisCase.state_changed_at
-            )
+            self.session.query(AnalysisCase.lifecycle_state, AnalysisCase.state_changed_at)
             .filter(AnalysisCase.tenant_id == tenant_id)
             .all()
         )
@@ -465,7 +452,7 @@ class TeamAnalyticsService:
         # Bucket layout: [<1d, 1-3d, 3-7d, 7-14d, >14d] — five slots,
         # boundaries at 1, 3, 7, 14 days.
         n_buckets = len(_AGE_BUCKETS_DAYS) + 1
-        state_buckets: Dict[str, List[int]] = {
+        state_buckets: dict[str, list[int]] = {
             state.value: [0] * n_buckets for state in CaseLifecycleState
         }
 
@@ -476,7 +463,7 @@ class TeamAnalyticsService:
                 bucket_idx = n_buckets - 1
             else:
                 if changed_at.tzinfo is None:
-                    changed_at = changed_at.replace(tzinfo=timezone.utc)
+                    changed_at = changed_at.replace(tzinfo=UTC)
                 age_days = max((ref - changed_at).total_seconds() / 86400.0, 0.0)
                 bucket_idx = n_buckets - 1
                 for idx, boundary in enumerate(_AGE_BUCKETS_DAYS):
@@ -498,8 +485,8 @@ class TeamAnalyticsService:
         tenant_id: int,
         *,
         window_days: int = _DEFAULT_WINDOW_DAYS,
-        now: Optional[datetime] = None,
-    ) -> Dict[str, int]:
+        now: datetime | None = None,
+    ) -> dict[str, int]:
         """Total AI sessions in window — used by the analytics page header."""
         window_start, window_end = _resolve_window(window_days, now=now)
         rows = (

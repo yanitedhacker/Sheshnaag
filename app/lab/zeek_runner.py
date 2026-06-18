@@ -17,7 +17,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # These are the default Zeek log headers; we also support dynamic header
 # discovery via the ``#fields`` directive that every Zeek TSV file carries.
-_EMPTY_RESULT: Dict[str, Any] = {
+_EMPTY_RESULT: dict[str, Any] = {
     "connections": [],
     "dns": [],
     "http": [],
@@ -51,20 +52,20 @@ class ZeekRunner:
     def __init__(
         self,
         *,
-        zeek_binary: Optional[str] = None,
-        dry_run: Optional[bool] = None,
+        zeek_binary: str | None = None,
+        dry_run: bool | None = None,
     ) -> None:
         self.zeek_binary = zeek_binary or os.environ.get("SHESHNAAG_ZEEK_BIN", "zeek")
         self.dry_run = _env_dry_run_default() if dry_run is None else bool(dry_run)
 
     # -- Health ---------------------------------------------------------------
 
-    def _binary_path(self) -> Optional[str]:
+    def _binary_path(self) -> str | None:
         if os.path.isabs(self.zeek_binary) and os.path.exists(self.zeek_binary):
             return self.zeek_binary
         return shutil.which(self.zeek_binary)
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         path = self._binary_path()
         if not path:
             return {
@@ -105,9 +106,9 @@ class ZeekRunner:
 
     # -- Execution ------------------------------------------------------------
 
-    def run(self, *, pcap_path: str, workdir: Optional[str] = None) -> Dict[str, Any]:
+    def run(self, *, pcap_path: str, workdir: str | None = None) -> dict[str, Any]:
         """Run Zeek over ``pcap_path`` and return parsed log dictionaries."""
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "connections": [],
             "dns": [],
             "http": [],
@@ -125,7 +126,9 @@ class ZeekRunner:
 
         path = self._binary_path()
         if not path:
-            logger.warning("zeek_runner: binary '%s' not found; returning empty result", self.zeek_binary)
+            logger.warning(
+                "zeek_runner: binary '%s' not found; returning empty result", self.zeek_binary
+            )
             return result
 
         if not os.path.isfile(pcap_path):
@@ -171,16 +174,16 @@ class ZeekRunner:
 
     # -- Indicator extraction -------------------------------------------------
 
-    def extract_indicators(self, results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def extract_indicators(self, results: dict[str, Any]) -> list[dict[str, Any]]:
         """Flatten a parsed Zeek result into IndicatorArtifact-shaped dicts.
 
         Dedupes by ``(indicator_kind, value)``; last-write wins on confidence
         so later evidence (e.g. a resolved DNS response) can upgrade an
         earlier placeholder.
         """
-        indicators: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        indicators: dict[tuple[str, str], dict[str, Any]] = {}
 
-        def _add(kind: str, value: Any, *, confidence: float, payload: Dict[str, Any]) -> None:
+        def _add(kind: str, value: Any, *, confidence: float, payload: dict[str, Any]) -> None:
             if value is None:
                 return
             svalue = str(value).strip()
@@ -225,9 +228,19 @@ class ZeekRunner:
             for rr in _split_values(dns.get("answers")):
                 # Heuristic: IPv4/IPv6 literals go in as ip, everything else as domain.
                 if _looks_like_ip(rr):
-                    _add("ip", rr, confidence=0.7, payload={"kind": "dns_answer", "query": dns.get("query")})
+                    _add(
+                        "ip",
+                        rr,
+                        confidence=0.7,
+                        payload={"kind": "dns_answer", "query": dns.get("query")},
+                    )
                 else:
-                    _add("domain", rr, confidence=0.55, payload={"kind": "dns_answer", "query": dns.get("query")})
+                    _add(
+                        "domain",
+                        rr,
+                        confidence=0.55,
+                        payload={"kind": "dns_answer", "query": dns.get("query")},
+                    )
 
         for http in results.get("http") or []:
             host = http.get("host")
@@ -250,7 +263,12 @@ class ZeekRunner:
 
         for ssl in results.get("ssl") or []:
             sni = ssl.get("server_name")
-            _add("domain", sni, confidence=0.6, payload={"kind": "tls_sni", "version": ssl.get("version")})
+            _add(
+                "domain",
+                sni,
+                confidence=0.6,
+                payload={"kind": "tls_sni", "version": ssl.get("version")},
+            )
 
         for fobj in results.get("files") or []:
             for field, kind, conf in (
@@ -276,16 +294,16 @@ class ZeekRunner:
 # -- Parsing helpers ---------------------------------------------------------
 
 
-def _parse_zeek_log(path: str) -> List[Dict[str, Any]]:
+def _parse_zeek_log(path: str) -> list[dict[str, Any]]:
     """Parse a Zeek TSV log, honoring the ``#fields`` / ``#types`` headers."""
     if not os.path.isfile(path):
         return []
-    rows: List[Dict[str, Any]] = []
-    fields: List[str] = []
+    rows: list[dict[str, Any]] = []
+    fields: list[str] = []
     separator = "\t"
     unset_field = "-"
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 line = line.rstrip("\n")
                 if not line:
@@ -328,7 +346,7 @@ def _parse_zeek_log(path: str) -> List[Dict[str, Any]]:
                 parts = line.split(separator)
                 if len(parts) < len(fields):
                     parts += [unset_field] * (len(fields) - len(parts))
-                row: Dict[str, Any] = {}
+                row: dict[str, Any] = {}
                 for name, value in zip(fields, parts):
                     if value == unset_field or value == "(empty)":
                         row[name] = None
@@ -341,7 +359,7 @@ def _parse_zeek_log(path: str) -> List[Dict[str, Any]]:
     return rows
 
 
-def _summarize(results: Dict[str, Any]) -> Dict[str, Any]:
+def _summarize(results: dict[str, Any]) -> dict[str, Any]:
     counts = {
         "connections": len(results.get("connections") or []),
         "dns": len(results.get("dns") or []),
@@ -349,14 +367,14 @@ def _summarize(results: Dict[str, Any]) -> Dict[str, Any]:
         "ssl": len(results.get("ssl") or []),
         "files": len(results.get("files") or []),
     }
-    uniq_dests: List[str] = []
+    uniq_dests: list[str] = []
     seen: set[str] = set()
     for conn in results.get("connections") or []:
         dest = conn.get("id.resp_h") or conn.get("resp_h")
         if dest and dest not in seen:
             seen.add(dest)
             uniq_dests.append(dest)
-    notable: List[str] = []
+    notable: list[str] = []
     for http in results.get("http") or []:
         host = http.get("host")
         uri = http.get("uri") or ""

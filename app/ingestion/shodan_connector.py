@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 import requests
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 SHODAN_BASE_URL = "https://api.shodan.io"
 
 
-def _confidence_from_host(body: Dict[str, Any]) -> float:
+def _confidence_from_host(body: dict[str, Any]) -> float:
     """A coarse confidence score derived from Shodan host payload.
 
     Heuristic: more open ports + presence of vulnerabilities → higher score.
@@ -54,13 +54,13 @@ class ShodanConnector:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         *,
         base_url: str = SHODAN_BASE_URL,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
-        backoff_seconds: Optional[float] = None,
+        session: requests.Session | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        backoff_seconds: float | None = None,
         sleep_fn=time.sleep,
     ) -> None:
         self._api_key = api_key or os.getenv("SHODAN_API_KEY") or ""
@@ -86,12 +86,12 @@ class ShodanConnector:
     def _get(
         self,
         path: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         if not self.healthy:
             return None
         url = f"{self._base_url}{path}"
-        merged: Dict[str, Any] = {"key": self._api_key}
+        merged: dict[str, Any] = {"key": self._api_key}
         if params:
             merged.update(params)
 
@@ -105,7 +105,10 @@ class ShodanConnector:
             except requests.RequestException as exc:
                 logger.warning(
                     "Shodan request error (attempt %d/%d) for %s: %s",
-                    attempt, self._max_retries, path, exc,
+                    attempt,
+                    self._max_retries,
+                    path,
+                    exc,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -114,7 +117,9 @@ class ShodanConnector:
             if resp.status_code == 429:
                 logger.warning(
                     "Shodan rate limited (attempt %d/%d) for %s",
-                    attempt, self._max_retries, path,
+                    attempt,
+                    self._max_retries,
+                    path,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -127,16 +132,17 @@ class ShodanConnector:
             if resp.status_code >= 500:
                 logger.warning(
                     "Shodan %s for %s (attempt %d/%d)",
-                    resp.status_code, path, attempt, self._max_retries,
+                    resp.status_code,
+                    path,
+                    attempt,
+                    self._max_retries,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
                 continue
 
             if resp.status_code >= 400:
-                logger.warning(
-                    "Shodan client error %s for %s", resp.status_code, path
-                )
+                logger.warning("Shodan client error %s for %s", resp.status_code, path)
                 return None
 
             try:
@@ -151,7 +157,7 @@ class ShodanConnector:
     # Per-kind lookups
     # ------------------------------------------------------------------
 
-    def fetch_host(self, ip: str) -> Optional[Dict[str, Any]]:
+    def fetch_host(self, ip: str) -> dict[str, Any] | None:
         if not ip:
             return None
         body = self._get(f"/shodan/host/{ip}")
@@ -164,7 +170,7 @@ class ShodanConnector:
         query: str,
         *,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not query:
             return []
         body = self._get(
@@ -176,7 +182,7 @@ class ShodanConnector:
         matches = body.get("matches") if isinstance(body, dict) else None
         if not isinstance(matches, list):
             return []
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for match in matches[: max(0, int(limit))]:
             if not isinstance(match, dict):
                 continue
@@ -186,7 +192,7 @@ class ShodanConnector:
             records.append(self._normalize_match(match, ip=str(ip)))
         return records
 
-    def fetch_dns(self, domain: str) -> List[Dict[str, Any]]:
+    def fetch_dns(self, domain: str) -> list[dict[str, Any]]:
         """Resolve a domain to its DNS A/AAAA records via ``/dns/domain``."""
         if not domain:
             return []
@@ -197,7 +203,7 @@ class ShodanConnector:
         if not isinstance(raw_data, list):
             return []
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         tags = list(body.get("tags") or [])
         for entry in raw_data:
             if not isinstance(entry, dict):
@@ -208,11 +214,7 @@ class ShodanConnector:
             rtype = (entry.get("type") or "").upper()
             if rtype in ("A", "AAAA"):
                 kind = "ip"
-            elif rtype == "CNAME":
-                kind = "domain"
-            elif rtype == "MX":
-                kind = "domain"
-            elif rtype == "NS":
+            elif rtype == "CNAME" or rtype == "MX" or rtype == "NS":
                 kind = "domain"
             elif rtype == "TXT":
                 kind = "txt"
@@ -242,7 +244,7 @@ class ShodanConnector:
     # Generic fan-out
     # ------------------------------------------------------------------
 
-    def fetch(self, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Fetch records for one or more Shodan inputs.
 
         ``scope`` shape:
@@ -256,7 +258,7 @@ class ShodanConnector:
             return []
 
         scope = scope or {}
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
 
         for ip in scope.get("hosts") or []:
             if not ip:
@@ -283,7 +285,7 @@ class ShodanConnector:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_host(body: Dict[str, Any], *, ip: str) -> Dict[str, Any]:
+    def _normalize_host(body: dict[str, Any], *, ip: str) -> dict[str, Any]:
         ports = list(body.get("ports") or [])
         hostnames = list(body.get("hostnames") or [])
         vulns_raw = body.get("vulns") or {}
@@ -296,7 +298,7 @@ class ShodanConnector:
         tags_raw = body.get("tags") or []
         tags = list(tags_raw) if isinstance(tags_raw, (list, tuple)) else []
 
-        labels: List[str] = []
+        labels: list[str] = []
         org = body.get("org")
         if org:
             labels.append(str(org))
@@ -329,12 +331,12 @@ class ShodanConnector:
         }
 
     @staticmethod
-    def _normalize_match(match: Dict[str, Any], *, ip: str) -> Dict[str, Any]:
+    def _normalize_match(match: dict[str, Any], *, ip: str) -> dict[str, Any]:
         hostnames = list(match.get("hostnames") or [])
         port = match.get("port")
         product = match.get("product")
         org = match.get("org")
-        labels: List[str] = []
+        labels: list[str] = []
         if product:
             labels.append(str(product))
         if org:

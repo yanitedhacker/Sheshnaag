@@ -13,13 +13,11 @@ import shutil
 import subprocess
 import time
 import zipfile
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.launchers.base import Launcher, LauncherResult
+from app.lab.launchers.base import LauncherResult
 
-_ARCHIVE_KINDS = frozenset(
-    {"archive/zip", "archive/rar", "archive/7z", "archive/iso", "archive"}
-)
+_ARCHIVE_KINDS = frozenset({"archive/zip", "archive/rar", "archive/7z", "archive/iso", "archive"})
 
 
 class ArchiveLauncher:
@@ -31,7 +29,7 @@ class ArchiveLauncher:
     def _has_binary(self, name: str) -> bool:
         return shutil.which(name) is not None
 
-    def _exec(self, argv: List[str], *, timeout: int) -> subprocess.CompletedProcess:
+    def _exec(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess:
         return subprocess.run(
             argv,
             check=False,
@@ -40,7 +38,9 @@ class ArchiveLauncher:
             timeout=timeout,
         )
 
-    def _extract(self, archive_path: str, dest: str, ext: str, timeout: int, logs: List[str]) -> int:
+    def _extract(
+        self, archive_path: str, dest: str, ext: str, timeout: int, logs: list[str]
+    ) -> int:
         os.makedirs(dest, exist_ok=True)
         if ext == ".zip":
             try:
@@ -81,9 +81,9 @@ class ArchiveLauncher:
         snapshot_snap: Any,
     ) -> LauncherResult:
         start = time.monotonic()
-        logs: List[str] = []
-        artifacts: List[str] = []
-        metadata: Dict[str, Any] = {"launcher": "archive"}
+        logs: list[str] = []
+        artifacts: list[str] = []
+        metadata: dict[str, Any] = {"launcher": "archive"}
 
         profile_cfg = getattr(profile, "config", {}) or {}
         timeout = int(profile_cfg.get("extract_timeout_s", 60))

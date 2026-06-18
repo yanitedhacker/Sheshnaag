@@ -1,2 +1,1 @@
 """Patch scheduling and batching."""
-

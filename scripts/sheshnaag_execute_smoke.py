@@ -63,7 +63,9 @@ def main() -> int:
                 environment="production",
                 criticality="high",
                 business_criticality="high",
-                installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+                installed_software=[
+                    {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+                ],
             )
         )
         session.commit()
@@ -77,7 +79,11 @@ def main() -> int:
             objective="Verify baseline execute-mode validation path.",
             created_by="Execute Smoke",
             content={
-                "command": ["bash", "-lc", "echo execute-smoke > /workspace/execute-smoke.txt && sleep 5"],
+                "command": [
+                    "bash",
+                    "-lc",
+                    "echo execute-smoke > /workspace/execute-smoke.txt && sleep 5",
+                ],
                 "network_policy": {"allow_egress_hosts": []},
                 "collectors": [
                     "process_tree",
@@ -88,19 +94,28 @@ def main() -> int:
                 ],
             },
         )
-        service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+        service.approve_recipe_revision(
+            tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+        )
         run = service.launch_run(
             tenant,
             recipe_id=recipe["id"],
             revision_number=1,
             analyst_name="Execute Smoke",
-            workstation={"hostname": "execute-smoke", "os_family": "macOS", "architecture": "arm64", "fingerprint": "execute-smoke-fp"},
+            workstation={
+                "hostname": "execute-smoke",
+                "os_family": "macOS",
+                "architecture": "arm64",
+                "fingerprint": "execute-smoke-fp",
+            },
             launch_mode="execute",
             acknowledge_sensitive=False,
         )
 
         if run["state"] not in {"running", "completed"}:
-            raise RuntimeError(f"execute run failed: state={run['state']} transcript={run.get('run_transcript')}")
+            raise RuntimeError(
+                f"execute run failed: state={run['state']} transcript={run.get('run_transcript')}"
+            )
 
         evidence = service.list_evidence(tenant, run_id=run["id"])
         artifacts = service.list_artifacts(tenant, run_id=run["id"])
@@ -123,7 +138,9 @@ def main() -> int:
         if not Path(bundle["archive"]["path"]).exists():
             raise RuntimeError("execute smoke did not write disclosure archive")
 
-        print(f"PASS: execute smoke run #{run['id']} captured {evidence['count']} evidence artifact(s).")
+        print(
+            f"PASS: execute smoke run #{run['id']} captured {evidence['count']} evidence artifact(s)."
+        )
         return 0
     finally:
         session.close()

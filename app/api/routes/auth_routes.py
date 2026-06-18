@@ -1,7 +1,5 @@
 """Authentication APIs for private tenants."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -16,7 +14,7 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=8)
-    tenant_slug: Optional[str] = None
+    tenant_slug: str | None = None
 
 
 @router.post("/token")
@@ -26,7 +24,9 @@ def login(
 ):
     """Authenticate a private tenant user and return a JWT."""
     service = AuthService(session)
-    return service.login(email=request.email, password=request.password, tenant_slug=request.tenant_slug)
+    return service.login(
+        email=request.email, password=request.password, tenant_slug=request.tenant_slug
+    )
 
 
 @router.get("/me")

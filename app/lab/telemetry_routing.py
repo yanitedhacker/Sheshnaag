@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 _KNOWN_SEVERITIES = (
     "critical",
@@ -16,10 +16,10 @@ _KNOWN_SEVERITIES = (
 )
 
 
-def route_events_by_severity(events: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+def route_events_by_severity(events: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Partition events into severity buckets (empty buckets omitted)."""
-    buckets: Dict[str, List[Dict[str, Any]]] = {k: [] for k in _KNOWN_SEVERITIES}
-    other: List[Dict[str, Any]] = []
+    buckets: dict[str, list[dict[str, Any]]] = {k: [] for k in _KNOWN_SEVERITIES}
+    other: list[dict[str, Any]] = []
     for evt in events:
         if not isinstance(evt, dict):
             continue
@@ -34,9 +34,9 @@ def route_events_by_severity(events: List[Dict[str, Any]]) -> Dict[str, List[Dic
     return out
 
 
-def route_events_by_source_tool(events: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+def route_events_by_source_tool(events: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Group events by envelope ``source_tool``."""
-    out: Dict[str, List[Dict[str, Any]]] = {}
+    out: dict[str, list[dict[str, Any]]] = {}
     for evt in events:
         if not isinstance(evt, dict):
             continue

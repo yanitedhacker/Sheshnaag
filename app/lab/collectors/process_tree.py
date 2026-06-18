@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
-from app.lab.interfaces import Collector
+from typing import Any
 
 from app.lab.collectors.common import (
     build_evidence_dict,
@@ -15,6 +13,7 @@ from app.lab.collectors.common import (
     utc_iso,
 )
 from app.lab.collectors.runtime import guest_transport, is_executable_guest_context, run_in_guest
+from app.lab.interfaces import Collector
 
 MAX_OUTPUT_BYTES = 512_000
 
@@ -23,8 +22,12 @@ class ProcessTreeCollector(Collector):
     collector_name = "process_tree"
     collector_version = "1.0.0"
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        if not is_executable_guest_context(run_context=run_context, provider_result=provider_result):
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        if not is_executable_guest_context(
+            run_context=run_context, provider_result=provider_result
+        ):
             return [
                 synthetic_from_plan(
                     collector_name=self.collector_name,
@@ -60,7 +63,7 @@ class ProcessTreeCollector(Collector):
                 )
             ]
         text, trunc = truncate_text(out, MAX_OUTPUT_BYTES)
-        rows: List[Dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for line in text.splitlines():
             line = line.strip()
             if not line:

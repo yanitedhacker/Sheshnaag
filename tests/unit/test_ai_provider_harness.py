@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any, Dict, List, Optional
 
 import pytest
 
 from app.services.ai_provider_harness import (
-    AIProviderHarness,
     DEPRECATED_PROVIDER_ALIASES,
     SUPPORTED_CAPABILITIES,
+    AIProviderHarness,
 )
 
 
@@ -21,7 +22,7 @@ class _StubAdapter:
         *,
         provider_key: str = "stub",
         display_name: str = "Stub",
-        events: Optional[List[Dict[str, Any]]] = None,
+        events: list[dict[str, Any]] | None = None,
         healthy: bool = True,
         model_label: str = "stub-1",
     ) -> None:
@@ -29,14 +30,22 @@ class _StubAdapter:
         self.display_name = display_name
         self.model_label = model_label
         self.capabilities = sorted(SUPPORTED_CAPABILITIES)
-        self._events = events if events is not None else [
-            {"type": "message_start", "metadata": {"model": model_label}},
-            {"type": "text_delta", "text": "Grounded output from stub."},
-            {"type": "message_stop", "stop_reason": "end_turn", "usage": {"input_tokens": 3, "output_tokens": 4}},
-        ]
+        self._events = (
+            events
+            if events is not None
+            else [
+                {"type": "message_start", "metadata": {"model": model_label}},
+                {"type": "text_delta", "text": "Grounded output from stub."},
+                {
+                    "type": "message_stop",
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 3, "output_tokens": 4},
+                },
+            ]
+        )
         self._healthy = healthy
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         return {
             "status": "available" if self._healthy else "unconfigured",
             "healthy": self._healthy,
@@ -44,16 +53,20 @@ class _StubAdapter:
             "missing_configuration": [] if self._healthy else ["STUB_KEY"],
         }
 
-    def stream(self, **_: Any) -> Iterator[Dict[str, Any]]:
+    def stream(self, **_: Any) -> Iterator[dict[str, Any]]:
         yield from self._events
 
 
-def _build_stub_harness(events: Optional[List[Dict[str, Any]]] = None) -> AIProviderHarness:
+def _build_stub_harness(events: list[dict[str, Any]] | None = None) -> AIProviderHarness:
     adapters = {
-        "anthropic": _StubAdapter(provider_key="anthropic", display_name="Anthropic", events=events),
+        "anthropic": _StubAdapter(
+            provider_key="anthropic", display_name="Anthropic", events=events
+        ),
         "openai": _StubAdapter(provider_key="openai", display_name="OpenAI", events=events),
         "gemini": _StubAdapter(provider_key="gemini", display_name="Gemini", events=events),
-        "azure-openai": _StubAdapter(provider_key="azure-openai", display_name="Azure OpenAI", events=events),
+        "azure-openai": _StubAdapter(
+            provider_key="azure-openai", display_name="Azure OpenAI", events=events
+        ),
         "bedrock": _StubAdapter(provider_key="bedrock", display_name="Bedrock", events=events),
         "ollama": _StubAdapter(provider_key="ollama", display_name="Local", events=events),
     }
@@ -66,7 +79,17 @@ def test_ai_provider_harness_lists_the_six_native_providers():
     keys = {item["provider_key"] for item in providers}
     assert {"anthropic", "openai", "gemini", "azure-openai", "bedrock", "ollama"} == keys
     for item in providers:
-        assert set(["provider_key", "display_name", "capabilities", "healthy", "status", "health", "model_label"]).issubset(item)
+        assert set(
+            [
+                "provider_key",
+                "display_name",
+                "capabilities",
+                "healthy",
+                "status",
+                "health",
+                "model_label",
+            ]
+        ).issubset(item)
 
 
 def test_ai_provider_harness_returns_grounded_draft_output():

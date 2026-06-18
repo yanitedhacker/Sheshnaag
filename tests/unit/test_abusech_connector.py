@@ -13,7 +13,6 @@ from app.ingestion.misp_connector import (
     get_registered_ioc_connectors,
 )
 
-
 SAMPLE_URLHAUS = {
     "query_status": "ok",
     "urls": [
@@ -99,6 +98,7 @@ def _mock_response(status_code: int = 200, json_body=None):
 # Health
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_health_false_without_env(monkeypatch):
     monkeypatch.delenv("ABUSECH_AUTH_KEY", raising=False)
@@ -115,6 +115,7 @@ def test_health_true_with_env(monkeypatch):
 # Fetch without env
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_returns_empty_without_env(monkeypatch):
     monkeypatch.delenv("ABUSECH_AUTH_KEY", raising=False)
@@ -127,6 +128,7 @@ def test_fetch_returns_empty_without_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # URLhaus
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_urlhaus_normalizes():
@@ -142,7 +144,7 @@ def test_fetch_urlhaus_normalizes():
     assert records[0]["value"] == "http://bad.example/pw.exe"
     assert "emotet" in records[0]["tags"]
     assert records[0]["confidence"] == 0.85  # online
-    assert records[1]["confidence"] == 0.5   # offline
+    assert records[1]["confidence"] == 0.5  # offline
 
     call = session.post.call_args
     assert call.args[0] == "https://urlhaus-api.abuse.ch/v1/urls/recent/"
@@ -153,6 +155,7 @@ def test_fetch_urlhaus_normalizes():
 # ---------------------------------------------------------------------------
 # MalwareBazaar
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_malwarebazaar_normalizes():
@@ -178,6 +181,7 @@ def test_fetch_malwarebazaar_normalizes():
 # ThreatFox
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_threatfox_normalizes():
     session = MagicMock()
@@ -202,6 +206,7 @@ def test_fetch_threatfox_normalizes():
 # ---------------------------------------------------------------------------
 # Generic fetch
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_runs_all_three_sources_by_default():
@@ -230,6 +235,7 @@ def test_fetch_runs_subset_when_sources_specified():
 # ---------------------------------------------------------------------------
 # Rate-limit / errors
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_retries_on_429_then_succeeds():
@@ -291,6 +297,7 @@ def test_fetch_returns_empty_on_bad_query_status():
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_abusech_registered():

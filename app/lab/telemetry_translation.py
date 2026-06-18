@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
 from app.lab.telemetry_envelope import validate_runtime_event
 from app.lab.telemetry_policy_packs import ENTERPRISE_STARTER_RULES
@@ -14,9 +14,11 @@ def _severity_rank(sev: str) -> int:
     return order.get(str(sev).lower(), 0)
 
 
-def events_to_findings(events: List[Dict[str, Any]], *, max_findings: int = 50) -> List[Dict[str, Any]]:
+def events_to_findings(
+    events: list[dict[str, Any]], *, max_findings: int = 50
+) -> list[dict[str, Any]]:
     """Group normalized events into summarized findings."""
-    buckets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for evt in events:
         ok, _ = validate_runtime_event(evt)
         if not ok:
@@ -25,7 +27,7 @@ def events_to_findings(events: List[Dict[str, Any]], *, max_findings: int = 50) 
         key = f"{tool}:{evt.get('severity', 'info')}:{evt.get('policy_match', {}).get('rule', 'generic')}"
         buckets[key].append(evt)
 
-    findings: List[Dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
     for key, evts in buckets.items():
         top = max(evts, key=lambda e: _severity_rank(str(e.get("severity", "info"))))
         findings.append(
@@ -44,9 +46,11 @@ def events_to_findings(events: List[Dict[str, Any]], *, max_findings: int = 50) 
     return findings[:max_findings]
 
 
-def apply_policy_pack(events: List[Dict[str, Any]], pack_rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def apply_policy_pack(
+    events: list[dict[str, Any]], pack_rules: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Attach policy rule hits to events (lightweight string match)."""
-    tagged: List[Dict[str, Any]] = []
+    tagged: list[dict[str, Any]] = []
     for evt in events:
         e = dict(evt)
         cmd = ""
@@ -67,7 +71,7 @@ def apply_policy_pack(events: List[Dict[str, Any]], pack_rules: List[Dict[str, A
     return tagged
 
 
-def translate_with_enterprise_pack(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+def translate_with_enterprise_pack(events: list[dict[str, Any]]) -> dict[str, Any]:
     tagged = apply_policy_pack(events, ENTERPRISE_STARTER_RULES)
     return {
         "findings": events_to_findings(tagged),

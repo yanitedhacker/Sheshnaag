@@ -6,8 +6,6 @@ turns already-retrieved evidence into operator-friendly explanations.
 
 from __future__ import annotations
 
-from typing import Dict, List
-
 
 class AIGatewayService:
     """Synthesize markdown strictly from supplied evidence."""
@@ -18,7 +16,7 @@ class AIGatewayService:
         intent: str,
         query: str,
         structured_context: dict,
-        retrieved_chunks: List[dict],
+        retrieved_chunks: list[dict],
     ) -> dict:
         """Return answer markdown and citations without inventing unsupported facts."""
         if intent == "why_top_action":
@@ -35,7 +33,7 @@ class AIGatewayService:
             "cannot_answer_reason": "I could not ground that request with supported evidence.",
         }
 
-    def _why_top_action(self, context: dict, chunks: List[dict]) -> dict:
+    def _why_top_action(self, context: dict, chunks: list[dict]) -> dict:
         action = context["action"]
         evidence_lines = "\n".join(
             f"- {item['title']}: {item['summary']}" for item in action.get("evidence", [])[:4]
@@ -57,11 +55,15 @@ class AIGatewayService:
             "cannot_answer_reason": None,
         }
 
-    def _attack_paths(self, context: dict, chunks: List[dict]) -> dict:
+    def _attack_paths(self, context: dict, chunks: list[dict]) -> dict:
         asset_name = context["asset_name"]
         paths = context["paths"]
-        path_lines = "\n".join(f"- `{path['summary']}` (score `{path['score']}`)" for path in paths[:5])
-        source_lines = "\n".join(f"- {chunk['title']}: {chunk['content'][:160].strip()}" for chunk in chunks[:3])
+        path_lines = "\n".join(
+            f"- `{path['summary']}` (score `{path['score']}`)" for path in paths[:5]
+        )
+        source_lines = "\n".join(
+            f"- {chunk['title']}: {chunk['content'][:160].strip()}" for chunk in chunks[:3]
+        )
         return {
             "answer_markdown": (
                 f"## Attack Paths for `{asset_name}`\n\n"
@@ -69,17 +71,21 @@ class AIGatewayService:
                 f"### Supporting Context\n{source_lines or '- No additional documents matched the asset context.'}"
             ),
             "confidence": 0.82 if paths else 0.0,
-            "cannot_answer_reason": None if paths else "No attack path evidence was found for that asset.",
+            "cannot_answer_reason": None
+            if paths
+            else "No attack path evidence was found for that asset.",
         }
 
-    def _cab_memo(self, context: dict, chunks: List[dict]) -> dict:
+    def _cab_memo(self, context: dict, chunks: list[dict]) -> dict:
         actions = context["actions"]
         lines = "\n".join(
             f"- `{action['title']}` -> `{action['recommended_action']}` "
             f"(risk `{action['actionable_risk_score']}`, approval `{action.get('approval_state', 'pending_review')}`)"
             for action in actions[:4]
         )
-        source_lines = "\n".join(f"- {chunk['title']}: {chunk['content'][:150].strip()}" for chunk in chunks[:4])
+        source_lines = "\n".join(
+            f"- {chunk['title']}: {chunk['content'][:150].strip()}" for chunk in chunks[:4]
+        )
         return {
             "answer_markdown": (
                 "## CAB-Ready Patch Memo\n\n"
@@ -89,13 +95,17 @@ class AIGatewayService:
                 f"{source_lines or '- No supporting documents were retrieved.'}"
             ),
             "confidence": 0.78 if actions else 0.0,
-            "cannot_answer_reason": None if actions else "There are no actions available to summarize.",
+            "cannot_answer_reason": None
+            if actions
+            else "There are no actions available to summarize.",
         }
 
-    def _weekly_summary(self, context: dict, chunks: List[dict]) -> dict:
+    def _weekly_summary(self, context: dict, chunks: list[dict]) -> dict:
         actions = context["actions"]
         stats = context.get("stats", {})
-        source_lines = "\n".join(f"- {chunk['title']}: {chunk['content'][:150].strip()}" for chunk in chunks[:4])
+        source_lines = "\n".join(
+            f"- {chunk['title']}: {chunk['content'][:150].strip()}" for chunk in chunks[:4]
+        )
         lines = "\n".join(
             f"- `{action['title']}`: score `{action['actionable_risk_score']}`, paths `{action['attack_path_count']}`"
             for action in actions[:5]
@@ -112,5 +122,7 @@ class AIGatewayService:
                 f"{source_lines or '- No retrieved documents.'}"
             ),
             "confidence": 0.76 if actions else 0.0,
-            "cannot_answer_reason": None if actions else "There is not enough ranked data to summarize this week.",
+            "cannot_answer_reason": None
+            if actions
+            else "There is not enough ranked data to summarize this week.",
         }

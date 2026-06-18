@@ -14,7 +14,6 @@ to the configured demo tenant.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -25,10 +24,7 @@ from app.core.security import require_permission
 from app.core.tenancy import resolve_tenant
 from app.services.team_analytics import TeamAnalyticsService
 
-
-router = APIRouter(
-    prefix="/api/v5/analytics", tags=["Sheshnaag V5 Team Analytics"]
-)
+router = APIRouter(prefix="/api/v5/analytics", tags=["Sheshnaag V5 Team Analytics"])
 
 
 # ----- response models -----
@@ -45,43 +41,43 @@ class MttrResponse(BaseModel):
     window_start: datetime
     window_end: datetime
     sample_count: int
-    overall_mean_seconds: Optional[float]
-    overall_p50_seconds: Optional[float]
-    overall_p95_seconds: Optional[float]
-    by_analyst: Dict[str, MttrAnalystEntry]
+    overall_mean_seconds: float | None
+    overall_p50_seconds: float | None
+    overall_p95_seconds: float | None
+    by_analyst: dict[str, MttrAnalystEntry]
 
 
 class ReviewLatencyResponse(BaseModel):
     window_start: datetime
     window_end: datetime
     sample_count: int
-    overall_mean_seconds: Optional[float]
-    overall_p50_seconds: Optional[float]
-    overall_p95_seconds: Optional[float]
-    by_reviewer: Dict[str, MttrAnalystEntry]
+    overall_mean_seconds: float | None
+    overall_p50_seconds: float | None
+    overall_p95_seconds: float | None
+    by_reviewer: dict[str, MttrAnalystEntry]
 
 
 class AttackDriftResponse(BaseModel):
     window_seconds: int
-    current_window: List[str]
-    prior_window: List[str]
-    new_in_current: List[str]
-    dropped_from_prior: List[str]
+    current_window: list[str]
+    prior_window: list[str]
+    new_in_current: list[str]
+    dropped_from_prior: list[str]
 
 
 class CapabilityUsageResponse(BaseModel):
     window_start: datetime
     window_end: datetime
-    by_capability: Dict[str, int]
-    by_actor: Dict[str, Dict[str, int]]
+    by_capability: dict[str, int]
+    by_actor: dict[str, dict[str, int]]
     distinct_actors: int
 
 
 class QueueAgingResponse(BaseModel):
     generated_at: datetime
-    bucket_boundaries_days: List[float]
-    bucket_labels: List[str]
-    state_buckets: Dict[str, List[int]]
+    bucket_boundaries_days: list[float]
+    bucket_labels: list[str]
+    state_buckets: dict[str, list[int]]
 
 
 class AnalyticsSummaryResponse(BaseModel):
@@ -93,7 +89,7 @@ class AnalyticsSummaryResponse(BaseModel):
     mttr: MttrResponse
     review_latency: ReviewLatencyResponse
     queue_aging: QueueAgingResponse
-    ai_session_volume: Dict[str, int]
+    ai_session_volume: dict[str, int]
 
 
 _BUCKET_LABELS = ["<1d", "1-3d", "3-7d", "7-14d", ">14d"]
@@ -105,8 +101,8 @@ def _service(session: Session) -> TeamAnalyticsService:
 
 @router.get("/mttr", response_model=MttrResponse)
 def mttr(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     window_days: int = Query(30, ge=1, le=365),
     session: Session = Depends(get_sync_session),
     _td=Depends(require_permission("analytics.read")),
@@ -122,16 +118,14 @@ def mttr(
         overall_mean_seconds=report.overall_mean_seconds,
         overall_p50_seconds=report.overall_p50_seconds,
         overall_p95_seconds=report.overall_p95_seconds,
-        by_analyst={
-            actor: MttrAnalystEntry(**vals) for actor, vals in report.by_analyst.items()
-        },
+        by_analyst={actor: MttrAnalystEntry(**vals) for actor, vals in report.by_analyst.items()},
     )
 
 
 @router.get("/review-latency", response_model=ReviewLatencyResponse)
 def review_latency(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     window_days: int = Query(30, ge=1, le=365),
     session: Session = Depends(get_sync_session),
     _td=Depends(require_permission("analytics.read")),
@@ -147,16 +141,14 @@ def review_latency(
         overall_mean_seconds=report.overall_mean_seconds,
         overall_p50_seconds=report.overall_p50_seconds,
         overall_p95_seconds=report.overall_p95_seconds,
-        by_reviewer={
-            actor: MttrAnalystEntry(**vals) for actor, vals in report.by_reviewer.items()
-        },
+        by_reviewer={actor: MttrAnalystEntry(**vals) for actor, vals in report.by_reviewer.items()},
     )
 
 
 @router.get("/attack-drift", response_model=AttackDriftResponse)
 def attack_drift(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     window_days: int = Query(30, ge=1, le=365),
     session: Session = Depends(get_sync_session),
     _td=Depends(require_permission("analytics.read")),
@@ -176,8 +168,8 @@ def attack_drift(
 
 @router.get("/capability-usage", response_model=CapabilityUsageResponse)
 def capability_usage(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     window_days: int = Query(30, ge=1, le=365),
     session: Session = Depends(get_sync_session),
     _td=Depends(require_permission("analytics.read")),
@@ -197,8 +189,8 @@ def capability_usage(
 
 @router.get("/queue-aging", response_model=QueueAgingResponse)
 def queue_aging(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     _td=Depends(require_permission("analytics.read")),
 ) -> QueueAgingResponse:
@@ -216,8 +208,8 @@ def queue_aging(
 
 @router.get("/summary", response_model=AnalyticsSummaryResponse)
 def summary(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     window_days: int = Query(30, ge=1, le=365),
     session: Session = Depends(get_sync_session),
     _td=Depends(require_permission("analytics.read")),
@@ -242,8 +234,7 @@ def summary(
             overall_p50_seconds=mttr_r.overall_p50_seconds,
             overall_p95_seconds=mttr_r.overall_p95_seconds,
             by_analyst={
-                actor: MttrAnalystEntry(**vals)
-                for actor, vals in mttr_r.by_analyst.items()
+                actor: MttrAnalystEntry(**vals) for actor, vals in mttr_r.by_analyst.items()
             },
         ),
         review_latency=ReviewLatencyResponse(
@@ -254,8 +245,7 @@ def summary(
             overall_p50_seconds=rev_r.overall_p50_seconds,
             overall_p95_seconds=rev_r.overall_p95_seconds,
             by_reviewer={
-                actor: MttrAnalystEntry(**vals)
-                for actor, vals in rev_r.by_reviewer.items()
+                actor: MttrAnalystEntry(**vals) for actor, vals in rev_r.by_reviewer.items()
             },
         ),
         queue_aging=QueueAgingResponse(

@@ -1,7 +1,5 @@
 """V3 prevention artifact APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -14,8 +12,8 @@ router = APIRouter(prefix="/api/prevention", tags=["Sheshnaag V3 Prevention"])
 
 
 class PreventionCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     analysis_case_id: int
     artifact_type: str
     name: str
@@ -24,28 +22,36 @@ class PreventionCreateRequest(BaseModel):
 
 
 class PreventionReviewRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     artifact_id: int
     reviewer_name: str
     decision: str
-    rationale: Optional[str] = None
+    rationale: str | None = None
 
 
 @router.get("")
 def list_prevention(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
-    analysis_case_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
+    analysis_case_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
-    return MalwareLabService(session).list_prevention_artifacts(tenant, analysis_case_id=analysis_case_id)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
+    return MalwareLabService(session).list_prevention_artifacts(
+        tenant, analysis_case_id=analysis_case_id
+    )
 
 
 @router.post("")
-def create_prevention(request: PreventionCreateRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+def create_prevention(
+    request: PreventionCreateRequest, session: Session = Depends(get_sync_session)
+):
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).create_prevention_artifact(
             tenant,
@@ -60,8 +66,12 @@ def create_prevention(request: PreventionCreateRequest, session: Session = Depen
 
 
 @router.post("/review")
-def review_prevention(request: PreventionReviewRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+def review_prevention(
+    request: PreventionReviewRequest, session: Session = Depends(get_sync_session)
+):
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).review_prevention_artifact(
             tenant,

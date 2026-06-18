@@ -100,10 +100,13 @@ def test_dispatch_launcher_raises_for_unknown_kind():
 def test_pe_launcher_libvirt_path(tmp_path):
     launcher = PeLauncher()
     inputs = _make_inputs(tmp_path)
-    with patch("app.lab.launchers.pe_launcher.shutil.which", return_value="/usr/bin/virsh"), patch(
-        "app.lab.launchers.pe_launcher.subprocess.run",
-        return_value=_completed(rc=0),
-    ) as run_mock:
+    with (
+        patch("app.lab.launchers.pe_launcher.shutil.which", return_value="/usr/bin/virsh"),
+        patch(
+            "app.lab.launchers.pe_launcher.subprocess.run",
+            return_value=_completed(rc=0),
+        ) as run_mock,
+    ):
         result = launcher.launch(**inputs)
     assert isinstance(result, LauncherResult)
     assert result.exit_code == 0
@@ -126,10 +129,13 @@ def test_pe_launcher_dry_run_when_no_binaries(tmp_path):
 def test_elf_launcher_docker_path(tmp_path):
     launcher = ElfLauncher()
     inputs = _make_inputs(tmp_path)
-    with patch("app.lab.launchers.elf_launcher.shutil.which", return_value="/usr/bin/docker"), patch(
-        "app.lab.launchers.elf_launcher.subprocess.run",
-        return_value=_completed(rc=0),
-    ) as run_mock:
+    with (
+        patch("app.lab.launchers.elf_launcher.shutil.which", return_value="/usr/bin/docker"),
+        patch(
+            "app.lab.launchers.elf_launcher.subprocess.run",
+            return_value=_completed(rc=0),
+        ) as run_mock,
+    ):
         result = launcher.launch(**inputs)
     assert result.metadata["mode"] == "docker"
     assert run_mock.call_count == 1
@@ -143,10 +149,13 @@ def test_elf_launcher_docker_path(tmp_path):
 def test_browser_launcher_docker_path(tmp_path):
     launcher = BrowserLauncher()
     inputs = _make_inputs(tmp_path)
-    with patch("app.lab.launchers.browser_launcher.shutil.which", return_value="/usr/bin/docker"), patch(
-        "app.lab.launchers.browser_launcher.subprocess.run",
-        return_value=_completed(rc=0),
-    ) as run_mock:
+    with (
+        patch("app.lab.launchers.browser_launcher.shutil.which", return_value="/usr/bin/docker"),
+        patch(
+            "app.lab.launchers.browser_launcher.subprocess.run",
+            return_value=_completed(rc=0),
+        ) as run_mock,
+    ):
         result = launcher.launch(**inputs)
     assert result.metadata["mode"] == "docker-chromium"
     argv = run_mock.call_args.args[0]
@@ -225,12 +234,14 @@ def test_url_launcher_docker_path(tmp_path):
     popen_mock.pid = 1234
     popen_mock.terminate = MagicMock()
     popen_mock.wait = MagicMock()
-    with patch("app.lab.launchers.url_launcher.shutil.which", return_value="/usr/bin/docker"), patch(
-        "app.lab.launchers.url_launcher.subprocess.Popen", return_value=popen_mock
-    ), patch(
-        "app.lab.launchers.url_launcher.subprocess.run",
-        return_value=_completed(rc=0),
-    ) as run_mock:
+    with (
+        patch("app.lab.launchers.url_launcher.shutil.which", return_value="/usr/bin/docker"),
+        patch("app.lab.launchers.url_launcher.subprocess.Popen", return_value=popen_mock),
+        patch(
+            "app.lab.launchers.url_launcher.subprocess.run",
+            return_value=_completed(rc=0),
+        ) as run_mock,
+    ):
         result = launcher.launch(**inputs)
     assert result.metadata["mode"] == "docker-chromium"
     assert run_mock.call_count == 1

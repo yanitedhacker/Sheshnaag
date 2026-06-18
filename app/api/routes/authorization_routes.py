@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -35,8 +35,8 @@ class AuthorizationRequest(BaseModel):
     requester: str
     reason: str
     reviewers: list[dict[str, Any]] = Field(default_factory=list)
-    requested_ttl_seconds: Optional[int] = None
-    engagement_ref: Optional[str] = None
+    requested_ttl_seconds: int | None = None
+    engagement_ref: str | None = None
     is_admin_approved: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
 
@@ -70,8 +70,8 @@ def _artifact_payload(row: AuthorizationArtifact) -> dict[str, Any]:
 
 @router.get("")
 def list_authorizations(
-    capability: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
+    capability: str | None = Query(None),
+    state: str | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
@@ -164,7 +164,7 @@ def authorization_chain_root(
 
 @router.get("/chain/verify")
 def authorization_chain_verify(
-    since: Optional[int] = Query(None),
+    since: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):

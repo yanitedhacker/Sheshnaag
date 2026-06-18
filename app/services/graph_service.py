@@ -18,13 +18,13 @@ IOC pivot vocabulary (V4 Phase C slice 4):
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from collections.abc import Iterable, Sequence
 
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_get_json, cache_set_json
 from app.models.asset import Asset, AssetVulnerability
-from app.models.cve import AffectedProduct, CVE
+from app.models.cve import CVE, AffectedProduct
 from app.models.malware_lab import (
     AnalysisCase,
     BehaviorFinding,
@@ -43,7 +43,6 @@ from app.models.v2 import (
     VexStatement,
 )
 
-
 #: Edge kinds introduced by the V4 Phase C slice-4 IOC pivot extension.
 IOC_EDGE_KINDS: frozenset[str] = frozenset(
     {
@@ -56,9 +55,7 @@ IOC_EDGE_KINDS: frozenset[str] = frozenset(
 )
 
 #: Node types introduced alongside the IOC pivot graph.
-IOC_NODE_TYPES: frozenset[str] = frozenset(
-    {"indicator", "finding", "specimen"}
-)
+IOC_NODE_TYPES: frozenset[str] = frozenset({"indicator", "finding", "specimen"})
 
 #: Deterministic weights for non-confidence-driven IOC edges.
 _IOC_TO_SPECIMEN_WEIGHT = 0.9
@@ -74,18 +71,32 @@ class ExposureGraphService:
     def __init__(self, session: Session):
         self.session = session
 
-    def rebuild_graph(self, tenant: Tenant) -> Dict[str, int]:
+    def rebuild_graph(self, tenant: Tenant) -> dict[str, int]:
         """Rebuild persisted graph nodes and edges for a tenant."""
-        self.session.query(ExposureGraphEdge).filter(ExposureGraphEdge.tenant_id == tenant.id).delete(synchronize_session=False)
-        self.session.query(ExposureGraphNode).filter(ExposureGraphNode.tenant_id == tenant.id).delete(synchronize_session=False)
+        self.session.query(ExposureGraphEdge).filter(
+            ExposureGraphEdge.tenant_id == tenant.id
+        ).delete(synchronize_session=False)
+        self.session.query(ExposureGraphNode).filter(
+            ExposureGraphNode.tenant_id == tenant.id
+        ).delete(synchronize_session=False)
         self.session.flush()
 
-        assets = self.session.query(Asset).filter(Asset.tenant_id == tenant.id, Asset.is_active.is_(True)).all()
+        assets = (
+            self.session.query(Asset)
+            .filter(Asset.tenant_id == tenant.id, Asset.is_active.is_(True))
+            .all()
+        )
         asset_ids = [asset.id for asset in assets]
 
         services = self.session.query(Service).filter(Service.tenant_id == tenant.id).all()
-        identities = self.session.query(IdentityPrincipal).filter(IdentityPrincipal.tenant_id == tenant.id).all()
-        exposures = self.session.query(NetworkExposure).filter(NetworkExposure.tenant_id == tenant.id).all()
+        identities = (
+            self.session.query(IdentityPrincipal)
+            .filter(IdentityPrincipal.tenant_id == tenant.id)
+            .all()
+        )
+        exposures = (
+            self.session.query(NetworkExposure).filter(NetworkExposure.tenant_id == tenant.id).all()
+        )
 
         components = (
             self.session.query(SoftwareComponent)
@@ -112,9 +123,11 @@ class ExposureGraphService:
             else []
         )
 
-        node_map: Dict[str, ExposureGraphNode] = {}
+        node_map: dict[str, ExposureGraphNode] = {}
 
-        def add_node(node_type: str, node_key: str, label: str, metadata: Optional[dict] = None) -> ExposureGraphNode:
+        def add_node(
+            node_type: str, node_key: str, label: str, metadata: dict | None = None
+        ) -> ExposureGraphNode:
             node = ExposureGraphNode(
                 tenant_id=tenant.id,
                 node_type=node_type,
@@ -128,7 +141,9 @@ class ExposureGraphService:
             return node
 
         for asset in assets:
-            public_count = sum(1 for exposure in exposures if exposure.asset_id == asset.id and exposure.is_public)
+            public_count = sum(
+                1 for exposure in exposures if exposure.asset_id == asset.id and exposure.is_public
+            )
             add_node(
                 "asset",
                 f"asset:{asset.id}",
@@ -200,13 +215,23 @@ class ExposureGraphService:
                 },
             )
 
-        edges: List[Tuple[str, str, str, float, dict]] = []
+        edges: list[tuple[str, str, str, float, dict]] = []
 
         for service in services:
             if service.asset_id:
-                edges.append((f"asset:{service.asset_id}", f"service:{service.id}", "runs", 1.0, {}))
+                edges.append(
+                    (f"asset:{service.asset_id}", f"service:{service.id}", "runs", 1.0, {})
+                )
             if service.upstream_service_id:
-                edges.append((f"service:{service.id}", f"service:{service.upstream_service_id}", "reachable_from", 1.2, {}))
+                edges.append(
+                    (
+                        f"service:{service.id}",
+                        f"service:{service.upstream_service_id}",
+                        "reachable_from",
+                        1.2,
+                        {},
+                    )
+                )
 
         for exposure in exposures:
             if exposure.service_id:
@@ -225,21 +250,55 @@ class ExposureGraphService:
                     )
                 )
 
-        component_cves = self._component_cve_map(component_ids=[component.id for component in components], asset_ids=asset_ids)
+        component_cves = self._component_cve_map(
+            component_ids=[component.id for component in components], asset_ids=asset_ids
+        )
         for component_id, mapped_cves in component_cves.items():
             for cve in mapped_cves:
-                edges.append((f"component:{component_id}", f"cve:{cve.id}", "contains_vulnerability", 1.6, {}))
+                edges.append(
+                    (
+                        f"component:{component_id}",
+                        f"cve:{cve.id}",
+                        "contains_vulnerability",
+                        1.6,
+                        {},
+                    )
+                )
 
         for asset in assets:
             for asset_link in asset.software_components:
                 if asset_link.service_id:
-                    edges.append((f"service:{asset_link.service_id}", f"component:{asset_link.software_component_id}", "depends_on", 1.0, {}))
+                    edges.append(
+                        (
+                            f"service:{asset_link.service_id}",
+                            f"component:{asset_link.software_component_id}",
+                            "depends_on",
+                            1.0,
+                            {},
+                        )
+                    )
                 else:
-                    edges.append((f"asset:{asset.id}", f"component:{asset_link.software_component_id}", "depends_on", 1.0, {}))
+                    edges.append(
+                        (
+                            f"asset:{asset.id}",
+                            f"component:{asset_link.software_component_id}",
+                            "depends_on",
+                            1.0,
+                            {},
+                        )
+                    )
 
         for identity in identities:
             if identity.asset_id:
-                edges.append((f"identity:{identity.id}", f"asset:{identity.asset_id}", "authenticates_to", 1.4, {}))
+                edges.append(
+                    (
+                        f"identity:{identity.id}",
+                        f"asset:{identity.asset_id}",
+                        "authenticates_to",
+                        1.4,
+                        {},
+                    )
+                )
                 if identity.can_lateral_move:
                     for service in services:
                         if service.asset_id == identity.asset_id and service.internet_exposed:
@@ -256,7 +315,9 @@ class ExposureGraphService:
         for patch in patches:
             for cve in patch.cves or []:
                 if f"cve:{cve.id}" in node_map:
-                    edges.append((f"cve:{cve.id}", f"patch:{patch.patch_id}", "mitigated_by", 1.0, {}))
+                    edges.append(
+                        (f"cve:{cve.id}", f"patch:{patch.patch_id}", "mitigated_by", 1.0, {})
+                    )
 
         for from_key, to_key, edge_type, weight, metadata in edges:
             from_node = node_map.get(from_key)
@@ -281,25 +342,37 @@ class ExposureGraphService:
         self,
         tenant: Tenant,
         *,
-        asset_id: Optional[int] = None,
-        cve_id: Optional[str] = None,
+        asset_id: int | None = None,
+        cve_id: str | None = None,
         limit: int = 5,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Return graph snapshot and top attack paths for the tenant."""
         cache_key = f"sheshnaag:v2:graph:{tenant.id}:{asset_id or 'all'}:{cve_id or 'all'}:{limit}"
         cached = cache_get_json(cache_key)
         if cached is not None:
             return {**cached, "cached": True}
 
-        node_count = self.session.query(ExposureGraphNode).filter(ExposureGraphNode.tenant_id == tenant.id).count()
+        node_count = (
+            self.session.query(ExposureGraphNode)
+            .filter(ExposureGraphNode.tenant_id == tenant.id)
+            .count()
+        )
         if node_count == 0:
             self.rebuild_graph(tenant)
 
-        nodes = self.session.query(ExposureGraphNode).filter(ExposureGraphNode.tenant_id == tenant.id).all()
-        edges = self.session.query(ExposureGraphEdge).filter(ExposureGraphEdge.tenant_id == tenant.id).all()
+        nodes = (
+            self.session.query(ExposureGraphNode)
+            .filter(ExposureGraphNode.tenant_id == tenant.id)
+            .all()
+        )
+        edges = (
+            self.session.query(ExposureGraphEdge)
+            .filter(ExposureGraphEdge.tenant_id == tenant.id)
+            .all()
+        )
 
         node_by_id = {node.id: node for node in nodes}
-        adjacency: Dict[int, List[Tuple[int, ExposureGraphEdge]]] = defaultdict(list)
+        adjacency: dict[int, list[tuple[int, ExposureGraphEdge]]] = defaultdict(list)
         for edge in edges:
             adjacency[edge.from_node_id].append((edge.to_node_id, edge))
 
@@ -313,17 +386,31 @@ class ExposureGraphService:
             )
         ]
         if not start_nodes:
-            start_nodes = [node for node in nodes if node.node_type == "asset" and (node.meta or {}).get("public_exposure_count")]
+            start_nodes = [
+                node
+                for node in nodes
+                if node.node_type == "asset" and (node.meta or {}).get("public_exposure_count")
+            ]
 
         if cve_id:
-            target_nodes = [node for node in nodes if node.node_type == "cve" and (node.meta or {}).get("cve_id") == cve_id.upper()]
+            target_nodes = [
+                node
+                for node in nodes
+                if node.node_type == "cve" and (node.meta or {}).get("cve_id") == cve_id.upper()
+            ]
         elif asset_id is not None:
-            target_nodes = [node for node in nodes if node.node_type == "asset" and node.node_key == f"asset:{asset_id}"]
+            target_nodes = [
+                node
+                for node in nodes
+                if node.node_type == "asset" and node.node_key == f"asset:{asset_id}"
+            ]
         else:
             target_nodes = [node for node in nodes if node.node_type == "cve"]
 
         target_ids = {node.id for node in target_nodes}
-        top_paths = self._search_paths(node_by_id, adjacency, [node.id for node in start_nodes], target_ids, limit=limit)
+        top_paths = self._search_paths(
+            node_by_id, adjacency, [node.id for node in start_nodes], target_ids, limit=limit
+        )
 
         payload = {
             "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
@@ -340,7 +427,11 @@ class ExposureGraphService:
             return 0
         result = self.get_attack_paths(tenant, limit=20)
         wanted = {c.upper() for c in cve_ids}
-        return sum(1 for path in result["paths"] if any(label in wanted for label in path.get("labels", [])))
+        return sum(
+            1
+            for path in result["paths"]
+            if any(label in wanted for label in path.get("labels", []))
+        )
 
     # ------------------------------------------------------------------
     # V4 Phase C slice 4 — IOC pivot graph
@@ -350,8 +441,8 @@ class ExposureGraphService:
         self,
         tenant: Tenant,
         *,
-        case_id: Optional[int] = None,
-    ) -> Dict[str, int]:
+        case_id: int | None = None,
+    ) -> dict[str, int]:
         """Build or refresh indicator-centric nodes and edges for ``tenant``.
 
         This incrementally overlays IOC pivot nodes / edges on top of the
@@ -382,10 +473,8 @@ class ExposureGraphService:
             IndicatorArtifact.tenant_id == tenant.id
         )
         if case_id is not None:
-            indicator_query = indicator_query.filter(
-                IndicatorArtifact.analysis_case_id == case_id
-            )
-        indicators: List[IndicatorArtifact] = indicator_query.all()
+            indicator_query = indicator_query.filter(IndicatorArtifact.analysis_case_id == case_id)
+        indicators: list[IndicatorArtifact] = indicator_query.all()
         indicator_ids = {ind.id for ind in indicators}
 
         # ---- remove the stale slice ----------------------------------------
@@ -396,18 +485,16 @@ class ExposureGraphService:
             .filter(ExposureGraphNode.tenant_id == tenant.id)
             .all()
         )
-        existing_node_by_key: Dict[str, ExposureGraphNode] = {
+        existing_node_by_key: dict[str, ExposureGraphNode] = {
             node.node_key: node for node in existing_nodes
         }
-        existing_node_by_id: Dict[int, ExposureGraphNode] = {
+        existing_node_by_id: dict[int, ExposureGraphNode] = {
             node.id: node for node in existing_nodes
         }
 
-        indicator_node_keys_in_scope = {
-            f"indicator:{ind.id}" for ind in indicators
-        }
+        indicator_node_keys_in_scope = {f"indicator:{ind.id}" for ind in indicators}
 
-        ioc_edge_ids_to_delete: List[int] = []
+        ioc_edge_ids_to_delete: list[int] = []
         for edge in (
             self.session.query(ExposureGraphEdge)
             .filter(
@@ -422,12 +509,8 @@ class ExposureGraphService:
                 ioc_edge_ids_to_delete.append(edge.id)
                 continue
             # case-scoped rebuild — only drop edges incident on in-scope indicators
-            if (
-                from_node is not None
-                and from_node.node_key in indicator_node_keys_in_scope
-            ) or (
-                to_node is not None
-                and to_node.node_key in indicator_node_keys_in_scope
+            if (from_node is not None and from_node.node_key in indicator_node_keys_in_scope) or (
+                to_node is not None and to_node.node_key in indicator_node_keys_in_scope
             ):
                 ioc_edge_ids_to_delete.append(edge.id)
 
@@ -437,7 +520,7 @@ class ExposureGraphService:
             ).delete(synchronize_session="fetch")
 
         # Indicator/finding/specimen nodes in scope are recreated fresh.
-        stale_node_ids: List[int] = []
+        stale_node_ids: list[int] = []
         for node in existing_nodes:
             if node.node_type not in IOC_NODE_TYPES:
                 continue
@@ -472,15 +555,13 @@ class ExposureGraphService:
             .filter(ExposureGraphNode.tenant_id == tenant.id)
             .all()
         )
-        node_by_key: Dict[str, ExposureGraphNode] = {
-            node.node_key: node for node in existing_nodes
-        }
+        node_by_key: dict[str, ExposureGraphNode] = {node.node_key: node for node in existing_nodes}
 
         def ensure_node(
             node_type: str,
             node_key: str,
             label: str,
-            metadata: Optional[dict] = None,
+            metadata: dict | None = None,
         ) -> ExposureGraphNode:
             existing = node_by_key.get(node_key)
             if existing is not None:
@@ -498,8 +579,8 @@ class ExposureGraphService:
             return node
 
         # ---- gather dependent rows -----------------------------------------
-        findings_by_case: Dict[int, List[BehaviorFinding]] = defaultdict(list)
-        findings_by_id: Dict[int, BehaviorFinding] = {}
+        findings_by_case: dict[int, list[BehaviorFinding]] = defaultdict(list)
+        findings_by_id: dict[int, BehaviorFinding] = {}
         if indicators:
             case_ids_needed = {ind.analysis_case_id for ind in indicators}
             for finding in (
@@ -513,30 +594,25 @@ class ExposureGraphService:
                 findings_by_case[finding.analysis_case_id].append(finding)
                 findings_by_id[finding.id] = finding
 
-        specimens_by_id: Dict[int, Specimen] = {
+        specimens_by_id: dict[int, Specimen] = {
             spec.id: spec
-            for spec in self.session.query(Specimen)
-            .filter(Specimen.tenant_id == tenant.id)
-            .all()
+            for spec in self.session.query(Specimen).filter(Specimen.tenant_id == tenant.id).all()
         }
 
-        cases_by_id: Dict[int, AnalysisCase] = {
+        cases_by_id: dict[int, AnalysisCase] = {
             case.id: case
             for case in self.session.query(AnalysisCase)
             .filter(AnalysisCase.tenant_id == tenant.id)
             .all()
         }
 
-        assets_by_id: Dict[int, Asset] = {
+        assets_by_id: dict[int, Asset] = {
             asset.id: asset
-            for asset in self.session.query(Asset)
-            .filter(Asset.tenant_id == tenant.id)
-            .all()
+            for asset in self.session.query(Asset).filter(Asset.tenant_id == tenant.id).all()
         }
 
-        cves_by_id: Dict[str, CVE] = {
-            cve.cve_id.upper(): cve
-            for cve in self.session.query(CVE).all()
+        cves_by_id: dict[str, CVE] = {
+            cve.cve_id.upper(): cve for cve in self.session.query(CVE).all()
         }
 
         # For co-occurrence we need the full case-membership map for every
@@ -544,18 +620,16 @@ class ExposureGraphService:
         # — the same IOC may be represented by multiple rows across cases).
         # We collapse rows to their canonical identity so the formula
         # ``shared / max(total_cases)`` matches the architecture spec.
-        tenant_indicators: List[IndicatorArtifact] = (
+        tenant_indicators: list[IndicatorArtifact] = (
             self.session.query(IndicatorArtifact)
             .filter(IndicatorArtifact.tenant_id == tenant.id)
             .all()
         )
-        indicator_by_id: Dict[int, IndicatorArtifact] = {
-            ind.id: ind for ind in tenant_indicators
-        }
+        indicator_by_id: dict[int, IndicatorArtifact] = {ind.id: ind for ind in tenant_indicators}
         # canonical identity -> set of case ids the IOC appears in
-        cases_per_identity: Dict[str, Set[int]] = defaultdict(set)
+        cases_per_identity: dict[str, set[int]] = defaultdict(set)
         # canonical identity -> set of indicator-row ids sharing that identity
-        rows_per_identity: Dict[str, Set[int]] = defaultdict(set)
+        rows_per_identity: dict[str, set[int]] = defaultdict(set)
         for ind in tenant_indicators:
             identity_key = self._indicator_value_key(ind)
             cases_per_identity[identity_key].add(ind.analysis_case_id)
@@ -616,7 +690,7 @@ class ExposureGraphService:
             to_key: str,
             edge_type: str,
             weight: float,
-            metadata: Optional[dict] = None,
+            metadata: dict | None = None,
         ) -> bool:
             from_node = node_by_key.get(from_key)
             to_node = node_by_key.get(to_key)
@@ -639,7 +713,7 @@ class ExposureGraphService:
             payload = ind.payload or {}
 
             # ioc_to_finding -------------------------------------------------
-            finding_ids_linked: Set[int] = set()
+            finding_ids_linked: set[int] = set()
             # explicit link via payload
             for raw_fid in self._iter_ints(payload.get("finding_ids")):
                 finding_ids_linked.add(raw_fid)
@@ -665,7 +739,7 @@ class ExposureGraphService:
                     edges_created += 1
 
             # ioc_to_specimen ------------------------------------------------
-            specimen_ids_linked: Set[int] = set()
+            specimen_ids_linked: set[int] = set()
             for raw_sid in self._iter_ints(payload.get("specimen_ids")):
                 specimen_ids_linked.add(raw_sid)
             case = cases_by_id.get(ind.analysis_case_id)
@@ -687,7 +761,7 @@ class ExposureGraphService:
                     edges_created += 1
 
             # ioc_to_cve -----------------------------------------------------
-            cve_refs: Set[str] = set()
+            cve_refs: set[str] = set()
             for raw_ref in self._iter_strings(payload.get("cve_ids")):
                 cve_refs.add(raw_ref.upper())
             for raw_ref in self._iter_strings(payload.get("cves")):
@@ -723,7 +797,7 @@ class ExposureGraphService:
                     edges_created += 1
 
             # ioc_to_asset ---------------------------------------------------
-            asset_ids_linked: Set[int] = set()
+            asset_ids_linked: set[int] = set()
             for raw_aid in self._iter_ints(payload.get("asset_ids")):
                 asset_ids_linked.add(raw_aid)
             # Also try to match by hostname/ip value when the kind is suggestive.
@@ -767,13 +841,11 @@ class ExposureGraphService:
         # single logical IOC may be represented by multiple rows, we emit
         # the edge between the *minimum-id* row for each identity — one
         # canonical node pair per logical IOC pair.
-        canonical_row_per_identity: Dict[str, int] = {
-            identity: min(row_ids)
-            for identity, row_ids in rows_per_identity.items()
-            if row_ids
+        canonical_row_per_identity: dict[str, int] = {
+            identity: min(row_ids) for identity, row_ids in rows_per_identity.items() if row_ids
         }
         considered_identities = sorted(canonical_row_per_identity.keys())
-        seen_pairs: Set[Tuple[int, int]] = set()
+        seen_pairs: set[tuple[int, int]] = set()
         for i, left_identity in enumerate(considered_identities):
             left_cases = cases_per_identity.get(left_identity, set())
             if not left_cases:
@@ -803,12 +875,10 @@ class ExposureGraphService:
                 # in the in-scope case.
                 if case_id is not None:
                     left_in_scope = any(
-                        rid in indicator_ids
-                        for rid in rows_per_identity[left_identity]
+                        rid in indicator_ids for rid in rows_per_identity[left_identity]
                     )
                     right_in_scope = any(
-                        rid in indicator_ids
-                        for rid in rows_per_identity[right_identity]
+                        rid in indicator_ids for rid in rows_per_identity[right_identity]
                     )
                     if not (left_in_scope or right_in_scope):
                         continue
@@ -837,9 +907,7 @@ class ExposureGraphService:
                     edges_created += 1
 
         self.session.flush()
-        indicator_nodes = sum(
-            1 for key in node_by_key if key.startswith("indicator:")
-        )
+        indicator_nodes = sum(1 for key in node_by_key if key.startswith("indicator:"))
         return {"nodes": indicator_nodes, "edges": edges_created}
 
     def ioc_neighborhood(
@@ -848,7 +916,7 @@ class ExposureGraphService:
         *,
         indicator_value: str,
         depth: int = 2,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Return a subgraph of nodes reachable from ``indicator_value`` within ``depth`` hops.
 
         Uses the undirected adjacency of the persisted graph so pivots
@@ -892,18 +960,16 @@ class ExposureGraphService:
             .filter(ExposureGraphEdge.tenant_id == tenant.id)
             .all()
         )
-        node_by_id: Dict[int, ExposureGraphNode] = {node.id: node for node in nodes}
+        node_by_id: dict[int, ExposureGraphNode] = {node.id: node for node in nodes}
 
-        undirected: Dict[int, List[Tuple[int, ExposureGraphEdge]]] = defaultdict(list)
+        undirected: dict[int, list[tuple[int, ExposureGraphEdge]]] = defaultdict(list)
         for edge in edges:
             undirected[edge.from_node_id].append((edge.to_node_id, edge))
             undirected[edge.to_node_id].append((edge.from_node_id, edge))
 
-        reachable_ids: Set[int] = set()
-        reachable_edge_ids: Set[int] = set()
-        frontier: deque[Tuple[int, int]] = deque(
-            (node.id, 0) for node in start_nodes
-        )
+        reachable_ids: set[int] = set()
+        reachable_edge_ids: set[int] = set()
+        frontier: deque[tuple[int, int]] = deque((node.id, 0) for node in start_nodes)
         for node in start_nodes:
             reachable_ids.add(node.id)
         while frontier:
@@ -934,7 +1000,7 @@ class ExposureGraphService:
         *,
         indicator_value: str,
         top_k: int = 10,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Return top attack paths that originate at the given indicator.
 
         Reuses :meth:`_search_paths` with the indicator node(s) as starting
@@ -958,12 +1024,10 @@ class ExposureGraphService:
             .filter(ExposureGraphEdge.tenant_id == tenant.id)
             .all()
         )
-        node_by_id: Dict[int, ExposureGraphNode] = {node.id: node for node in nodes}
+        node_by_id: dict[int, ExposureGraphNode] = {node.id: node for node in nodes}
 
         start_nodes = [
-            node
-            for node in nodes
-            if node.node_type == "indicator" and node.label == needle
+            node for node in nodes if node.node_type == "indicator" and node.label == needle
         ]
         if not start_nodes:
             return {
@@ -972,7 +1036,7 @@ class ExposureGraphService:
                 "paths": [],
             }
 
-        adjacency: Dict[int, List[Tuple[int, ExposureGraphEdge]]] = defaultdict(list)
+        adjacency: dict[int, list[tuple[int, ExposureGraphEdge]]] = defaultdict(list)
         for edge in edges:
             adjacency[edge.from_node_id].append((edge.to_node_id, edge))
             # IOC pivot paths are useful in both directions — the co-occurrence
@@ -982,11 +1046,13 @@ class ExposureGraphService:
             if edge.edge_type == "ioc_cooccurs_with":
                 continue
 
-        target_ids: Set[int] = set()
+        target_ids: set[int] = set()
         for node in nodes:
-            if node.node_type == "asset" and (node.meta or {}).get("is_crown_jewel"):
-                target_ids.add(node.id)
-            elif node.node_type == "cve":
+            if (
+                node.node_type == "asset"
+                and (node.meta or {}).get("is_crown_jewel")
+                or node.node_type == "cve"
+            ):
                 target_ids.add(node.id)
 
         paths = self._search_paths(
@@ -1017,7 +1083,7 @@ class ExposureGraphService:
         if isinstance(raw, (int,)):
             return [raw]
         if isinstance(raw, (list, tuple, set)):
-            out: List[int] = []
+            out: list[int] = []
             for item in raw:
                 try:
                     out.append(int(item))
@@ -1039,7 +1105,9 @@ class ExposureGraphService:
             return [str(item) for item in raw if item]
         return [str(raw)]
 
-    def _component_cve_map(self, *, component_ids: List[int], asset_ids: List[int]) -> Dict[int, List[CVE]]:
+    def _component_cve_map(
+        self, *, component_ids: list[int], asset_ids: list[int]
+    ) -> dict[int, list[CVE]]:
         if not component_ids:
             return {}
 
@@ -1060,21 +1128,31 @@ class ExposureGraphService:
             if asset_ids
             else []
         )
-        by_component: Dict[int, List[CVE]] = defaultdict(list)
+        by_component: dict[int, list[CVE]] = defaultdict(list)
 
-        components = self.session.query(SoftwareComponent).filter(SoftwareComponent.id.in_(component_ids)).all()
+        components = (
+            self.session.query(SoftwareComponent)
+            .filter(SoftwareComponent.id.in_(component_ids))
+            .all()
+        )
         component_index = {component.id: component for component in components}
         affected_products = self.session.query(AffectedProduct).all()
 
         for component_id, component in component_index.items():
-            matching_cves: Dict[int, CVE] = {}
+            matching_cves: dict[int, CVE] = {}
             for vuln, cve in open_vulns:
                 if cve.id not in matching_cves:
                     matching_cves[cve.id] = cve
 
             for affected in affected_products:
-                vendor_match = component.vendor and affected.vendor and component.vendor.lower() == affected.vendor.lower()
-                product_match = affected.product and component.name.lower() == affected.product.lower()
+                vendor_match = (
+                    component.vendor
+                    and affected.vendor
+                    and component.vendor.lower() == affected.vendor.lower()
+                )
+                product_match = (
+                    affected.product and component.name.lower() == affected.product.lower()
+                )
                 if vendor_match and product_match:
                     cve = self.session.query(CVE).filter(CVE.id == affected.cve_id).first()
                     if cve:
@@ -1091,15 +1169,15 @@ class ExposureGraphService:
 
     def _search_paths(
         self,
-        node_by_id: Dict[int, ExposureGraphNode],
-        adjacency: Dict[int, List[Tuple[int, ExposureGraphEdge]]],
-        start_ids: List[int],
+        node_by_id: dict[int, ExposureGraphNode],
+        adjacency: dict[int, list[tuple[int, ExposureGraphEdge]]],
+        start_ids: list[int],
         target_ids: set[int],
         *,
         limit: int,
         max_depth: int = 6,
-    ) -> List[dict]:
-        paths: List[dict] = []
+    ) -> list[dict]:
+        paths: list[dict] = []
 
         for start_id in start_ids:
             queue = deque([(start_id, [start_id], [], 0.0)])
@@ -1126,14 +1204,16 @@ class ExposureGraphService:
                     next_score = score + float(edge.weight or 1.0)
                     if (node_by_id[next_id].meta or {}).get("is_crown_jewel"):
                         next_score += 1.0
-                    if node_by_id[next_id].node_type == "cve" and (node_by_id[next_id].meta or {}).get("exploit_available"):
+                    if node_by_id[next_id].node_type == "cve" and (
+                        node_by_id[next_id].meta or {}
+                    ).get("exploit_available"):
                         next_score += 0.8
                     queue.append((next_id, node_path + [next_id], edge_path + [edge], next_score))
 
         paths.sort(key=lambda item: item["score"], reverse=True)
         return paths[:limit]
 
-    def case_graph(self, tenant: Tenant, *, case_id: int, depth: int = 2) -> Dict[str, object]:
+    def case_graph(self, tenant: Tenant, *, case_id: int, depth: int = 2) -> dict[str, object]:
         """Return a subgraph anchored on an :class:`AnalysisCase`.
 
         The case node is virtual: we synthesise a single ``case`` node and
@@ -1184,27 +1264,25 @@ class ExposureGraphService:
             .filter(ExposureGraphEdge.tenant_id == tenant.id)
             .all()
         )
-        node_by_id: Dict[int, ExposureGraphNode] = {node.id: node for node in all_nodes}
-        node_by_key: Dict[str, ExposureGraphNode] = {node.node_key: node for node in all_nodes}
+        node_by_id: dict[int, ExposureGraphNode] = {node.id: node for node in all_nodes}
+        node_by_key: dict[str, ExposureGraphNode] = {node.node_key: node for node in all_nodes}
 
-        seed_keys: Set[str] = set()
+        seed_keys: set[str] = set()
         for ind in indicators:
             seed_keys.add(f"indicator:{ind.id}")
         for finding in findings:
             seed_keys.add(f"finding:{finding.id}")
 
-        seed_ids: Set[int] = {
-            node_by_key[key].id for key in seed_keys if key in node_by_key
-        }
+        seed_ids: set[int] = {node_by_key[key].id for key in seed_keys if key in node_by_key}
 
-        adjacency: Dict[int, List[Tuple[int, ExposureGraphEdge]]] = defaultdict(list)
+        adjacency: dict[int, list[tuple[int, ExposureGraphEdge]]] = defaultdict(list)
         for edge in all_edges:
             adjacency[edge.from_node_id].append((edge.to_node_id, edge))
             adjacency[edge.to_node_id].append((edge.from_node_id, edge))
 
-        reachable_node_ids: Set[int] = set(seed_ids)
-        reachable_edge_ids: Set[int] = set()
-        frontier: deque[Tuple[int, int]] = deque((nid, 0) for nid in seed_ids)
+        reachable_node_ids: set[int] = set(seed_ids)
+        reachable_edge_ids: set[int] = set()
+        frontier: deque[tuple[int, int]] = deque((nid, 0) for nid in seed_ids)
         while frontier:
             current, distance = frontier.popleft()
             if distance >= depth:
@@ -1216,19 +1294,17 @@ class ExposureGraphService:
                     frontier.append((neighbor_id, distance + 1))
 
         nodes_payload = [
-            self._serialize_node(node_by_id[nid])
-            for nid in reachable_node_ids
-            if nid in node_by_id
+            self._serialize_node(node_by_id[nid]) for nid in reachable_node_ids if nid in node_by_id
         ]
         edges_payload = [
-            self._serialize_edge(edge)
-            for edge in all_edges
-            if edge.id in reachable_edge_ids
+            self._serialize_edge(edge) for edge in all_edges if edge.id in reachable_edge_ids
         ]
 
         # Synthetic case node + edges to seed nodes give the UI an explicit
         # anchor without polluting the persisted graph schema.
-        case_label = getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
+        case_label = (
+            getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
+        )
         case_node = {
             "id": -case.id,
             "node_type": "case",

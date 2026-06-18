@@ -30,8 +30,9 @@ import os
 import shutil
 import subprocess
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 from app.core.time import utc_now
 
@@ -69,14 +70,16 @@ class SnapshotManager:
         profile: Any,
         *,
         run_id: Any,
-        provider: Optional[str] = None,
+        provider: str | None = None,
     ) -> None:
         self._profile = profile
         self._run_id = run_id
         self._run_tag = f"sheshnaag-{run_id}-{uuid.uuid4().hex[:8]}"
-        self._config: Dict[str, Any] = dict(getattr(profile, "config", None) or {})
+        self._config: dict[str, Any] = dict(getattr(profile, "config", None) or {})
 
-        resolved_provider = (provider or getattr(profile, "provider_hint", "") or "").strip().lower()
+        resolved_provider = (
+            (provider or getattr(profile, "provider_hint", "") or "").strip().lower()
+        )
         if resolved_provider not in SUPPORTED_PROVIDERS:
             logger.warning(
                 "snapshot_manager.unknown_provider",
@@ -84,7 +87,7 @@ class SnapshotManager:
             )
             resolved_provider = "docker"
         self._provider = resolved_provider
-        self._events: List[Dict[str, Any]] = []
+        self._events: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -95,11 +98,11 @@ class SnapshotManager:
         return self._provider
 
     @property
-    def events(self) -> List[Dict[str, Any]]:
+    def events(self) -> list[dict[str, Any]]:
         return list(self._events)
 
     @contextmanager
-    def with_snapshot(self) -> Iterator[Dict[str, Any]]:
+    def with_snapshot(self) -> Iterator[dict[str, Any]]:
         """Capture a snapshot, yield handle, revert on exit.
 
         Yields
@@ -152,14 +155,14 @@ class SnapshotManager:
     # Provider dispatch
     # ------------------------------------------------------------------
 
-    def _create_snapshot(self) -> Dict[str, Any]:
+    def _create_snapshot(self) -> dict[str, Any]:
         if self._provider == "libvirt":
             return self._libvirt_snapshot(action="create")
         if self._provider == "lima":
             return self._lima_snapshot(action="create")
         return self._docker_snapshot(action="create")
 
-    def _revert_snapshot(self, handle: Dict[str, Any]) -> Dict[str, Any]:
+    def _revert_snapshot(self, handle: dict[str, Any]) -> dict[str, Any]:
         if self._provider == "libvirt":
             return self._libvirt_snapshot(action="revert", handle=handle)
         if self._provider == "lima":
@@ -174,10 +177,10 @@ class SnapshotManager:
         self,
         *,
         action: str,
-        handle: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        handle: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         domain = str(self._config.get("domain") or getattr(self._profile, "name", "")).strip()
-        errors: List[str] = []
+        errors: list[str] = []
         if not domain:
             errors.append("libvirt provider requires profile.config['domain'] to be set")
 
@@ -248,8 +251,8 @@ class SnapshotManager:
         self,
         *,
         action: str,
-        handle: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        handle: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         instance = str(
             self._config.get("instance")
             or self._config.get("lima_instance")
@@ -257,7 +260,7 @@ class SnapshotManager:
             or ""
         ).strip()
         disk_path = str(self._config.get("disk_path") or "").strip()
-        errors: List[str] = []
+        errors: list[str] = []
         if not instance:
             errors.append("lima provider requires profile.config['instance'] or profile.name")
 
@@ -280,7 +283,9 @@ class SnapshotManager:
                 # exit 1 often just means "already stopped" — tolerate it.
                 errors.append(f"limactl stop --force failed: {stop['stderr'][:400]}")
 
-            cow_err = self._lima_capture_baseline(disk_path=disk_path, baseline_image=baseline_image)
+            cow_err = self._lima_capture_baseline(
+                disk_path=disk_path, baseline_image=baseline_image
+            )
             if cow_err:
                 errors.append(cow_err)
             return {
@@ -328,7 +333,7 @@ class SnapshotManager:
             return ""
         return disk_path + _LIMA_COW_SUFFIX
 
-    def _lima_capture_baseline(self, *, disk_path: str, baseline_image: str) -> Optional[str]:
+    def _lima_capture_baseline(self, *, disk_path: str, baseline_image: str) -> str | None:
         if not disk_path or not baseline_image:
             return None
         if not os.path.isfile(disk_path):
@@ -342,7 +347,7 @@ class SnapshotManager:
             return f"failed to copy baseline image: {exc}"
         return None
 
-    def _lima_restore_baseline(self, *, disk_path: str, baseline_image: str) -> Optional[str]:
+    def _lima_restore_baseline(self, *, disk_path: str, baseline_image: str) -> str | None:
         if not disk_path or not baseline_image:
             return None
         if not os.path.isfile(baseline_image):
@@ -361,10 +366,10 @@ class SnapshotManager:
         self,
         *,
         action: str,
-        handle: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        handle: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         image = str(self._config.get("image") or "").strip()
-        errors: List[str] = []
+        errors: list[str] = []
         snapshot_id = (handle or {}).get("snapshot_id") or f"{self._run_tag}-docker"
 
         if not self._binary_ok("docker"):
@@ -385,9 +390,7 @@ class SnapshotManager:
             if proc["returncode"] == 0:
                 digest = proc["stdout"].strip()
             else:
-                errors.append(
-                    f"docker image inspect failed for {image}: {proc['stderr'][:200]}"
-                )
+                errors.append(f"docker image inspect failed for {image}: {proc['stderr'][:200]}")
 
         if action == "create":
             return {
@@ -439,9 +442,9 @@ class SnapshotManager:
         action: str,
         snapshot_id: str,
         reason: str,
-        details: Dict[str, Any],
-        errors: List[str],
-    ) -> Dict[str, Any]:
+        details: dict[str, Any],
+        errors: list[str],
+    ) -> dict[str, Any]:
         logger.info(
             "snapshot_manager.dry_run",
             extra={
@@ -467,7 +470,7 @@ class SnapshotManager:
         return base
 
     @staticmethod
-    def _run(cmd: List[str], *, timeout: int) -> Dict[str, Any]:
+    def _run(cmd: list[str], *, timeout: int) -> dict[str, Any]:
         try:
             proc = subprocess.run(
                 cmd,

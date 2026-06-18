@@ -9,9 +9,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401  # register all model tables
-from app.models.capability import AuthorizationArtifact, AuditLogEntry
+from app.core.database import Base
+from app.models.capability import AuditLogEntry, AuthorizationArtifact
 from app.services.capability_policy import (
     CAPABILITIES,
     CapabilityPolicy,
@@ -47,8 +47,17 @@ def policy(session):
     return CapabilityPolicy(session, signer=HmacDevSigner(key=b"unit-test-key"))
 
 
-def _issue(policy, capability, *, requester="alice@example.com", reviewers=None,
-           scope=None, engagement_ref=None, is_admin_approved=False, ttl=None):
+def _issue(
+    policy,
+    capability,
+    *,
+    requester="alice@example.com",
+    reviewers=None,
+    scope=None,
+    engagement_ref=None,
+    is_admin_approved=False,
+    ttl=None,
+):
     cap = CAPABILITIES[capability]
     if reviewers is None:
         if cap.review_kind == "single":
@@ -63,9 +72,8 @@ def _issue(policy, capability, *, requester="alice@example.com", reviewers=None,
         scope=scope or {"tenant_id": 1},
         requester=requester,
         reason="test",
-        engagement_ref=engagement_ref or (
-            "sha256=" + "0" * 64 if cap.requires_engagement_doc else None
-        ),
+        engagement_ref=engagement_ref
+        or ("sha256=" + "0" * 64 if cap.requires_engagement_doc else None),
         is_admin_approved=is_admin_approved or cap.review_kind == "dual_plus_admin",
         requested_ttl=ttl,
     )

@@ -26,11 +26,11 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.event_bus import EventBus, run_event_stream
+from app.core.event_bus import EventBus
 from app.core.time import utc_now
 from app.models.malware_lab import AnalysisCase, BehaviorFinding, IndicatorArtifact
 from app.models.sheshnaag import AutonomousAgentRun
@@ -44,10 +44,10 @@ logger = logging.getLogger(__name__)
 class AgentStep:
     step: int
     thought: str
-    tool: Optional[str]
-    tool_input: Optional[Dict[str, Any]]
-    tool_output: Optional[Dict[str, Any]]
-    citations: List[Dict[str, Any]] = field(default_factory=list)
+    tool: str | None
+    tool_input: dict[str, Any] | None
+    tool_output: dict[str, Any] | None
+    citations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -55,11 +55,11 @@ class AgentRun:
     run_id: str
     goal: str
     status: str  # "completed" | "denied" | "failed"
-    reason: Optional[str]
-    steps: List[AgentStep]
+    reason: str | None
+    steps: list[AgentStep]
     final_summary: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "goal": self.goal,
@@ -79,8 +79,8 @@ class AutonomousAgent:
         self,
         session: Session,
         *,
-        ai: Optional[AIProviderHarness] = None,
-        event_bus: Optional[EventBus] = None,
+        ai: AIProviderHarness | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.session = session
         self.ai = ai or AIProviderHarness()
@@ -88,7 +88,7 @@ class AutonomousAgent:
         # Runs are now persisted in the autonomous_agent_runs table; we keep
         # a per-instance cache of the most recently produced runs so the API
         # can return them even if a flush failed mid-request.
-        self._recent: List[AgentRun] = []
+        self._recent: list[AgentRun] = []
 
     @property
     def bus(self) -> EventBus:
@@ -98,7 +98,7 @@ class AutonomousAgent:
 
     # ------------------------------------------------------------------ tools
 
-    def _tool_summarise_case(self, tenant: Tenant, *, case_id: int) -> Dict[str, Any]:
+    def _tool_summarise_case(self, tenant: Tenant, *, case_id: int) -> dict[str, Any]:
         case = (
             self.session.query(AnalysisCase)
             .filter(AnalysisCase.tenant_id == tenant.id, AnalysisCase.id == case_id)
@@ -108,17 +108,24 @@ class AutonomousAgent:
             return {"error": "case_not_found", "case_id": case_id}
         findings = (
             self.session.query(BehaviorFinding)
-            .filter(BehaviorFinding.tenant_id == tenant.id, BehaviorFinding.analysis_case_id == case_id)
+            .filter(
+                BehaviorFinding.tenant_id == tenant.id, BehaviorFinding.analysis_case_id == case_id
+            )
             .limit(20)
             .all()
         )
         indicators = (
             self.session.query(IndicatorArtifact)
-            .filter(IndicatorArtifact.tenant_id == tenant.id, IndicatorArtifact.analysis_case_id == case_id)
+            .filter(
+                IndicatorArtifact.tenant_id == tenant.id,
+                IndicatorArtifact.analysis_case_id == case_id,
+            )
             .limit(20)
             .all()
         )
-        case_label = getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
+        case_label = (
+            getattr(case, "title", None) or getattr(case, "name", None) or f"Case {case.id}"
+        )
         return {
             "case": {"id": case.id, "name": case_label, "status": case.status},
             "finding_count": len(findings),
@@ -133,15 +140,13 @@ class AutonomousAgent:
             ],
         }
 
-    def _tool_attack_summary(self, tenant: Tenant) -> Dict[str, Any]:
+    def _tool_attack_summary(self, tenant: Tenant) -> dict[str, Any]:
         from app.services.attack_mapper import TECHNIQUE_TACTICS
 
         findings = (
-            self.session.query(BehaviorFinding)
-            .filter(BehaviorFinding.tenant_id == tenant.id)
-            .all()
+            self.session.query(BehaviorFinding).filter(BehaviorFinding.tenant_id == tenant.id).all()
         )
-        tactics: Dict[str, int] = {}
+        tactics: dict[str, int] = {}
         for finding in findings:
             payload = finding.payload or {}
             for technique in payload.get("attack_techniques") or []:
@@ -150,7 +155,9 @@ class AutonomousAgent:
                 tactics[tactic] = tactics.get(tactic, 0) + 1
         return {"tactic_counts": tactics, "finding_count": len(findings)}
 
-    def _dispatch_tool(self, tenant: Tenant, tool: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    def _dispatch_tool(
+        self, tenant: Tenant, tool: str, tool_input: dict[str, Any]
+    ) -> dict[str, Any]:
         if tool == "summarise_case":
             return self._tool_summarise_case(tenant, case_id=int(tool_input.get("case_id") or 0))
         if tool == "attack_summary":
@@ -165,15 +172,15 @@ class AutonomousAgent:
         *,
         goal: str,
         actor: str = "ui",
-        case_id: Optional[int] = None,
-        max_steps: Optional[int] = None,
+        case_id: int | None = None,
+        max_steps: int | None = None,
     ) -> AgentRun:
         run_id = f"agent_{uuid.uuid4().hex[:16]}"
-        steps: List[AgentStep] = []
+        steps: list[AgentStep] = []
 
         # Capability gate: if the policy is unavailable (degraded test rigs),
         # we still run but stamp the reason so reviewers see it.
-        denial: Optional[str] = None
+        denial: str | None = None
         try:
             from app.services.capability_policy import CapabilityPolicy
 
@@ -189,7 +196,9 @@ class AutonomousAgent:
             denial = f"policy_unavailable:{exc.__class__.__name__}"
 
         if denial and not denial.startswith("policy_unavailable"):
-            run = AgentRun(run_id=run_id, goal=goal, status="denied", reason=denial, steps=[], final_summary="")
+            run = AgentRun(
+                run_id=run_id, goal=goal, status="denied", reason=denial, steps=[], final_summary=""
+            )
             self._persist(tenant=tenant, run=run, actor=actor, case_id=case_id)
             return run
 
@@ -250,7 +259,7 @@ class AutonomousAgent:
         self._publish(run_id, "agent_done", {"summary": synthesis["summary"]})
         return run
 
-    def _publish(self, run_id: str, event_type: str, payload: Dict[str, Any]) -> None:
+    def _publish(self, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
         try:
             self.bus.publish(
                 f"sheshnaag:agent:{run_id}:events",
@@ -266,7 +275,7 @@ class AutonomousAgent:
         except Exception:  # pragma: no cover - infra-dependent
             pass
 
-    def _synthesise(self, *, goal: str, steps: List[AgentStep], tenant: Tenant) -> Dict[str, Any]:
+    def _synthesise(self, *, goal: str, steps: list[AgentStep], tenant: Tenant) -> dict[str, Any]:
         # Default deterministic summary so the agent works even when no LLM
         # provider is configured. Production deployments add a provider via
         # ``AUTONOMOUS_AGENT_PROVIDER`` and the summary becomes a grounded
@@ -289,7 +298,11 @@ class AutonomousAgent:
         try:
             grounding = {
                 "items": [
-                    {"kind": "agent_step", "title": f"step {step.step} {step.tool}", "summary": json.dumps(step.tool_output, default=str)[:600]}
+                    {
+                        "kind": "agent_step",
+                        "title": f"step {step.step} {step.tool}",
+                        "summary": json.dumps(step.tool_output, default=str)[:600],
+                    }
                     for step in steps
                 ]
             }
@@ -319,7 +332,7 @@ class AutonomousAgent:
         tenant: Tenant,
         run: AgentRun,
         actor: str,
-        case_id: Optional[int],
+        case_id: int | None,
     ) -> None:
         """Insert the run into autonomous_agent_runs and cache it locally."""
 
@@ -351,9 +364,9 @@ class AutonomousAgent:
     def list_runs(
         self,
         *,
-        tenant: Optional[Tenant] = None,
+        tenant: Tenant | None = None,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return persisted runs, newest first.
 
         When ``tenant`` is supplied we scope to it (the route layer should

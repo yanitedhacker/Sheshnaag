@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from app.lab.telemetry_routing import route_events_by_severity, route_events_by_source_tool
 
@@ -10,12 +10,12 @@ from app.lab.telemetry_routing import route_events_by_severity, route_events_by_
 def build_telemetry_slices(
     *,
     collector_name: str,
-    normalized_events: List[Dict[str, Any]],
-    findings: List[Dict[str, Any]],
-    collector_health: Dict[str, Any],
+    normalized_events: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    collector_health: dict[str, Any],
     raw_preview: str = "",
-    extra: Dict[str, Any] | None = None,
-) -> Dict[str, Any]:
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     by_severity = route_events_by_severity(normalized_events)
     by_tool = route_events_by_source_tool(normalized_events)
     process_slice = [

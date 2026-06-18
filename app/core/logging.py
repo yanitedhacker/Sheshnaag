@@ -13,8 +13,9 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Mapping, MutableMapping
 from contextvars import ContextVar
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any
 
 try:
     import structlog
@@ -45,7 +46,9 @@ def get_log_context() -> Mapping[str, Any]:
     return dict(_LOG_CONTEXT.get() or {})
 
 
-def _merge_request_context(_logger: Any, _name: str, event_dict: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+def _merge_request_context(
+    _logger: Any, _name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     for key, value in (_LOG_CONTEXT.get() or {}).items():
         event_dict.setdefault(key, value)
     return event_dict
@@ -100,9 +103,7 @@ def configure_logging(debug: bool = False) -> None:
     root.setLevel(level)
 
     if structlog is None:
-        logging.getLogger(__name__).warning(
-            "structlog is not installed; using stdlib logging only"
-        )
+        logging.getLogger(__name__).warning("structlog is not installed; using stdlib logging only")
         return
 
     processors: list[Any] = [
@@ -129,7 +130,7 @@ def configure_logging(debug: bool = False) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING if not debug else logging.INFO)
 
 
-def get_logger(name: Optional[str] = None) -> Any:
+def get_logger(name: str | None = None) -> Any:
     """Return a structlog logger when available, otherwise a stdlib logger."""
 
     if structlog is None:

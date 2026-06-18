@@ -11,10 +11,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.routes.taxii_routes import router as taxii_router, TAXII_CONTENT_TYPE
+import app.models  # noqa: F401
+from app.api.routes.taxii_routes import TAXII_CONTENT_TYPE
+from app.api.routes.taxii_routes import router as taxii_router
 from app.core.database import Base, get_sync_session
 from app.core.security import _session_dep
-import app.models  # noqa: F401
 from app.models.malware_lab import (
     AnalysisCase,
     IndicatorArtifact,
@@ -28,7 +29,6 @@ from app.services.capability_policy import (
     IssuanceRequest,
     Reviewer,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared engine / session / app
@@ -75,9 +75,7 @@ def setup_module() -> None:
     Base.metadata.create_all(bind=engine)
     session = TestingSession()
     try:
-        tenant = Tenant(
-            slug="taxii-demo", name="Taxii Demo Tenant", is_active=True
-        )
+        tenant = Tenant(slug="taxii-demo", name="Taxii Demo Tenant", is_active=True)
         session.add(tenant)
         session.flush()
 
@@ -284,13 +282,9 @@ def test_get_collection_objects_with_range_returns_206():
 
 
 def test_fetch_single_object_by_id():
-    listing = client.get(
-        f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/objects"
-    ).json()
+    listing = client.get(f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/objects").json()
     first_id = listing["objects"][0]["id"]
-    resp = client.get(
-        f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/objects/{first_id}"
-    )
+    resp = client.get(f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/objects/{first_id}")
     assert resp.status_code == 200
     body = resp.json()
     assert body["objects"][0]["id"] == first_id
@@ -304,9 +298,7 @@ def test_fetch_unknown_object_returns_404():
 
 
 def test_manifest_lists_per_object_metadata():
-    resp = client.get(
-        f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/manifest"
-    )
+    resp = client.get(f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/manifest")
     assert resp.status_code == 200
     body = resp.json()
     for entry in body["objects"]:
@@ -365,9 +357,7 @@ def test_post_then_get_returns_ingested_object():
         json={"objects": [ingested]},
     )
     assert post.status_code == 202
-    listing = client.get(
-        f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/objects"
-    )
+    listing = client.get(f"/taxii2/api1/collections/tenant-{TENANT_ID}--indicators/objects")
     assert listing.status_code == 200
     found = [o for o in listing.json()["objects"] if o["id"] == ingested["id"]]
     assert found

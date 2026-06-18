@@ -6,11 +6,11 @@ Author: Security Enhancement
 Provides JWT-based authentication for API endpoints.
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, List
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
@@ -18,7 +18,7 @@ try:
     from passlib.context import CryptContext
 except ImportError as _passlib_import_err:  # pragma: no cover
     CryptContext = None
-    _PASSLIB_IMPORT_ERROR: Optional[ImportError] = _passlib_import_err
+    _PASSLIB_IMPORT_ERROR: ImportError | None = _passlib_import_err
 else:
     _PASSLIB_IMPORT_ERROR = None
 
@@ -50,21 +50,24 @@ def _require_pwd_context() -> "CryptContext":
         ) from _PASSLIB_IMPORT_ERROR
     return pwd_context
 
+
 # HTTP Bearer token security scheme
 security = HTTPBearer(auto_error=False)
 
 
 class TokenData(BaseModel):
     """Token payload data."""
-    username: Optional[str] = None
-    user_id: Optional[int] = None
-    scopes: List[str] = []
-    memberships: List[dict] = []
-    roles: List[str] = []
+
+    username: str | None = None
+    user_id: int | None = None
+    scopes: list[str] = []
+    memberships: list[dict] = []
+    roles: list[str] = []
 
 
 class Token(BaseModel):
     """Token response model."""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int
@@ -80,10 +83,7 @@ def get_password_hash(password: str) -> str:
     return _require_pwd_context().hash(password)
 
 
-def create_access_token(
-    data: dict,
-    expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
     Create a JWT access token.
 
@@ -95,7 +95,7 @@ def create_access_token(
         Encoded JWT token
     """
     to_encode = data.copy()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expire = now + (expires_delta or timedelta(minutes=settings.access_token_expire_minutes))
     to_encode.update({"exp": expire, "iat": now})
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
@@ -115,13 +115,9 @@ def decode_token(token: str) -> dict:
         HTTPException: If token is invalid or expired
     """
     try:
-        payload = jwt.decode(
-            token,
-            settings.secret_key,
-            algorithms=[settings.algorithm]
-        )
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         return payload
-    except JWTError as e:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -129,9 +125,7 @@ def decode_token(token: str) -> dict:
         )
 
 
-def verify_token(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
-) -> TokenData:
+def verify_token(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> TokenData:
     """
     Dependency to verify JWT token from request.
 
@@ -185,13 +179,9 @@ def verify_token(
     # path. Order: explicit ``roles`` claim wins on ordering, then the
     # union with membership-derived roles, deduplicated.
     explicit_roles = payload.get("roles", []) or []
-    membership_roles = [
-        m.get("role")
-        for m in memberships
-        if isinstance(m, dict) and m.get("role")
-    ]
+    membership_roles = [m.get("role") for m in memberships if isinstance(m, dict) and m.get("role")]
     seen: set[str] = set()
-    roles: List[str] = []
+    roles: list[str] = []
     for r in list(explicit_roles) + membership_roles:
         if r and r not in seen:
             seen.add(r)
@@ -207,8 +197,8 @@ def verify_token(
 
 
 def verify_token_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
-) -> Optional[TokenData]:
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> TokenData | None:
     """
     Optional token verification - returns None if no token provided.
 
@@ -230,13 +220,14 @@ def require_scope(required_scope: str):
     Usage:
         @router.post("/admin", dependencies=[Depends(require_scope("admin"))])
     """
+
     def scope_checker(token_data: TokenData = Depends(verify_token)) -> TokenData:
         if required_scope not in token_data.scopes and "admin" not in token_data.scopes:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Scope '{required_scope}' required"
+                status_code=status.HTTP_403_FORBIDDEN, detail=f"Scope '{required_scope}' required"
             )
         return token_data
+
     return scope_checker
 
 

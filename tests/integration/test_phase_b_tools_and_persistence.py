@@ -8,6 +8,7 @@ autonomous agent's run history survives across instances of the service.
 from __future__ import annotations
 
 import os
+from datetime import UTC
 
 import pytest
 from sqlalchemy import create_engine
@@ -189,11 +190,12 @@ def test_query_intel_feed_joins_cve_kev_epss(db_session, tenant):
         short_description="RCE via crafted header",
     )
     from datetime import datetime, timezone
+
     epss = EPSSSnapshot(
         cve_id="CVE-2026-9999",
         score=0.82,
         percentile=0.97,
-        scored_at=datetime.now(timezone.utc),
+        scored_at=datetime.now(UTC),
     )
     signal = ExploitSignal(
         cve_id=cve.id,
@@ -260,7 +262,9 @@ def test_run_yara_scan_matches_seeded_rule(db_session, tenant, tmp_path, monkeyp
     assert any(m["rule"] == "TestPack" for m in out["matches"])
 
 
-def test_run_yara_scan_rejects_path_outside_quarantine_root(db_session, tenant, tmp_path, monkeypatch):
+def test_run_yara_scan_rejects_path_outside_quarantine_root(
+    db_session, tenant, tmp_path, monkeypatch
+):
     pytest.importorskip("yara")
     rules_dir = tmp_path / "rules"
     rules_dir.mkdir()
@@ -292,9 +296,7 @@ def test_autonomous_agent_persists_runs_across_instances(db_session, tenant):
     listed = agent_b.list_runs(tenant=tenant)
     assert any(r["run_id"] == run.run_id for r in listed)
     persisted = (
-        db_session.query(AutonomousAgentRun)
-        .filter(AutonomousAgentRun.run_id == run.run_id)
-        .first()
+        db_session.query(AutonomousAgentRun).filter(AutonomousAgentRun.run_id == run.run_id).first()
     )
     assert persisted is not None
     assert persisted.actor == "tester"

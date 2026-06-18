@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -18,8 +16,8 @@ router = APIRouter(prefix="/api/v4/hunt", tags=["Sheshnaag V4 Hunt"])
 
 class HuntRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     limit: int = Field(default=50, ge=1, le=500)
 
 

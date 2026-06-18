@@ -25,4 +25,3 @@ def time_pressure_multiplier(days: float) -> float:
     if val > 1.0:
         return 1.0
     return val
-

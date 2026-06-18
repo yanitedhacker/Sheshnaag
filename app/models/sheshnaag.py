@@ -1,8 +1,7 @@
 """Project Sheshnaag domain models."""
 
-from datetime import datetime
-
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -10,7 +9,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -50,7 +48,9 @@ class AdvisoryRecord(Base):
     source_feed_id = Column(Integer, ForeignKey("source_feeds.id", ondelete="SET NULL"), index=True)
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
     product_id = Column(Integer, ForeignKey("product_records.id", ondelete="SET NULL"), index=True)
-    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True)
+    package_record_id = Column(
+        Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True
+    )
 
     external_id = Column(String(120), index=True)
     canonical_id = Column(String(160), index=True)
@@ -73,12 +73,18 @@ class AdvisoryPackageLink(Base):
 
     __tablename__ = "advisory_package_links"
     __table_args__ = (
-        UniqueConstraint("advisory_record_id", "package_record_id", name="uq_advisory_package_link"),
+        UniqueConstraint(
+            "advisory_record_id", "package_record_id", name="uq_advisory_package_link"
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    advisory_record_id = Column(Integer, ForeignKey("advisory_records.id", ondelete="CASCADE"), nullable=False, index=True)
-    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    advisory_record_id = Column(
+        Integer, ForeignKey("advisory_records.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    package_record_id = Column(
+        Integer, ForeignKey("package_records.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     package_role = Column(String(80), default="affected")
     purl = Column(String(500))
     meta = Column("metadata", JSON, default=dict)
@@ -111,7 +117,9 @@ class ProductRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     vendor = Column(String(120), nullable=False, index=True)
     name = Column(String(200), nullable=False, index=True)
-    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True)
+    package_record_id = Column(
+        Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True
+    )
     description = Column(Text)
     meta = Column("metadata", JSON, default=dict)
     created_at = Column(DateTime, default=utc_now)
@@ -124,9 +132,13 @@ class VersionRange(Base):
     __tablename__ = "version_ranges"
 
     id = Column(Integer, primary_key=True, index=True)
-    advisory_record_id = Column(Integer, ForeignKey("advisory_records.id", ondelete="CASCADE"), index=True)
+    advisory_record_id = Column(
+        Integer, ForeignKey("advisory_records.id", ondelete="CASCADE"), index=True
+    )
     product_id = Column(Integer, ForeignKey("product_records.id", ondelete="CASCADE"), index=True)
-    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True)
+    package_record_id = Column(
+        Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True
+    )
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
     range_type = Column(String(80))
     source_label = Column(String(120))
@@ -164,7 +176,9 @@ class AnalystIdentity(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_analyst_tenant_email"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     name = Column(String(200), nullable=False)
     email = Column(String(200), nullable=False)
     handle = Column(String(120))
@@ -182,7 +196,9 @@ class TenantSigningKey(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "key_name", name="uq_signing_key_tenant_name"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     key_name = Column(String(120), nullable=False, default="default")
     algorithm = Column(String(50), nullable=False, default="ed25519")
     public_key = Column(Text, nullable=False)
@@ -199,10 +215,14 @@ class WorkstationFingerprint(Base):
     """Host workstation fingerprints for chain-of-custody."""
 
     __tablename__ = "workstation_fingerprints"
-    __table_args__ = (UniqueConstraint("tenant_id", "fingerprint", name="uq_workstation_tenant_fingerprint"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "fingerprint", name="uq_workstation_tenant_fingerprint"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     hostname = Column(String(200))
     os_family = Column(String(120))
     architecture = Column(String(80))
@@ -216,7 +236,11 @@ class RawKnowledgeSource(Base):
     """Raw source preservation layer for advisories, notes, and feed payloads."""
 
     __tablename__ = "raw_knowledge_sources"
-    __table_args__ = (UniqueConstraint("tenant_id", "source_kind", "source_key", name="uq_raw_source_tenant_kind_key"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "source_kind", "source_key", name="uq_raw_source_tenant_kind_key"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
@@ -250,7 +274,9 @@ class MaintainerAssessment(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     repository_url = Column(Text, nullable=False)
     repository_name = Column(String(255))
     status = Column(String(40), nullable=False, default="completed", index=True)
@@ -258,7 +284,9 @@ class MaintainerAssessment(Base):
     source_refs = Column(JSON, default=list, nullable=False)
     sbom_sha256 = Column(String(64), nullable=False, index=True)
     vex_sha256 = Column(String(64), nullable=False, default="", index=True)
-    analysis_case_id = Column(Integer, ForeignKey("analysis_cases.id", ondelete="SET NULL"), index=True)
+    analysis_case_id = Column(
+        Integer, ForeignKey("analysis_cases.id", ondelete="SET NULL"), index=True
+    )
     report_id = Column(Integer, ForeignKey("malware_reports.id", ondelete="SET NULL"), index=True)
     created_by = Column(String(200), nullable=False)
     created_at = Column(DateTime, default=utc_now)
@@ -289,10 +317,16 @@ class ResearchCandidate(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "cve_id", name="uq_candidate_tenant_cve"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), nullable=False, index=True)
-    package_record_id = Column(Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True)
-    product_record_id = Column(Integer, ForeignKey("product_records.id", ondelete="SET NULL"), index=True)
+    package_record_id = Column(
+        Integer, ForeignKey("package_records.id", ondelete="SET NULL"), index=True
+    )
+    product_record_id = Column(
+        Integer, ForeignKey("product_records.id", ondelete="SET NULL"), index=True
+    )
 
     title = Column(String(255), nullable=False)
     summary = Column(Text)
@@ -301,7 +335,9 @@ class ResearchCandidate(Base):
     status_reason = Column(Text)
     status_changed_at = Column(DateTime)
     status_changed_by = Column(String(200))
-    merged_into_id = Column(Integer, ForeignKey("research_candidates.id", ondelete="SET NULL"), index=True)
+    merged_into_id = Column(
+        Integer, ForeignKey("research_candidates.id", ondelete="SET NULL"), index=True
+    )
     assignment_state = Column(String(50), default="unassigned")
     assigned_to = Column(String(200))
     assigned_by = Column(String(200))
@@ -346,8 +382,12 @@ class LabRecipe(Base):
     __tablename__ = "lab_recipes"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    candidate_id = Column(Integer, ForeignKey("research_candidates.id", ondelete="SET NULL"), index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_id = Column(
+        Integer, ForeignKey("research_candidates.id", ondelete="SET NULL"), index=True
+    )
     template_id = Column(Integer, ForeignKey("lab_templates.id", ondelete="SET NULL"), index=True)
 
     name = Column(String(255), nullable=False)
@@ -364,10 +404,14 @@ class RecipeRevision(Base):
     """Immutable recipe revision."""
 
     __tablename__ = "recipe_revisions"
-    __table_args__ = (UniqueConstraint("recipe_id", "revision_number", name="uq_recipe_revision_number"),)
+    __table_args__ = (
+        UniqueConstraint("recipe_id", "revision_number", name="uq_recipe_revision_number"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    recipe_id = Column(Integer, ForeignKey("lab_recipes.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipe_id = Column(
+        Integer, ForeignKey("lab_recipes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     revision_number = Column(Integer, nullable=False)
     approval_state = Column(String(50), default="draft")
@@ -386,11 +430,21 @@ class LabRun(Base):
     __tablename__ = "lab_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    recipe_revision_id = Column(Integer, ForeignKey("recipe_revisions.id", ondelete="CASCADE"), nullable=False, index=True)
-    candidate_id = Column(Integer, ForeignKey("research_candidates.id", ondelete="SET NULL"), index=True)
-    analyst_id = Column(Integer, ForeignKey("analyst_identities.id", ondelete="SET NULL"), index=True)
-    workstation_fingerprint_id = Column(Integer, ForeignKey("workstation_fingerprints.id", ondelete="SET NULL"), index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    recipe_revision_id = Column(
+        Integer, ForeignKey("recipe_revisions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_id = Column(
+        Integer, ForeignKey("research_candidates.id", ondelete="SET NULL"), index=True
+    )
+    analyst_id = Column(
+        Integer, ForeignKey("analyst_identities.id", ondelete="SET NULL"), index=True
+    )
+    workstation_fingerprint_id = Column(
+        Integer, ForeignKey("workstation_fingerprints.id", ondelete="SET NULL"), index=True
+    )
 
     provider = Column(String(80), default="docker_kali")
     provider_run_ref = Column(String(120), index=True)
@@ -417,7 +471,9 @@ class RunEvent(Base):
     __tablename__ = "run_events"
 
     id = Column(Integer, primary_key=True, index=True)
-    run_id = Column(Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(
+        Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     event_type = Column(String(80), nullable=False, index=True)
     level = Column(String(30), default="info")
     message = Column(Text, nullable=False)
@@ -432,7 +488,9 @@ class EvidenceArtifact(Base):
     __table_args__ = (Index("ix_evidence_artifacts_run_kind", "run_id", "artifact_kind"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    run_id = Column(Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(
+        Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     artifact_kind = Column(String(80), nullable=False, index=True)
     title = Column(String(255), nullable=False)
     summary = Column(Text)
@@ -457,8 +515,12 @@ class DetectionArtifact(Base):
     __tablename__ = "detection_artifacts"
 
     id = Column(Integer, primary_key=True, index=True)
-    run_id = Column(Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    evidence_artifact_id = Column(Integer, ForeignKey("evidence_artifacts.id", ondelete="SET NULL"), index=True)
+    run_id = Column(
+        Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    evidence_artifact_id = Column(
+        Integer, ForeignKey("evidence_artifacts.id", ondelete="SET NULL"), index=True
+    )
     artifact_type = Column(String(80), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     rule_body = Column(Text, nullable=False)
@@ -474,7 +536,9 @@ class MitigationArtifact(Base):
     __tablename__ = "mitigation_artifacts"
 
     id = Column(Integer, primary_key=True, index=True)
-    run_id = Column(Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(
+        Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     artifact_type = Column(String(80), default="mitigation_checklist")
     title = Column(String(255), nullable=False)
     body = Column(Text, nullable=False)
@@ -489,9 +553,13 @@ class AttestationRecord(Base):
     __tablename__ = "attestation_records"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     run_id = Column(Integer, ForeignKey("lab_runs.id", ondelete="CASCADE"), index=True)
-    disclosure_bundle_id = Column(Integer, ForeignKey("disclosure_bundles.id", ondelete="CASCADE"), index=True)
+    disclosure_bundle_id = Column(
+        Integer, ForeignKey("disclosure_bundles.id", ondelete="CASCADE"), index=True
+    )
     subject_type = Column(String(80), nullable=False)
     subject_id = Column(String(120), nullable=False)
     sha256 = Column(String(128), nullable=False)
@@ -507,8 +575,12 @@ class ContributionLedgerEntry(Base):
     __tablename__ = "contribution_ledger_entries"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    analyst_id = Column(Integer, ForeignKey("analyst_identities.id", ondelete="SET NULL"), index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    analyst_id = Column(
+        Integer, ForeignKey("analyst_identities.id", ondelete="SET NULL"), index=True
+    )
     entry_type = Column(String(80), nullable=False)
     object_type = Column(String(80), nullable=False)
     object_id = Column(String(120), nullable=False)
@@ -524,7 +596,9 @@ class ReviewDecision(Base):
     __tablename__ = "review_decisions"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     reviewer_name = Column(String(200), nullable=False)
     target_type = Column(String(80), nullable=False)
     target_id = Column(String(120), nullable=False)
@@ -540,7 +614,9 @@ class DisclosureBundle(Base):
     __tablename__ = "disclosure_bundles"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     run_id = Column(Integer, ForeignKey("lab_runs.id", ondelete="SET NULL"), index=True)
     bundle_type = Column(String(80), nullable=False, default="vendor_disclosure")
     title = Column(String(255), nullable=False)
@@ -557,7 +633,9 @@ class CandidateScoreRecalculationRun(Base):
     __tablename__ = "candidate_score_recalculation_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     requested_by = Column(String(200), nullable=False)
     status = Column(String(50), default="completed", nullable=False)
     dry_run = Column(Boolean, default=True, nullable=False)
@@ -580,7 +658,9 @@ class ScheduledBrief(Base):
     __tablename__ = "scheduled_briefs"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     brief_type = Column(String(40), nullable=False, default="daily", index=True)
     summary = Column(Text)
     payload = Column(JSON, default=dict, nullable=False)
@@ -605,7 +685,9 @@ class AutonomousAgentRun(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     run_id = Column(String(120), nullable=False, index=True)
     goal = Column(Text, nullable=False)
     status = Column(String(40), nullable=False, index=True)  # completed | denied | failed

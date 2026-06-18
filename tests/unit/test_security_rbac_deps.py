@@ -13,8 +13,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401  registers tables
+from app.core.database import Base
 from app.core.security import (
     TokenData,
     require_permission,
@@ -71,7 +71,8 @@ def test_require_role_allows_match(session):
     assert out.username == "alice"
 
 
-def test_require_role_denies_missing(session):
+def test_require_role_denies_missing(session, monkeypatch):
+    monkeypatch.setattr("app.core.security.settings.auth_enabled", True)
     dep = require_role("lab_lead")
     with pytest.raises(HTTPException) as exc:
         dep(token_data=_td(["analyst"]))
@@ -90,7 +91,8 @@ def test_require_permission_allowed(session):
     assert out.username == "alice"
 
 
-def test_require_permission_denied(session):
+def test_require_permission_denied(session, monkeypatch):
+    monkeypatch.setattr("app.core.security.settings.auth_enabled", True)
     dep = require_permission("policy.write")
     with pytest.raises(HTTPException) as exc:
         dep(token_data=_td(["analyst"]), session=session)

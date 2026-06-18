@@ -1,6 +1,6 @@
 """Sheshnaag validation run APIs."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -15,24 +15,24 @@ router = APIRouter(prefix="/api/runs", tags=["Sheshnaag Runs"])
 
 
 class RunLaunchRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     recipe_id: int
-    revision_number: Optional[int] = None
+    revision_number: int | None = None
     analyst_name: str
     launch_mode: str = "simulated"
     acknowledge_sensitive: bool = False
-    workstation: Dict[str, Any] = Field(default_factory=dict)
+    workstation: dict[str, Any] = Field(default_factory=dict)
     analysis_mode: str = "cve_validation"
-    sandbox_profile_id: Optional[int] = None
+    sandbox_profile_id: int | None = None
     specimen_ids: list[int] = Field(default_factory=list)
-    egress_mode: Optional[str] = None
+    egress_mode: str | None = None
     ai_assist_enabled: bool = False
-    ai_provider_hint: Optional[str] = None
+    ai_provider_hint: str | None = None
 
     @field_validator("launch_mode", mode="before")
     @classmethod
-    def normalize_mode(cls, value: Optional[str]) -> str:
+    def normalize_mode(cls, value: str | None) -> str:
         return normalize_launch_mode(value)
 
 
@@ -43,25 +43,29 @@ class RunPlanRequest(RunLaunchRequest):
 
 
 class RunActionRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
 
 
 @router.get("")
 def list_runs(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
     """List validation runs."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return SheshnaagService(session).list_runs(tenant)
 
 
 @router.post("/plan")
 def plan_run(request: RunPlanRequest, session: Session = Depends(get_sync_session)):
     """Create a planned run record with provider build_plan output (no allocation yet)."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).plan_run(
             tenant,
@@ -85,7 +89,9 @@ def plan_run(request: RunPlanRequest, session: Session = Depends(get_sync_sessio
 @router.post("")
 def launch_run(request: RunLaunchRequest, session: Session = Depends(get_sync_session)):
     """Launch or simulate a run."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).launch_run(
             tenant,
@@ -109,12 +115,14 @@ def launch_run(request: RunLaunchRequest, session: Session = Depends(get_sync_se
 @router.get("/{run_id}")
 def get_run(
     run_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
     """Get run details."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     try:
         return SheshnaagService(session).get_run(tenant, run_id)
     except ValueError as exc:
@@ -128,7 +136,9 @@ def allocate_run_resources(
     session: Session = Depends(get_sync_session),
 ):
     """Allocate provider workspace/resources after POST /plan."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).allocate_run_resources(tenant, run_id=run_id)
     except ValueError as exc:
@@ -142,7 +152,9 @@ def boot_run(
     session: Session = Depends(get_sync_session),
 ):
     """Boot guest after allocate."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).boot_run(tenant, run_id=run_id)
     except ValueError as exc:
@@ -152,12 +164,14 @@ def boot_run(
 @router.get("/{run_id}/health")
 def run_health(
     run_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
     """Check the health of a running validation run."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     try:
         return SheshnaagService(session).run_health(tenant, run_id=run_id)
     except ValueError as exc:
@@ -167,7 +181,9 @@ def run_health(
 @router.post("/{run_id}/stop")
 def stop_run(run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)):
     """Stop a running validation run."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).stop_run(tenant, run_id=run_id)
     except ValueError as exc:
@@ -175,9 +191,13 @@ def stop_run(run_id: int, request: RunActionRequest, session: Session = Depends(
 
 
 @router.post("/{run_id}/teardown")
-def teardown_run(run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)):
+def teardown_run(
+    run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)
+):
     """Teardown a stopped or completed run."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).teardown_run(tenant, run_id=run_id)
     except ValueError as exc:
@@ -185,9 +205,13 @@ def teardown_run(run_id: int, request: RunActionRequest, session: Session = Depe
 
 
 @router.post("/{run_id}/destroy")
-def destroy_run(run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)):
+def destroy_run(
+    run_id: int, request: RunActionRequest, session: Session = Depends(get_sync_session)
+):
     """Destroy all resources for a run."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).destroy_run(tenant, run_id=run_id)
     except ValueError as exc:

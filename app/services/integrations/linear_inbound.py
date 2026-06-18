@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import Mapping, Optional
+from collections.abc import Mapping
 
 from sqlalchemy.orm import Session
 
@@ -27,14 +27,12 @@ def verify_signature(headers: Mapping[str, str], body: bytes, secret: str) -> bo
     signature = headers.get("linear-signature") or headers.get("Linear-Signature")
     if not signature or not secret:
         return False
-    expected = hmac.new(
-        secret.encode("utf-8"), body, hashlib.sha256
-    ).hexdigest()
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 
 
 def handle_event(
-    session: Session, event: dict, *, default_actor_roles: Optional[list[str]] = None
+    session: Session, event: dict, *, default_actor_roles: list[str] | None = None
 ) -> dict:
     """Process a parsed Linear webhook payload.
 

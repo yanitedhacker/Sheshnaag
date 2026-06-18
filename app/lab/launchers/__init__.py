@@ -13,7 +13,8 @@ quarantine, require operator approval) when no launcher applies.
 
 from __future__ import annotations
 
-from typing import Any, Callable, List
+from collections.abc import Callable
+from typing import Any, List
 
 from app.lab.launchers.archive_launcher import ArchiveLauncher
 from app.lab.launchers.base import Launcher, LauncherResult
@@ -27,7 +28,7 @@ from app.lab.launchers.url_launcher import UrlLauncher
 # fallback so a PE-looking ``file`` specimen routes to PeLauncher, not
 # ElfLauncher. PeLauncher and ElfLauncher both gate on mime type for the
 # generic ``file`` kind.
-_FACTORY_ORDER: List[Callable[[], Launcher]] = [
+_FACTORY_ORDER: list[Callable[[], Launcher]] = [
     UrlLauncher,
     EmailLauncher,
     ArchiveLauncher,
@@ -37,7 +38,7 @@ _FACTORY_ORDER: List[Callable[[], Launcher]] = [
 ]
 
 
-def available_launchers() -> List[Launcher]:
+def available_launchers() -> list[Launcher]:
     """Return a freshly-instantiated launcher list in dispatch order."""
 
     return [factory() for factory in _FACTORY_ORDER]

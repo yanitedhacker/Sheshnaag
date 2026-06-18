@@ -18,13 +18,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
-from app.services.integrations import SUPPORTED_PROVIDERS
 from app.services.integrations import (
+    SUPPORTED_PROVIDERS,
     jira_inbound,
     linear_inbound,
     slack_inbound,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -101,21 +100,13 @@ async def receive(
     # Use a configurable default for chat-driven actions; deployments
     # that want chat to drive transitions must explicitly grant a
     # service-bot role via SHESHNAAG_<PROVIDER>_ACTOR_ROLES (CSV).
-    actor_roles_env = os.environ.get(
-        f"SHESHNAAG_{provider.upper()}_ACTOR_ROLES", ""
-    )
-    actor_roles = [
-        r.strip() for r in actor_roles_env.split(",") if r.strip()
-    ]
+    actor_roles_env = os.environ.get(f"SHESHNAAG_{provider.upper()}_ACTOR_ROLES", "")
+    actor_roles = [r.strip() for r in actor_roles_env.split(",") if r.strip()]
 
     try:
-        result = adapter.handle_event(
-            session, payload, default_actor_roles=actor_roles
-        )
+        result = adapter.handle_event(session, payload, default_actor_roles=actor_roles)
     except Exception as e:  # pragma: no cover - infra
         logger.exception("inbound %s handler crashed", provider)
-        raise HTTPException(
-            status_code=500, detail=f"handler_failure:{type(e).__name__}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"handler_failure:{type(e).__name__}") from e
 
     return result

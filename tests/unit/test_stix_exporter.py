@@ -10,8 +10,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401
+from app.core.database import Base
 from app.models.malware_lab import (
     AnalysisCase,
     BehaviorFinding,

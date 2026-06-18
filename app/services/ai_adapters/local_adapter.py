@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
@@ -26,10 +27,10 @@ class LocalOpenAICompatAdapter(OpenAIAdapter):
     def __init__(
         self,
         *,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        http_client: Optional[httpx.Client] = None,
-        api_key: Optional[str] = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        http_client: httpx.Client | None = None,
+        api_key: str | None = None,
     ) -> None:
         resolved_base = base_url
         if not resolved_base:
@@ -54,7 +55,7 @@ class LocalOpenAICompatAdapter(OpenAIAdapter):
             http_client=http_client,
         )
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         # The local provider is always considered "configured"; reachability is
         # probed lazily at the base URL.
         probe = {"status": "available", "healthy": True, "missing_configuration": []}
@@ -82,10 +83,10 @@ class LocalOpenAICompatAdapter(OpenAIAdapter):
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         # OpenAI-compatible; inherit the parent streaming implementation.
         yield from super().stream(
             capability=capability,

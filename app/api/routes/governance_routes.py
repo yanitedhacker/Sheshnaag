@@ -1,7 +1,5 @@
 """Approval workflow and audit APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -16,26 +14,28 @@ router = APIRouter(prefix="/api/governance", tags=["Governance"])
 
 
 class ApprovalRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     patch_id: str = Field(..., min_length=3)
     action_id: str = Field(..., min_length=3)
     approval_type: str = Field("signoff", min_length=3)
     approval_state: str = Field(..., min_length=3)
-    maintenance_window: Optional[str] = None
-    note: Optional[str] = None
-    decided_by: Optional[str] = None
+    maintenance_window: str | None = None
+    note: str | None = None
+    decided_by: str | None = None
     metadata: dict = Field(default_factory=dict)
 
 
 @router.get("/approvals")
 def list_approvals(
-    tenant_slug: Optional[str] = None,
-    tenant_id: Optional[int] = None,
+    tenant_slug: str | None = None,
+    tenant_id: int | None = None,
     session: Session = Depends(get_sync_session),
 ):
     """List approvals for a tenant."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     service = GovernanceService(session)
     return service.list_approvals(tenant)
 
@@ -44,14 +44,16 @@ def list_approvals(
 def create_approval(
     request: ApprovalRequest,
     session: Session = Depends(get_sync_session),
-    token_data: Optional[TokenData] = Depends(verify_token_optional),
+    token_data: TokenData | None = Depends(verify_token_optional),
 ):
     """Create a change-window approval or sign-off for a private tenant."""
     auth_service = AuthService(session)
     if request.tenant_id is None and request.tenant_slug is None:
         tenant = auth_service.resolve_private_tenant(token_data=token_data)
     else:
-        tenant = auth_service.resolve_private_tenant(token_data=token_data, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+        tenant = auth_service.resolve_private_tenant(
+            token_data=token_data, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+        )
     auth_service.assert_tenant_access(tenant, token_data, access="admin")
     actor = auth_service.get_user_from_token(token_data)
 
@@ -72,11 +74,13 @@ def create_approval(
 
 @router.get("/audit")
 def list_audit(
-    tenant_slug: Optional[str] = None,
-    tenant_id: Optional[int] = None,
+    tenant_slug: str | None = None,
+    tenant_id: int | None = None,
     session: Session = Depends(get_sync_session),
 ):
     """List append-only audit events for a tenant."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     service = GovernanceService(session)
     return service.list_audit_events(tenant)

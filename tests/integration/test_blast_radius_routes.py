@@ -14,7 +14,6 @@ from app.models.asset import Asset
 from app.models.malware_lab import AnalysisCase, BehaviorFinding, IndicatorArtifact
 from app.models.v2 import Tenant
 
-
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -96,7 +95,9 @@ def test_blast_radius_correlates_indicator_to_asset():
     finally:
         session.close()
 
-    response = client.get(f"/api/v4/cases/{case_id}/blast-radius", params={"tenant_slug": "blast-test"})
+    response = client.get(
+        f"/api/v4/cases/{case_id}/blast-radius", params={"tenant_slug": "blast-test"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["case"]["id"] == case_id

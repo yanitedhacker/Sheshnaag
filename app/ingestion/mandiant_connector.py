@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import Any, ClassVar
 
 import requests
 
@@ -32,7 +32,7 @@ MANDIANT_BASE_URL = "https://api.intelligence.mandiant.com/v4"
 MANDIANT_APP_NAME = "sheshnaag"
 
 # Mandiant "type" → normalized indicator_kind
-_MANDIANT_TYPE_MAP: Dict[str, str] = {
+_MANDIANT_TYPE_MAP: dict[str, str] = {
     "ipv4": "ip",
     "ipv6": "ip",
     "fqdn": "domain",
@@ -46,7 +46,9 @@ _MANDIANT_TYPE_MAP: Dict[str, str] = {
 
 
 def _map_indicator_kind(mandiant_type: str) -> str:
-    return _MANDIANT_TYPE_MAP.get((mandiant_type or "").lower(), (mandiant_type or "unknown").lower())
+    return _MANDIANT_TYPE_MAP.get(
+        (mandiant_type or "").lower(), (mandiant_type or "unknown").lower()
+    )
 
 
 @register_ioc_connector
@@ -63,16 +65,16 @@ class MandiantConnector:
 
     def __init__(
         self,
-        access_token: Optional[str] = None,
+        access_token: str | None = None,
         *,
-        key: Optional[str] = None,
-        secret: Optional[str] = None,
+        key: str | None = None,
+        secret: str | None = None,
         base_url: str = MANDIANT_BASE_URL,
         app_name: str = MANDIANT_APP_NAME,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
-        backoff_seconds: Optional[float] = None,
+        session: requests.Session | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        backoff_seconds: float | None = None,
         sleep_fn=time.sleep,
     ) -> None:
         self._access_token = access_token or os.getenv("MANDIANT_ACCESS_TOKEN") or ""
@@ -85,7 +87,7 @@ class MandiantConnector:
         self._max_retries = max_retries or self.default_max_retries
         self._backoff = backoff_seconds or self.default_backoff_seconds
         self._sleep = sleep_fn
-        self._cached_token: Optional[str] = self._access_token or None
+        self._cached_token: str | None = self._access_token or None
 
     # ------------------------------------------------------------------
     # Health
@@ -99,7 +101,7 @@ class MandiantConnector:
     # Token exchange (key+secret → bearer)
     # ------------------------------------------------------------------
 
-    def _ensure_token(self) -> Optional[str]:
+    def _ensure_token(self) -> str | None:
         """Return a bearer token, exchanging key+secret if needed."""
         if self._cached_token:
             return self._cached_token
@@ -149,7 +151,7 @@ class MandiantConnector:
     # HTTP with rate-limit handling
     # ------------------------------------------------------------------
 
-    def _headers(self, token: str) -> Dict[str, str]:
+    def _headers(self, token: str) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {token}",
             "X-App-Name": self._app_name,
@@ -161,9 +163,9 @@ class MandiantConnector:
         method: str,
         path: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json_body: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         if not self.healthy:
             return None
         token = self._ensure_token()
@@ -184,7 +186,10 @@ class MandiantConnector:
             except requests.RequestException as exc:
                 logger.warning(
                     "Mandiant request error (attempt %d/%d) for %s: %s",
-                    attempt, self._max_retries, path, exc,
+                    attempt,
+                    self._max_retries,
+                    path,
+                    exc,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -193,7 +198,9 @@ class MandiantConnector:
             if resp.status_code == 429:
                 logger.warning(
                     "Mandiant rate limited (attempt %d/%d) for %s",
-                    attempt, self._max_retries, path,
+                    attempt,
+                    self._max_retries,
+                    path,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -217,16 +224,17 @@ class MandiantConnector:
             if resp.status_code >= 500:
                 logger.warning(
                     "Mandiant %s for %s (attempt %d/%d)",
-                    resp.status_code, path, attempt, self._max_retries,
+                    resp.status_code,
+                    path,
+                    attempt,
+                    self._max_retries,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
                 continue
 
             if resp.status_code >= 400:
-                logger.warning(
-                    "Mandiant client error %s for %s", resp.status_code, path
-                )
+                logger.warning("Mandiant client error %s for %s", resp.status_code, path)
                 return None
 
             try:
@@ -245,12 +253,12 @@ class MandiantConnector:
         self,
         *,
         limit: int = 100,
-        gte_mscore: Optional[int] = None,
-        last_updated: Optional[str] = None,
+        gte_mscore: int | None = None,
+        last_updated: str | None = None,
         include_actors: bool = True,
         include_malware: bool = True,
-    ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {"limit": int(limit)}
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": int(limit)}
         if gte_mscore is not None:
             params["gte_mscore"] = int(gte_mscore)
         if last_updated:
@@ -267,7 +275,7 @@ class MandiantConnector:
         if not isinstance(indicators, list):
             return []
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for ind in indicators:
             if not isinstance(ind, dict):
                 continue
@@ -276,12 +284,12 @@ class MandiantConnector:
                 records.append(record)
         return records
 
-    def fetch_actor(self, actor_id: str) -> Optional[Dict[str, Any]]:
+    def fetch_actor(self, actor_id: str) -> dict[str, Any] | None:
         if not actor_id:
             return None
         return self._request("GET", f"/actor/{actor_id}")
 
-    def fetch_malware(self, malware_id: str) -> Optional[Dict[str, Any]]:
+    def fetch_malware(self, malware_id: str) -> dict[str, Any] | None:
         if not malware_id:
             return None
         return self._request("GET", f"/malware/{malware_id}")
@@ -290,7 +298,7 @@ class MandiantConnector:
     # Generic fetch
     # ------------------------------------------------------------------
 
-    def fetch(self, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Fetch normalized indicator records from Mandiant.
 
         ``scope`` shape:
@@ -318,7 +326,7 @@ class MandiantConnector:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_indicator(ind: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _normalize_indicator(ind: dict[str, Any]) -> dict[str, Any] | None:
         value = ind.get("value")
         if not value:
             return None
@@ -334,7 +342,7 @@ class MandiantConnector:
 
         kind = _map_indicator_kind(ind.get("type", ""))
 
-        threat_actors: List[Dict[str, Any]] = []
+        threat_actors: list[dict[str, Any]] = []
         for actor in ind.get("threat_actors") or ind.get("actors") or []:
             if isinstance(actor, dict):
                 threat_actors.append(
@@ -345,7 +353,7 @@ class MandiantConnector:
                     }
                 )
 
-        malware_families: List[Dict[str, Any]] = []
+        malware_families: list[dict[str, Any]] = []
         for malware in ind.get("malware_families") or ind.get("malware") or []:
             if isinstance(malware, dict):
                 malware_families.append(
@@ -357,7 +365,7 @@ class MandiantConnector:
                 )
 
         sources = ind.get("sources") or []
-        categories: List[str] = []
+        categories: list[str] = []
         if isinstance(sources, list):
             for src in sources:
                 if isinstance(src, dict):
@@ -365,7 +373,7 @@ class MandiantConnector:
                         if cat:
                             categories.append(str(cat))
 
-        tags: List[str] = []
+        tags: list[str] = []
         for actor in threat_actors:
             if actor.get("name"):
                 tags.append(str(actor["name"]))

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -30,7 +29,7 @@ class BriefScheduler:
     """APScheduler wrapper that emits scheduled briefs per active tenant."""
 
     def __init__(self) -> None:
-        self.scheduler: Optional[AsyncIOScheduler] = None
+        self.scheduler: AsyncIOScheduler | None = None
 
     @property
     def enabled(self) -> bool:

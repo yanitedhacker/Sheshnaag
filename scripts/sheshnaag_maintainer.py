@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -26,9 +26,9 @@ def _request_json(
     method: str,
     url: str,
     *,
-    token: Optional[str] = None,
-    payload: Optional[dict[str, Any]] = None,
-    output: Optional[str] = None,
+    token: str | None = None,
+    payload: dict[str, Any] | None = None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     headers = {"Accept": "application/json"}
     body = None
@@ -53,7 +53,9 @@ def _request_json(
 def _print_summary(payload: dict[str, Any]) -> None:
     summary = payload.get("summary") or {}
     repo = payload.get("repository") or summary.get("repository") or {}
-    print(f"Assessment #{payload.get('id')} - {repo.get('name') or repo.get('url') or 'repository'}")
+    print(
+        f"Assessment #{payload.get('id')} - {repo.get('name') or repo.get('url') or 'repository'}"
+    )
     print(f"Status: {payload.get('status', 'unknown')}")
     print(f"Matched findings: {summary.get('matched_findings_count', 0)}")
     report = payload.get("report") or {}
@@ -63,7 +65,9 @@ def _print_summary(payload: dict[str, Any]) -> None:
             print(f"Download URL: {report['download_url']}")
     findings = summary.get("top_findings") or []
     for item in findings[:5]:
-        print(f"- {item.get('cve_id')}: score={item.get('candidate_score')} package={item.get('package_name')}")
+        print(
+            f"- {item.get('cve_id')}: score={item.get('candidate_score')} package={item.get('package_name')}"
+        )
     if not findings:
         for step in (summary.get("recommended_next_steps") or [])[:3]:
             print(f"- {step}")
@@ -76,7 +80,7 @@ def _emit(payload: dict[str, Any], *, json_mode: bool) -> None:
         _print_summary(payload)
 
 
-def _token(args: argparse.Namespace) -> Optional[str]:
+def _token(args: argparse.Namespace) -> str | None:
     return args.token or os.getenv("SHESHNAAG_TOKEN")
 
 
@@ -139,7 +143,9 @@ def cmd_export(args: argparse.Namespace) -> int:
             output=args.output,
         )
         if args.json:
-            print(json.dumps({"assessment": result, "download": download}, indent=2, sort_keys=True))
+            print(
+                json.dumps({"assessment": result, "download": download}, indent=2, sort_keys=True)
+            )
         else:
             print(f"Wrote {download['bytes']} bytes to {download['output']}")
         return 0
@@ -191,7 +197,9 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--assessment-id", type=int, required=True)
     show.set_defaults(func=cmd_show)
 
-    export = subparsers.add_parser("export", help="Create or fetch a report export for an assessment.")
+    export = subparsers.add_parser(
+        "export", help="Create or fetch a report export for an assessment."
+    )
     _add_common_args(export)
     export.add_argument("--tenant-id", type=int)
     export.add_argument("--tenant-slug")
@@ -202,14 +210,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
     except HTTPError as exc:
         if exc.code in {401, 403}:
-            print("Authentication required or insufficient for this tenant. Pass --token or set SHESHNAAG_TOKEN.", file=sys.stderr)
+            print(
+                "Authentication required or insufficient for this tenant. Pass --token or set SHESHNAAG_TOKEN.",
+                file=sys.stderr,
+            )
         else:
             detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
             print(f"API request failed ({exc.code}): {detail}", file=sys.stderr)

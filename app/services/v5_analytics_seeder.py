@@ -23,8 +23,7 @@ import hashlib
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -38,7 +37,6 @@ from app.models.malware_lab import (
     CaseStateTransition,
 )
 from app.services.case_workflow import CaseLifecycleState
-
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +104,8 @@ class V5AnalyticsSeeder:
     def seed(
         self,
         *,
-        tenant_id: Optional[int] = None,
-        tenant_slug: Optional[str] = None,
+        tenant_id: int | None = None,
+        tenant_slug: str | None = None,
         n_cases: int = 1000,
         seed: int = 1337,
         window_days: int = 60,
@@ -125,9 +123,7 @@ class V5AnalyticsSeeder:
         existing_marker = (
             self.session.query(AnalysisCase)
             .filter(AnalysisCase.tenant_id == tenant.id)
-            .filter(
-                AnalysisCase.custom_fields.contains({"v5_analytics_seed": True})
-            )
+            .filter(AnalysisCase.custom_fields.contains({"v5_analytics_seed": True}))
             .count()
             if self._json_contains_supported()
             else 0
@@ -151,7 +147,7 @@ class V5AnalyticsSeeder:
         rng = random.Random(seed)
         end = utc_now()
         if end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
+            end = end.replace(tzinfo=UTC)
         window_start = end - timedelta(days=window_days)
 
         cases_inserted = 0
@@ -167,10 +163,13 @@ class V5AnalyticsSeeder:
                 tenant_id=tenant.id,
                 title=f"[seed#{i:04d}] {self._sample_title(rng)}",
                 summary=self._sample_summary(rng),
-                status="open" if case_path[-1][2] not in {
+                status="open"
+                if case_path[-1][2]
+                not in {
                     CaseLifecycleState.SHIPPED.value,
                     CaseLifecycleState.ARCHIVED.value,
-                } else "closed",
+                }
+                else "closed",
                 lifecycle_state=case_path[-1][2],
                 state_changed_at=case_path[-1][0],
                 state_changed_by=case_path[-1][3],
@@ -244,9 +243,8 @@ class V5AnalyticsSeeder:
                         provider_mode=rng.choice(("draft", "review", "summarize")),
                         capability=rng.choice(_CAPABILITIES),
                         prompt="(synthetic prompt)",
-                        grounding_digest="seed-" + hashlib.sha1(
-                            f"{i}".encode("ascii")
-                        ).hexdigest()[:32],
+                        grounding_digest="seed-"
+                        + hashlib.sha1(f"{i}".encode("ascii")).hexdigest()[:32],
                         created_by=analyst,
                         status="completed",
                         review_state=rng.choice(
@@ -317,7 +315,7 @@ class V5AnalyticsSeeder:
         rng: random.Random,
         window_start: datetime,
         window_end: datetime,
-    ) -> List[Tuple[datetime, str, str, str]]:
+    ) -> list[tuple[datetime, str, str, str]]:
         """Return a chronological list of (occurred_at, from, to, actor) edges.
 
         Branch shapes (weighted):
@@ -334,14 +332,31 @@ class V5AnalyticsSeeder:
         roll = rng.random()
         if roll < 0.15:
             t1 = triage_at + timedelta(minutes=rng.randint(5, 90))
-            return [(t1, CaseLifecycleState.TRIAGE.value, CaseLifecycleState.ARCHIVED.value, analyst_actor)]
+            return [
+                (
+                    t1,
+                    CaseLifecycleState.TRIAGE.value,
+                    CaseLifecycleState.ARCHIVED.value,
+                    analyst_actor,
+                )
+            ]
 
         if roll < 0.30:
             t1 = triage_at + timedelta(minutes=rng.randint(10, 120))
             t2 = t1 + timedelta(hours=rng.randint(1, 8))
             return [
-                (t1, CaseLifecycleState.TRIAGE.value, CaseLifecycleState.ANALYSIS.value, analyst_actor),
-                (t2, CaseLifecycleState.ANALYSIS.value, CaseLifecycleState.ARCHIVED.value, analyst_actor),
+                (
+                    t1,
+                    CaseLifecycleState.TRIAGE.value,
+                    CaseLifecycleState.ANALYSIS.value,
+                    analyst_actor,
+                ),
+                (
+                    t2,
+                    CaseLifecycleState.ANALYSIS.value,
+                    CaseLifecycleState.ARCHIVED.value,
+                    analyst_actor,
+                ),
             ]
 
         # Forward path
@@ -355,12 +370,37 @@ class V5AnalyticsSeeder:
             t5 = t4 + timedelta(hours=rng.randint(1, 12))
             t6 = t5 + timedelta(hours=rng.randint(0, 6))
             return [
-                (t1, CaseLifecycleState.TRIAGE.value, CaseLifecycleState.ANALYSIS.value, analyst_actor),
-                (t2, CaseLifecycleState.ANALYSIS.value, CaseLifecycleState.REVIEW.value, analyst_actor),
+                (
+                    t1,
+                    CaseLifecycleState.TRIAGE.value,
+                    CaseLifecycleState.ANALYSIS.value,
+                    analyst_actor,
+                ),
+                (
+                    t2,
+                    CaseLifecycleState.ANALYSIS.value,
+                    CaseLifecycleState.REVIEW.value,
+                    analyst_actor,
+                ),
                 (t3, CaseLifecycleState.REVIEW.value, CaseLifecycleState.ANALYSIS.value, reviewer),
-                (t4, CaseLifecycleState.ANALYSIS.value, CaseLifecycleState.REVIEW.value, analyst_actor),
-                (t5, CaseLifecycleState.REVIEW.value, CaseLifecycleState.READY_TO_SHIP.value, reviewer),
-                (t6, CaseLifecycleState.READY_TO_SHIP.value, CaseLifecycleState.SHIPPED.value, senior),
+                (
+                    t4,
+                    CaseLifecycleState.ANALYSIS.value,
+                    CaseLifecycleState.REVIEW.value,
+                    analyst_actor,
+                ),
+                (
+                    t5,
+                    CaseLifecycleState.REVIEW.value,
+                    CaseLifecycleState.READY_TO_SHIP.value,
+                    reviewer,
+                ),
+                (
+                    t6,
+                    CaseLifecycleState.READY_TO_SHIP.value,
+                    CaseLifecycleState.SHIPPED.value,
+                    senior,
+                ),
             ]
 
         t4 = t3 + timedelta(hours=rng.randint(1, 12))
@@ -408,9 +448,7 @@ class V5AnalyticsSeeder:
         return bind.dialect.name == "postgresql"
 
 
-def rng_choice_in_window(
-    rng: random.Random, start: datetime, end: datetime
-) -> datetime:
+def rng_choice_in_window(rng: random.Random, start: datetime, end: datetime) -> datetime:
     delta = (end - start).total_seconds()
     offset = rng.uniform(0, delta)
     return start + timedelta(seconds=offset)

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 ENTERPRISE_STARTER_VERSION = "1.0.0"
 
-ENTERPRISE_STARTER_RULES: List[Dict[str, Any]] = [
+ENTERPRISE_STARTER_RULES: list[dict[str, Any]] = [
     {
         "id": "priv_esc_sudo",
         "title": "Privilege-changing execution",
@@ -34,7 +34,7 @@ ENTERPRISE_STARTER_RULES: List[Dict[str, Any]] = [
 ]
 
 
-def get_pack(name: str) -> Dict[str, Any]:
+def get_pack(name: str) -> dict[str, Any]:
     if name == "enterprise_starter":
         return {
             "name": name,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -17,13 +17,13 @@ router = APIRouter(prefix="/api/maintainer", tags=["OSS Maintainer"])
 
 
 class MaintainerAssessmentCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     repository_url: str
-    repository_name: Optional[str] = None
-    sbom: Dict[str, Any]
-    vex: Optional[Dict[str, Any]] = None
-    source_refs: list[Dict[str, Any]] = Field(default_factory=list)
+    repository_name: str | None = None
+    sbom: dict[str, Any]
+    vex: dict[str, Any] | None = None
+    source_refs: list[dict[str, Any]] = Field(default_factory=list)
     created_by: str
     export_report: bool = False
 
@@ -32,7 +32,7 @@ class MaintainerAssessmentCreateRequest(BaseModel):
 def create_maintainer_assessment(
     request: MaintainerAssessmentCreateRequest,
     session: Session = Depends(get_sync_session),
-    token_data: Optional[TokenData] = Depends(verify_token_optional),
+    token_data: TokenData | None = Depends(verify_token_optional),
 ):
     """Create an OSS maintainer security assessment from SBOM/VEX context."""
     auth = AuthService(session)
@@ -60,17 +60,21 @@ def create_maintainer_assessment(
 @router.get("/assessments/{assessment_id}")
 def get_maintainer_assessment(
     assessment_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
-    token_data: Optional[TokenData] = Depends(verify_token_optional),
+    token_data: TokenData | None = Depends(verify_token_optional),
 ):
     """Return a previously generated maintainer assessment."""
     auth = AuthService(session)
-    tenant = auth.resolve_private_tenant(token_data=token_data, tenant_id=tenant_id, tenant_slug=tenant_slug)
+    tenant = auth.resolve_private_tenant(
+        token_data=token_data, tenant_id=tenant_id, tenant_slug=tenant_slug
+    )
     auth.assert_tenant_access(tenant, token_data, access="read")
     try:
-        return MaintainerAssessmentService(session).get_assessment(tenant, assessment_id=assessment_id)
+        return MaintainerAssessmentService(session).get_assessment(
+            tenant, assessment_id=assessment_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -78,16 +82,20 @@ def get_maintainer_assessment(
 @router.post("/assessments/{assessment_id}/export")
 def export_maintainer_assessment(
     assessment_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
-    token_data: Optional[TokenData] = Depends(verify_token_optional),
+    token_data: TokenData | None = Depends(verify_token_optional),
 ):
     """Create or return the approved report export for an assessment."""
     auth = AuthService(session)
-    tenant = auth.resolve_private_tenant(token_data=token_data, tenant_id=tenant_id, tenant_slug=tenant_slug)
+    tenant = auth.resolve_private_tenant(
+        token_data=token_data, tenant_id=tenant_id, tenant_slug=tenant_slug
+    )
     auth.assert_tenant_access(tenant, token_data, access="write")
     try:
-        return MaintainerAssessmentService(session).export_assessment(tenant, assessment_id=assessment_id)
+        return MaintainerAssessmentService(session).export_assessment(
+            tenant, assessment_id=assessment_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -11,18 +11,18 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.services.ai_adapters.base import NativeAIAdapter, collect_stream
 from app.services.ai_tools_registry import TOOL_REGISTRY, Tool, get_tool, tool_schemas
-
 
 logger = logging.getLogger(__name__)
 
 
 # -- API contract for capability_policy (owned by another agent) --------------
 
-def _eval_capability(capability: str, scope: Dict[str, Any], actor: str) -> None:
+
+def _eval_capability(capability: str, scope: dict[str, Any], actor: str) -> None:
     """Evaluate a capability against the policy module.
 
     Imports are lazy so Phase A slice 1 can land before the policy module does.
@@ -68,13 +68,13 @@ class AgentStep:
     started_at: float
     ended_at: float
     text: str
-    tool_uses: List[Dict[str, Any]]
-    tool_results: List[Dict[str, Any]]
+    tool_uses: list[dict[str, Any]]
+    tool_results: list[dict[str, Any]]
     stop_reason: str
-    usage: Dict[str, Any]
-    errors: List[str] = field(default_factory=list)
+    usage: dict[str, Any]
+    errors: list[str] = field(default_factory=list)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "step_no": self.step_no,
             "started_at": self.started_at,
@@ -93,14 +93,14 @@ class AgentStep:
 class AgentRunResult:
     provider_key: str
     actor: str
-    tenant_id: Optional[Any]
-    steps: List[AgentStep]
+    tenant_id: Any | None
+    steps: list[AgentStep]
     final_text: str
     final_stop_reason: str
-    total_usage: Dict[str, int]
-    transcript: List[Dict[str, Any]]
+    total_usage: dict[str, int]
+    transcript: list[dict[str, Any]]
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "provider_key": self.provider_key,
             "actor": self.actor,
@@ -122,8 +122,8 @@ class AIAgentLoop:
     def __init__(
         self,
         *,
-        adapter_provider: Optional[Any] = None,
-        tools: Optional[Dict[str, Tool]] = None,
+        adapter_provider: Any | None = None,
+        tools: dict[str, Tool] | None = None,
     ) -> None:
         # `adapter_provider` is a callable `(provider_key) -> NativeAIAdapter`.
         # Default uses the harness. Injectable for tests.
@@ -133,26 +133,24 @@ class AIAgentLoop:
             self._adapter_provider = AIProviderHarness().get_adapter
         else:
             self._adapter_provider = adapter_provider
-        self._tools: Dict[str, Tool] = tools if tools is not None else dict(TOOL_REGISTRY)
+        self._tools: dict[str, Tool] = tools if tools is not None else dict(TOOL_REGISTRY)
 
     def run(
         self,
         *,
         provider_key: str,
         initial_prompt: str,
-        grounding: Dict[str, Any],
+        grounding: dict[str, Any],
         max_steps: int = 8,
-        tenant_id: Optional[Any] = None,
+        tenant_id: Any | None = None,
         actor: str = "system",
         capability: str = "summarize_evidence",
     ) -> AgentRunResult:
         adapter: NativeAIAdapter = self._adapter_provider(provider_key)
         schemas = tool_schemas() if self._tools else []
 
-        transcript: List[Dict[str, Any]] = [
-            {"role": "user", "content": initial_prompt}
-        ]
-        steps: List[AgentStep] = []
+        transcript: list[dict[str, Any]] = [{"role": "user", "content": initial_prompt}]
+        steps: list[AgentStep] = []
         total_usage = {"input_tokens": 0, "output_tokens": 0}
 
         current_prompt = initial_prompt
@@ -171,7 +169,7 @@ class AIAgentLoop:
             aggregated = collect_stream(raw_events)
             ended = time.monotonic()
 
-            tool_results: List[Dict[str, Any]] = []
+            tool_results: list[dict[str, Any]] = []
             for tu in aggregated["tool_uses"]:
                 tool_results.append(self._execute_tool(tu, tenant_id=tenant_id, actor=actor))
 
@@ -194,12 +192,14 @@ class AIAgentLoop:
             last_text = aggregated["text"] or last_text
             last_stop = aggregated["stop_reason"]
 
-            transcript.append({
-                "role": "assistant",
-                "content": aggregated["text"],
-                "tool_uses": aggregated["tool_uses"],
-                "stop_reason": aggregated["stop_reason"],
-            })
+            transcript.append(
+                {
+                    "role": "assistant",
+                    "content": aggregated["text"],
+                    "tool_uses": aggregated["tool_uses"],
+                    "stop_reason": aggregated["stop_reason"],
+                }
+            )
             if tool_results:
                 transcript.append({"role": "tool", "results": tool_results})
 
@@ -209,7 +209,9 @@ class AIAgentLoop:
 
             if not aggregated["tool_uses"]:
                 # Adapter claimed tool_use but emitted no tool — avoid infinite loop.
-                logger.warning("adapter %s reported tool_use with no tool payload; halting", provider_key)
+                logger.warning(
+                    "adapter %s reported tool_use with no tool payload; halting", provider_key
+                )
                 break
 
             # Next turn's prompt: a compact tool-results summary.
@@ -230,11 +232,11 @@ class AIAgentLoop:
 
     def _execute_tool(
         self,
-        tool_use: Dict[str, Any],
+        tool_use: dict[str, Any],
         *,
-        tenant_id: Optional[Any],
+        tenant_id: Any | None,
         actor: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         name = tool_use.get("name")
         args = tool_use.get("input") or {}
         tu_id = tool_use.get("tool_use_id")
@@ -307,7 +309,7 @@ class AIAgentLoop:
         }
 
     @staticmethod
-    def _format_tool_results_prompt(tool_results: List[Dict[str, Any]]) -> str:
+    def _format_tool_results_prompt(tool_results: list[dict[str, Any]]) -> str:
         lines = ["Tool results:"]
         for r in tool_results:
             if r.get("error"):
@@ -319,9 +321,9 @@ class AIAgentLoop:
 
 
 # Re-exported for ergonomics.
-def get_tool_registry() -> Dict[str, Tool]:
+def get_tool_registry() -> dict[str, Tool]:
     return dict(TOOL_REGISTRY)
 
 
-def get_tool_by_name(name: str) -> Optional[Tool]:
+def get_tool_by_name(name: str) -> Tool | None:
     return get_tool(name)

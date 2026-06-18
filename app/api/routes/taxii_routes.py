@@ -33,11 +33,11 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path as FsPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -60,8 +60,8 @@ router = APIRouter(prefix="/taxii2", tags=["Sheshnaag V4 TAXII 2.1"])
 # migration in the beta cleanup lane. The key is collection_id; values are
 # keyed by STIX object/status ID.
 _STORE_PATH = FsPath(os.getenv("SHESHNAAG_TAXII_STORE_PATH", "./data/taxii_ingest_store.json"))
-_INGEST_STORE: Dict[str, Dict[str, Dict[str, Any]]] = {}
-_STATUS_STORE: Dict[str, Dict[str, Any]] = {}
+_INGEST_STORE: dict[str, dict[str, dict[str, Any]]] = {}
+_STATUS_STORE: dict[str, dict[str, Any]] = {}
 _STORE_LOADED = False
 
 
@@ -95,7 +95,9 @@ def _save_store() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _taxii_json(body: Any, *, status_code: int = 200, extra_headers: Optional[Dict[str, str]] = None) -> JSONResponse:
+def _taxii_json(
+    body: Any, *, status_code: int = 200, extra_headers: dict[str, str] | None = None
+) -> JSONResponse:
     """Return a JSONResponse with the TAXII 2.1 media-type."""
 
     headers = {"Content-Type": TAXII_CONTENT_TYPE}
@@ -109,12 +111,12 @@ def _taxii_json(body: Any, *, status_code: int = 200, extra_headers: Optional[Di
     )
 
 
-def _utc_z(value: Optional[datetime] = None) -> str:
+def _utc_z(value: datetime | None = None) -> str:
     if value is None:
         value = utc_now()
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    iso = value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    iso = value.astimezone(UTC).isoformat()
     if iso.endswith("+00:00"):
         return iso[:-6] + "Z"
     if not iso.endswith("Z"):
@@ -122,7 +124,7 @@ def _utc_z(value: Optional[datetime] = None) -> str:
     return iso
 
 
-def _parse_collection_id(collection_id: str) -> Tuple[Optional[int], Optional[str]]:
+def _parse_collection_id(collection_id: str) -> tuple[int | None, str | None]:
     """Parse ``tenant-<id>--<label>`` collection ids.
 
     Collections in Sheshnaag V4 are deterministic per ``(tenant_id, label)``
@@ -139,19 +141,18 @@ def _parse_collection_id(collection_id: str) -> Tuple[Optional[int], Optional[st
 _COLLECTION_LABELS = ("indicators", "malware", "reports", "all")
 
 
-def _resolve_tenants(session: Session) -> List[Tenant]:
+def _resolve_tenants(session: Session) -> list[Tenant]:
     return session.query(Tenant).filter(Tenant.is_active.is_(True)).all()
 
 
-def _build_collection(tenant: Tenant, label: str) -> Dict[str, Any]:
+def _build_collection(tenant: Tenant, label: str) -> dict[str, Any]:
     slug = tenant.slug or f"tenant-{tenant.id}"
     collection_id = f"tenant-{tenant.id}--{label}"
     return {
         "id": collection_id,
         "title": f"{slug} — {label}",
         "description": (
-            f"STIX 2.1 {label} objects scoped to tenant {slug} "
-            f"(tenant_id={tenant.id})."
+            f"STIX 2.1 {label} objects scoped to tenant {slug} (tenant_id={tenant.id})."
         ),
         "can_read": True,
         "can_write": True,
@@ -159,15 +160,15 @@ def _build_collection(tenant: Tenant, label: str) -> Dict[str, Any]:
     }
 
 
-def _list_collections(session: Session) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _list_collections(session: Session) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for tenant in _resolve_tenants(session):
         for label in _COLLECTION_LABELS:
             out.append(_build_collection(tenant, label))
     return out
 
 
-def _find_collection(session: Session, collection_id: str) -> Optional[Dict[str, Any]]:
+def _find_collection(session: Session, collection_id: str) -> dict[str, Any] | None:
     tenant_id, label = _parse_collection_id(collection_id)
     if tenant_id is None or label is None or label not in _COLLECTION_LABELS:
         return None
@@ -177,7 +178,9 @@ def _find_collection(session: Session, collection_id: str) -> Optional[Dict[str,
     return _build_collection(tenant, label)
 
 
-def _tenant_for_collection(session: Session, collection_id: str) -> Tuple[Optional[Tenant], Optional[str]]:
+def _tenant_for_collection(
+    session: Session, collection_id: str
+) -> tuple[Tenant | None, str | None]:
     tenant_id, label = _parse_collection_id(collection_id)
     if tenant_id is None:
         return None, None
@@ -185,7 +188,7 @@ def _tenant_for_collection(session: Session, collection_id: str) -> Tuple[Option
     return tenant, label
 
 
-def _collect_tenant_objects(session: Session, tenant: Tenant, label: str) -> List[Dict[str, Any]]:
+def _collect_tenant_objects(session: Session, tenant: Tenant, label: str) -> list[dict[str, Any]]:
     """Materialize STIX objects for the given ``(tenant, label)`` collection.
 
     We iterate every analysis case for the tenant, export its bundle, and
@@ -197,7 +200,7 @@ def _collect_tenant_objects(session: Session, tenant: Tenant, label: str) -> Lis
     _load_store()
     exporter = StixExporter(session)
     seen_ids: set[str] = set()
-    aggregated: List[Dict[str, Any]] = []
+    aggregated: list[dict[str, Any]] = []
 
     cases = (
         session.query(AnalysisCase)
@@ -211,7 +214,9 @@ def _collect_tenant_objects(session: Session, tenant: Tenant, label: str) -> Lis
         except Exception:  # pragma: no cover — defensive
             logger.warning(
                 "TAXII collection export failed for tenant=%s case=%s",
-                tenant.id, case.id, exc_info=True,
+                tenant.id,
+                case.id,
+                exc_info=True,
             )
             continue
         for obj in bundle.get("objects", []):
@@ -241,7 +246,7 @@ def _collect_tenant_objects(session: Session, tenant: Tenant, label: str) -> Lis
     return aggregated
 
 
-def _parse_range(range_header: Optional[str]) -> Tuple[int, Optional[int]]:
+def _parse_range(range_header: str | None) -> tuple[int, int | None]:
     """Parse a ``Range: items=start-end`` header.
 
     Returns ``(start, end_inclusive)`` where ``end_inclusive`` is ``None``
@@ -260,12 +265,12 @@ def _parse_range(range_header: Optional[str]) -> Tuple[int, Optional[int]]:
 
 
 def _make_envelope(
-    objects: List[Dict[str, Any]],
+    objects: list[dict[str, Any]],
     *,
     start: int,
     total: int,
-) -> Dict[str, Any]:
-    envelope: Dict[str, Any] = {"objects": objects}
+) -> dict[str, Any]:
+    envelope: dict[str, Any] = {"objects": objects}
     if not objects:
         envelope["more"] = False
         return envelope
@@ -309,8 +314,7 @@ def api_root():
     body = {
         "title": "Sheshnaag Intel Fabric",
         "description": (
-            "Primary Sheshnaag TAXII API root. Serves one collection per "
-            "(tenant × label) pair."
+            "Primary Sheshnaag TAXII API root. Serves one collection per (tenant × label) pair."
         ),
         "versions": [f"application/taxii+json;version={TAXII_SPEC_VERSION}"],
         "max_content_length": 50 * 1024 * 1024,
@@ -352,8 +356,8 @@ def get_collection(
 )
 def list_objects(
     collection_id: str = Path(...),
-    range_header: Optional[str] = Header(default=None, alias="Range"),
-    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    range_header: str | None = Header(default=None, alias="Range"),
+    limit: int | None = Query(default=None, ge=1, le=500),
     session: Session = Depends(get_sync_session),
 ):
     """Return a paginated envelope of STIX objects for a collection."""
@@ -374,7 +378,7 @@ def list_objects(
     end_inclusive = min(end_inclusive, max(total - 1, 0))
 
     if total == 0:
-        window: List[Dict[str, Any]] = []
+        window: list[dict[str, Any]] = []
         status_code = 200
     else:
         if start >= total:
@@ -385,11 +389,9 @@ def list_objects(
             status_code = 206 if (start > 0 or end_inclusive < total - 1) else 200
 
     envelope = _make_envelope(window, start=start, total=total)
-    extra_headers: Dict[str, str] = {}
+    extra_headers: dict[str, str] = {}
     if status_code == 206 and window:
-        extra_headers["Content-Range"] = (
-            f"items {start}-{start + len(window) - 1}/{total}"
-        )
+        extra_headers["Content-Range"] = f"items {start}-{start + len(window) - 1}/{total}"
     return _taxii_json(envelope, status_code=status_code, extra_headers=extra_headers)
 
 
@@ -423,7 +425,7 @@ def get_object(
 def add_objects(
     collection_id: str = Path(...),
     request: Request = None,  # noqa: B008  (FastAPI injects)
-    body: Dict[str, Any] = Body(...),
+    body: dict[str, Any] = Body(...),
     session: Session = Depends(get_sync_session),
 ):
     """Ingest a STIX 2.1 Envelope / Bundle into a collection.
@@ -454,14 +456,14 @@ def add_objects(
     exporter = StixExporter(session)
     violations = exporter.validate_bundle(wrapped_bundle)
 
-    successes: List[Dict[str, Any]] = []
-    failures: List[Dict[str, Any]] = []
-    pending: List[Dict[str, Any]] = []
+    successes: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
 
     store = _INGEST_STORE.setdefault(collection_id, {})
     # Map violations → per-object failure shells. Violation strings start
     # with "objects[N]:" when they are per-object; we key by index.
-    bad_indices: Dict[int, List[str]] = {}
+    bad_indices: dict[int, list[str]] = {}
     for msg in violations:
         m = re.match(r"^objects\[(\d+)\]", msg)
         if m:
@@ -471,24 +473,30 @@ def add_objects(
     for idx, obj in enumerate(objects):
         obj_id = obj.get("id") if isinstance(obj, dict) else None
         if not isinstance(obj, dict) or not obj_id:
-            failures.append({
-                "id": obj_id or f"object--unknown-{idx}",
-                "version": _utc_z(),
-                "message": "missing id or not an object",
-            })
+            failures.append(
+                {
+                    "id": obj_id or f"object--unknown-{idx}",
+                    "version": _utc_z(),
+                    "message": "missing id or not an object",
+                }
+            )
             continue
         if idx in bad_indices:
-            failures.append({
-                "id": obj_id,
-                "version": obj.get("modified") or _utc_z(),
-                "message": "; ".join(bad_indices[idx]),
-            })
+            failures.append(
+                {
+                    "id": obj_id,
+                    "version": obj.get("modified") or _utc_z(),
+                    "message": "; ".join(bad_indices[idx]),
+                }
+            )
             continue
         store[obj_id] = obj
-        successes.append({
-            "id": obj_id,
-            "version": obj.get("modified") or _utc_z(),
-        })
+        successes.append(
+            {
+                "id": obj_id,
+                "version": obj.get("modified") or _utc_z(),
+            }
+        )
 
     status_id = f"status--{uuid.uuid4()}"
     report = {
@@ -514,7 +522,7 @@ def add_objects(
 )
 def get_manifest(
     collection_id: str = Path(...),
-    range_header: Optional[str] = Header(default=None, alias="Range"),
+    range_header: str | None = Header(default=None, alias="Range"),
     session: Session = Depends(get_sync_session),
 ):
     """Return the per-object manifest for a collection."""
@@ -540,17 +548,15 @@ def get_manifest(
         }
         for obj in window
     ]
-    envelope: Dict[str, Any] = {"objects": entries}
+    envelope: dict[str, Any] = {"objects": entries}
     if total:
         envelope["more"] = (start + len(window)) < total
     else:
         envelope["more"] = False
     status_code = 206 if (window and (start > 0 or end_inclusive < total - 1)) else 200
-    extra_headers: Dict[str, str] = {}
+    extra_headers: dict[str, str] = {}
     if status_code == 206:
-        extra_headers["Content-Range"] = (
-            f"items {start}-{start + len(window) - 1}/{total}"
-        )
+        extra_headers["Content-Range"] = f"items {start}-{start + len(window) - 1}/{total}"
     return _taxii_json(envelope, status_code=status_code, extra_headers=extra_headers)
 
 

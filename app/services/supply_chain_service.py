@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from app.core.time import utc_now
-from typing import Dict, List
-
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.models.v2 import (
     AttackTechnique,
     EPSSSnapshot,
@@ -24,7 +21,7 @@ class SupplyChainService:
     def __init__(self, session: Session):
         self.session = session
 
-    def get_overview(self, tenant_id: int | None = None) -> Dict[str, object]:
+    def get_overview(self, tenant_id: int | None = None) -> dict[str, object]:
         graph_nodes = (
             self.session.query(ExposureGraphNode)
             .filter(ExposureGraphNode.tenant_id == tenant_id)
@@ -120,7 +117,7 @@ class SupplyChainService:
             ],
         }
 
-    def _source_catalog(self) -> List[Dict[str, object]]:
+    def _source_catalog(self) -> list[dict[str, object]]:
         kev_entries = self.session.query(KEVEntry).count()
         epss_snapshots = self.session.query(EPSSSnapshot).count()
         attack_techniques = self.session.query(AttackTechnique).count()

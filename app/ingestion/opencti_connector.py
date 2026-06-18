@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 import requests
 
@@ -68,7 +68,7 @@ query Indicators($first: Int, $after: ID, $filters: FilterGroup, $orderBy: Indic
 # OpenCTI observable-type → normalized indicator_kind mapping
 # ---------------------------------------------------------------------------
 
-_OPENCTI_TYPE_MAP: Dict[str, str] = {
+_OPENCTI_TYPE_MAP: dict[str, str] = {
     "ipv4-addr": "ip",
     "ipv6-addr": "ip",
     "domain-name": "domain",
@@ -109,7 +109,7 @@ def _map_indicator_kind(observable_type: str, pattern: str = "") -> str:
     return lower or "unknown"
 
 
-def _extract_value_from_pattern(pattern: str) -> Optional[str]:
+def _extract_value_from_pattern(pattern: str) -> str | None:
     """Extract the literal value from a STIX2 pattern like ``[ipv4-addr:value = '1.2.3.4']``.
 
     The target literal is the one immediately following the ``=`` operator;
@@ -150,13 +150,13 @@ class OpenCTIConnector:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        token: Optional[str] = None,
+        base_url: str | None = None,
+        token: str | None = None,
         *,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
-        backoff_seconds: Optional[float] = None,
+        session: requests.Session | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        backoff_seconds: float | None = None,
         sleep_fn=time.sleep,
     ) -> None:
         self._base_url = (base_url or os.getenv("OPENCTI_URL") or "").rstrip("/")
@@ -175,7 +175,7 @@ class OpenCTIConnector:
     def healthy(self) -> bool:
         return bool(self._base_url and self._token)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self._token}",
             "Accept": "application/json",
@@ -189,8 +189,8 @@ class OpenCTIConnector:
     def _graphql(
         self,
         query: str,
-        variables: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        variables: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         if not self.healthy:
             return None
 
@@ -208,7 +208,9 @@ class OpenCTIConnector:
             except requests.RequestException as exc:
                 logger.warning(
                     "OpenCTI request error (attempt %d/%d): %s",
-                    attempt, self._max_retries, exc,
+                    attempt,
+                    self._max_retries,
+                    exc,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -217,7 +219,8 @@ class OpenCTIConnector:
             if resp.status_code == 429:
                 logger.warning(
                     "OpenCTI rate limited (attempt %d/%d)",
-                    attempt, self._max_retries,
+                    attempt,
+                    self._max_retries,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -226,7 +229,9 @@ class OpenCTIConnector:
             if resp.status_code >= 500:
                 logger.warning(
                     "OpenCTI %s (attempt %d/%d)",
-                    resp.status_code, attempt, self._max_retries,
+                    resp.status_code,
+                    attempt,
+                    self._max_retries,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -258,7 +263,7 @@ class OpenCTIConnector:
     # Public API
     # ------------------------------------------------------------------
 
-    def fetch(self, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Fetch normalized IOC records from OpenCTI.
 
         ``scope`` accepts optional filters forwarded to the GraphQL query:
@@ -273,7 +278,7 @@ class OpenCTIConnector:
             return []
 
         scope = scope or {}
-        variables: Dict[str, Any] = {
+        variables: dict[str, Any] = {
             "first": int(scope.get("first", 100)),
             "orderBy": "created_at",
             "orderMode": "desc",
@@ -281,7 +286,7 @@ class OpenCTIConnector:
         if scope.get("after"):
             variables["after"] = scope["after"]
 
-        filters: List[Dict[str, Any]] = []
+        filters: list[dict[str, Any]] = []
         if scope.get("created_since"):
             filters.append(
                 {
@@ -329,7 +334,7 @@ class OpenCTIConnector:
         if not isinstance(edges, list):
             return []
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for edge in edges:
             if not isinstance(edge, dict):
                 continue
@@ -346,7 +351,7 @@ class OpenCTIConnector:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_node(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _normalize_node(node: dict[str, Any]) -> dict[str, Any] | None:
         pattern = node.get("pattern") or ""
         observable = node.get("x_opencti_main_observable_type") or ""
         kind = _map_indicator_kind(observable, pattern)
@@ -355,12 +360,12 @@ class OpenCTIConnector:
         if not value:
             return None
 
-        labels: List[str] = []
+        labels: list[str] = []
         for lbl in node.get("objectLabel") or []:
             if isinstance(lbl, dict) and lbl.get("value"):
                 labels.append(lbl["value"])
 
-        tags: List[str] = list(labels)
+        tags: list[str] = list(labels)
         for mark in node.get("objectMarking") or []:
             if isinstance(mark, dict) and mark.get("definition"):
                 tags.append(mark["definition"])

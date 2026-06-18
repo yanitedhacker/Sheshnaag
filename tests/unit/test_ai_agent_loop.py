@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List
+from collections.abc import Iterator
+from typing import Any, Dict, List
 
 from app.services.ai_agent_loop import AIAgentLoop
 from app.services.ai_tools_registry import Tool
@@ -16,14 +17,14 @@ class _ScriptedAdapter:
     model_label = "scripted-1"
     capabilities = ["summarize_evidence"]
 
-    def __init__(self, scripts: List[List[Dict[str, Any]]]) -> None:
+    def __init__(self, scripts: list[list[dict[str, Any]]]) -> None:
         self._scripts = list(scripts)
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         return {"status": "available", "healthy": True, "model": self.model_label}
 
-    def stream(self, **kwargs: Any) -> Iterator[Dict[str, Any]]:
+    def stream(self, **kwargs: Any) -> Iterator[dict[str, Any]]:
         self.calls.append(kwargs)
         if not self._scripts:
             yield {"type": "message_stop", "stop_reason": "end_turn", "usage": {}}
@@ -38,19 +39,32 @@ def test_agent_loop_executes_tool_then_ends_turn():
     # Step 2: model emits final text, stop_reason=end_turn.
     step1 = [
         {"type": "message_start", "metadata": {"model": "scripted-1"}},
-        {"type": "tool_use", "tool_use_id": "tu_1", "name": "echo_tool", "input": {"value": "hello"}},
-        {"type": "message_stop", "stop_reason": "tool_use", "usage": {"input_tokens": 10, "output_tokens": 3}},
+        {
+            "type": "tool_use",
+            "tool_use_id": "tu_1",
+            "name": "echo_tool",
+            "input": {"value": "hello"},
+        },
+        {
+            "type": "message_stop",
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 10, "output_tokens": 3},
+        },
     ]
     step2 = [
         {"type": "message_start", "metadata": {"model": "scripted-1"}},
         {"type": "text_delta", "text": "Done. The tool returned the value 'hello'."},
-        {"type": "message_stop", "stop_reason": "end_turn", "usage": {"input_tokens": 12, "output_tokens": 9}},
+        {
+            "type": "message_stop",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 12, "output_tokens": 9},
+        },
     ]
     adapter = _ScriptedAdapter([step1, step2])
 
     calls = {"count": 0}
 
-    def echo(value: str, **_: Any) -> Dict[str, Any]:
+    def echo(value: str, **_: Any) -> dict[str, Any]:
         calls["count"] += 1
         return {"echoed": value}
 
@@ -99,7 +113,11 @@ def test_agent_loop_caps_steps():
     # Each scripted step keeps emitting tool_use forever.
     forever_step = [
         {"type": "tool_use", "tool_use_id": "tu_x", "name": "echo_tool", "input": {"value": "v"}},
-        {"type": "message_stop", "stop_reason": "tool_use", "usage": {"input_tokens": 1, "output_tokens": 1}},
+        {
+            "type": "message_stop",
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
     ]
     adapter = _ScriptedAdapter([list(forever_step) for _ in range(10)])
 

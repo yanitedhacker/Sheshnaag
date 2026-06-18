@@ -16,7 +16,6 @@ Security Enhancement: Added authentication, CORS, and rate limiting settings.
 import os
 import secrets
 from functools import lru_cache
-from typing import List, Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -45,14 +44,16 @@ class Settings(BaseSettings):
 
     # CORS Settings
     # In production, set specific origins via ALLOWED_ORIGINS env var (comma-separated)
-    allowed_origins: str = "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000"
+    allowed_origins: str = (
+        "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000"
+    )
 
     @property
-    def cors_origins(self) -> List[str]:
+    def cors_origins(self) -> list[str]:
         """Parse allowed origins from comma-separated string."""
         if not self.allowed_origins:
             return []
-        return [origin.strip() for origin in self.allowed_origins.split(',') if origin.strip()]
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
 
     # Rate Limiting
     rate_limit_enabled: bool = True
@@ -82,20 +83,20 @@ class Settings(BaseSettings):
     # Provenance / signing
     signing_key_dir: str = "/tmp/sheshnaag_signing_keys"
     signing_key_backend: str = "local-file"
-    signing_key_backup_dir: Optional[str] = None
+    signing_key_backup_dir: str | None = None
     release_metadata_dir: str = "./data/release_metadata"
     sheshnaag_audit_signer: str = "hmac"
 
     # V4 beta runtime gates
     object_store_backend: str = "filesystem"
-    otel_exporter_otlp_endpoint: Optional[str] = None
+    otel_exporter_otlp_endpoint: str | None = None
     sheshnaag_require_beta_health: bool = False
 
     # External APIs
-    nvd_api_key: Optional[str] = None
+    nvd_api_key: str | None = None
     nvd_base_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     exploit_db_url: str = "https://www.exploit-db.com"
-    github_token: Optional[str] = None
+    github_token: str | None = None
 
     # ML Settings
     model_path: str = "./models"
@@ -110,7 +111,7 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     metrics_require_auth: bool = False  # Set to True in production
 
-    @field_validator('secret_key', mode='before')
+    @field_validator("secret_key", mode="before")
     @classmethod
     def validate_secret_key(cls, v: str, info) -> str:
         """Validate and generate secret key if needed.
@@ -133,7 +134,7 @@ class Settings(BaseSettings):
             )
         return secrets.token_urlsafe(32)
 
-    def validate_production_settings(self) -> List[str]:
+    def validate_production_settings(self) -> list[str]:
         """
         Validate settings for production environment.
 
@@ -161,7 +162,9 @@ class Settings(BaseSettings):
         beta_profiles = {"design_partner_beta", "full_v4_beta", "release_verification"}
         if self.deployment_profile in {"shared_server", *beta_profiles}:
             if self.signing_key_dir.startswith("/tmp"):
-                errors.append("SIGNING_KEY_DIR must not use /tmp for shared_server or beta/release profiles")
+                errors.append(
+                    "SIGNING_KEY_DIR must not use /tmp for shared_server or beta/release profiles"
+                )
             if self.signing_key_backend not in {"local-file", "mounted-secret"}:
                 errors.append("SIGNING_KEY_BACKEND must be 'local-file' or 'mounted-secret'")
 
@@ -182,7 +185,7 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
-
+from typing import Any
 
 DEFAULT_BASELINE_IMAGE = os.environ.get("SHESHNAAG_BASELINE_IMAGE", "kalilinux/kali-rolling:2026.1")
 DEFAULT_OSQUERY_IMAGE = os.environ.get("SHESHNAAG_OSQUERY_IMAGE", "sheshnaag-kali-osquery:2026.1")
@@ -32,7 +32,7 @@ class ImageCatalogEntry:
     def digest(self) -> str:
         return hashlib.sha256(self.image.encode("utf-8")).hexdigest()
 
-    def to_manifest(self) -> Dict[str, Any]:
+    def to_manifest(self) -> dict[str, Any]:
         return {
             "profile": self.profile,
             "provider": self.provider,
@@ -49,7 +49,7 @@ class ImageCatalogEntry:
         }
 
 
-_CATALOG: List[ImageCatalogEntry] = [
+_CATALOG: list[ImageCatalogEntry] = [
     ImageCatalogEntry(
         profile="baseline",
         provider="docker_kali",
@@ -96,11 +96,11 @@ _CATALOG: List[ImageCatalogEntry] = [
 ]
 
 
-def list_image_catalog() -> List[ImageCatalogEntry]:
+def list_image_catalog() -> list[ImageCatalogEntry]:
     return list(_CATALOG)
 
 
-def find_image_profile(profile: str, *, provider: Optional[str] = None) -> Optional[ImageCatalogEntry]:
+def find_image_profile(profile: str, *, provider: str | None = None) -> ImageCatalogEntry | None:
     normalized = (profile or "").strip().lower()
     for entry in _CATALOG:
         if entry.profile == normalized and (provider is None or entry.provider == provider):
@@ -108,7 +108,7 @@ def find_image_profile(profile: str, *, provider: Optional[str] = None) -> Optio
     return None
 
 
-def find_image_by_name(image: str, *, provider: Optional[str] = None) -> Optional[ImageCatalogEntry]:
+def find_image_by_name(image: str, *, provider: str | None = None) -> ImageCatalogEntry | None:
     normalized = (image or "").strip().lower()
     for entry in _CATALOG:
         if entry.image.lower() == normalized and (provider is None or entry.provider == provider):
@@ -130,8 +130,8 @@ def default_image_profile(*, provider: str, collectors: Iterable[str]) -> str:
 def resolve_catalog_entry(
     *,
     provider: str,
-    image_profile: Optional[str] = None,
-    requested_image: Optional[str] = None,
+    image_profile: str | None = None,
+    requested_image: str | None = None,
     collectors: Iterable[str] = (),
 ) -> ImageCatalogEntry:
     if image_profile:

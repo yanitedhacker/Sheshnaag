@@ -16,11 +16,9 @@ first hit to one of these routes).
 from __future__ import annotations
 
 import logging
-import os
 import secrets
-from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -32,7 +30,6 @@ from app.services.oidc_service import (
     OidcProviderNotFoundError,
     OidcService,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +59,7 @@ class CallbackResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user_email: str
-    roles: List[str]
+    roles: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +117,8 @@ def _verify_id_token(
     authlib's JsonWebToken handles JWKS lookup + alg whitelisting; we
     pin the issuer + audience checks explicitly.
     """
-    from authlib.jose import JsonWebToken
     import requests
+    from authlib.jose import JsonWebToken
 
     jwks_url = discovery["jwks_uri"]
     jwks = requests.get(jwks_url, timeout=10).json()
@@ -131,9 +128,7 @@ def _verify_id_token(
     claims.validate()  # exp, iat, nbf
 
     if claims.get("iss") != expected_issuer:
-        raise OidcCallbackError(
-            f"issuer_mismatch:{claims.get('iss')}!={expected_issuer}"
-        )
+        raise OidcCallbackError(f"issuer_mismatch:{claims.get('iss')}!={expected_issuer}")
     aud = claims.get("aud")
     if isinstance(aud, list):
         if client_id not in aud:
@@ -149,11 +144,11 @@ def _verify_id_token(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/providers", response_model=List[ProviderSummary])
+@router.get("/providers", response_model=list[ProviderSummary])
 def list_providers(
     _td: TokenData = Depends(verify_token),
     session: Session = Depends(get_sync_session),
-) -> List[ProviderSummary]:
+) -> list[ProviderSummary]:
     svc = OidcService(session)
     return [
         ProviderSummary(
@@ -193,25 +188,27 @@ def login(
 
     from urllib.parse import urlencode
 
-    authorize_url = discovery["authorization_endpoint"] + "?" + urlencode(
-        {
-            "response_type": "code",
-            "client_id": prov.client_id,
-            "redirect_uri": prov.redirect_uri,
-            "scope": scopes,
-            "state": state_value,
-        }
+    authorize_url = (
+        discovery["authorization_endpoint"]
+        + "?"
+        + urlencode(
+            {
+                "response_type": "code",
+                "client_id": prov.client_id,
+                "redirect_uri": prov.redirect_uri,
+                "scope": scopes,
+                "state": state_value,
+            }
+        )
     )
-    return LoginUrlResponse(
-        provider=prov.name, authorize_url=authorize_url, state=state_value
-    )
+    return LoginUrlResponse(provider=prov.name, authorize_url=authorize_url, state=state_value)
 
 
 @router.get("/{provider}/callback", response_model=CallbackResponse)
 def callback(
     provider: str,
     code: str,
-    state: Optional[str] = None,
+    state: str | None = None,
     session: Session = Depends(get_sync_session),
 ) -> CallbackResponse:
     """Exchange the auth code, JIT-provision the user, mint a Sheshnaag JWT.
@@ -230,9 +227,7 @@ def callback(
     try:
         client_secret = OidcService.resolve_client_secret(prov)
     except OidcConfigError as e:
-        raise HTTPException(
-            status_code=500, detail=f"provider_misconfigured:{e}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"provider_misconfigured:{e}") from e
 
     discovery = _discover(prov.issuer_url)
     try:
@@ -261,9 +256,7 @@ def callback(
     except OidcCallbackError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(
-            status_code=401, detail=f"id_token_invalid:{type(e).__name__}"
-        ) from e
+        raise HTTPException(status_code=401, detail=f"id_token_invalid:{type(e).__name__}") from e
 
     try:
         user, memberships = svc.jit_provision(prov, claims)

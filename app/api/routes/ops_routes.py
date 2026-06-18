@@ -53,6 +53,7 @@ def _audit_signer_status() -> dict:
     if choice == "cosign":
         try:
             import sigstore  # noqa: F401  # pragma: no cover - optional
+
             return {"backend": "cosign", "status": "configured"}
         except Exception:
             return {"backend": "cosign", "status": "missing_sigstore"}
@@ -87,6 +88,7 @@ def _otel_status() -> str:
         return "unconfigured"
     try:
         import opentelemetry  # noqa: F401  # pragma: no cover - optional
+
         return "configured"
     except Exception:
         return "missing_sdk"
@@ -123,7 +125,10 @@ def ops_health(response: Response, session: Session = Depends(get_sync_session))
     object_store = _object_store_status()
     telemetry = {
         "otel": _otel_status(),
-        "log_json": "on" if os.getenv("LOG_JSON", "").lower() in {"1", "true", "yes"} or settings.environment != "development" else "off",
+        "log_json": "on"
+        if os.getenv("LOG_JSON", "").lower() in {"1", "true", "yes"}
+        or settings.environment != "development"
+        else "off",
     }
     lab_deps = {
         "nft": _binary_status("nft"),
@@ -186,7 +191,9 @@ def ops_health(response: Response, session: Session = Depends(get_sync_session))
         required_lab = {"nft", "dnsmasq", "virsh", "zeek", "kvm"}
         if detonation_runtime["require_memory_dump"] == "on":
             required_lab.add("vol")
-        blockers.extend(f"lab_deps.{name}" for name in sorted(required_lab) if lab_deps.get(name) != "ok")
+        blockers.extend(
+            f"lab_deps.{name}" for name in sorted(required_lab) if lab_deps.get(name) != "ok"
+        )
         for provider, provider_status in ai_providers.items():
             if provider_status != "configured":
                 blockers.append(f"ai_providers.{provider}")

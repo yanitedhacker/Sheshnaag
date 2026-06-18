@@ -10,7 +10,7 @@ each tool returns is consumable by the next step in a real investigation.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -54,14 +54,23 @@ def seeded():
     session.add(cve)
     session.flush()
     session.add(KEVEntry(cve_id="CVE-2026-0042", vendor_project="ACME", product="WidgetServer"))
-    session.add(EPSSSnapshot(
-        cve_id="CVE-2026-0042", score=0.71, percentile=0.94,
-        scored_at=datetime.now(timezone.utc),
-    ))
-    session.add(ExploitSignal(
-        cve_id=cve.id, signal_type="public_poc", signal_value=1.0,
-        source_url="https://github.com/x/poc", confidence=0.9,
-    ))
+    session.add(
+        EPSSSnapshot(
+            cve_id="CVE-2026-0042",
+            score=0.71,
+            percentile=0.94,
+            scored_at=datetime.now(UTC),
+        )
+    )
+    session.add(
+        ExploitSignal(
+            cve_id=cve.id,
+            signal_type="public_poc",
+            signal_value=1.0,
+            source_url="https://github.com/x/poc",
+            confidence=0.9,
+        )
+    )
 
     # Malware lab: specimen + revision + analysis case + indicators + findings
     specimen = Specimen(
@@ -73,16 +82,18 @@ def seeded():
     )
     session.add(specimen)
     session.flush()
-    session.add(SpecimenRevision(
-        specimen_id=specimen.id,
-        revision_number=1,
-        sha256="c0ffee" * 10 + "abcd",
-        content_ref="s3://quarantine/widget-loader.bin",
-        static_triage={
-            "tags": ["elf", "static-linked", "embedded-c2"],
-            "imports": ["__libc_start_main"],
-        },
-    ))
+    session.add(
+        SpecimenRevision(
+            specimen_id=specimen.id,
+            revision_number=1,
+            sha256="c0ffee" * 10 + "abcd",
+            content_ref="s3://quarantine/widget-loader.bin",
+            static_triage={
+                "tags": ["elf", "static-linked", "embedded-c2"],
+                "imports": ["__libc_start_main"],
+            },
+        )
+    )
     case = AnalysisCase(
         tenant_id=tenant.id,
         title="WidgetServer intrusion 2026-W17",
@@ -92,38 +103,40 @@ def seeded():
     )
     session.add(case)
     session.flush()
-    session.add_all([
-        IndicatorArtifact(
-            tenant_id=tenant.id,
-            analysis_case_id=case.id,
-            indicator_kind="domain",
-            value="c2.evil.example.com",
-            confidence=0.92,
-        ),
-        IndicatorArtifact(
-            tenant_id=tenant.id,
-            analysis_case_id=case.id,
-            indicator_kind="ipv4",
-            value="198.51.100.42",
-            confidence=0.85,
-        ),
-        IndicatorArtifact(
-            tenant_id=tenant.id,
-            analysis_case_id=case.id,
-            indicator_kind="sha256",
-            value="c0ffee" * 10 + "abcd",
-            confidence=1.0,
-        ),
-        BehaviorFinding(
-            tenant_id=tenant.id,
-            analysis_case_id=case.id,
-            finding_type="network_c2",
-            title="Beacon to c2.evil.example.com on TCP/443 every 60s",
-            severity="high",
-            confidence=0.88,
-            payload={"attack_techniques": [{"technique_id": "T1071.001"}]},
-        ),
-    ])
+    session.add_all(
+        [
+            IndicatorArtifact(
+                tenant_id=tenant.id,
+                analysis_case_id=case.id,
+                indicator_kind="domain",
+                value="c2.evil.example.com",
+                confidence=0.92,
+            ),
+            IndicatorArtifact(
+                tenant_id=tenant.id,
+                analysis_case_id=case.id,
+                indicator_kind="ipv4",
+                value="198.51.100.42",
+                confidence=0.85,
+            ),
+            IndicatorArtifact(
+                tenant_id=tenant.id,
+                analysis_case_id=case.id,
+                indicator_kind="sha256",
+                value="c0ffee" * 10 + "abcd",
+                confidence=1.0,
+            ),
+            BehaviorFinding(
+                tenant_id=tenant.id,
+                analysis_case_id=case.id,
+                finding_type="network_c2",
+                title="Beacon to c2.evil.example.com on TCP/443 every 60s",
+                severity="high",
+                confidence=0.88,
+                payload={"attack_techniques": [{"technique_id": "T1071.001"}]},
+            ),
+        ]
+    )
     session.commit()
 
     try:
@@ -161,7 +174,9 @@ def test_e2e_analyst_investigation_flow(seeded):
 
     # 3. Enrich the related CVE — analyst correlates malware to known intel.
     enrich = get_tool("query_intel_feed").callable(
-        source="local", iocs=["CVE-2026-0042", "c2.evil.example.com"], _context=ctx,
+        source="local",
+        iocs=["CVE-2026-0042", "c2.evil.example.com"],
+        _context=ctx,
     )
     cve_row = next(e for e in enrich["enrichment"] if e["ioc"] == "CVE-2026-0042")
     assert cve_row["kev"]["product"] == "WidgetServer"
@@ -173,7 +188,9 @@ def test_e2e_analyst_investigation_flow(seeded):
     # 4. Knowledge corpus query — cold corpus returns empty, but the call
     #    must succeed (proves the wiring, even when nothing is indexed yet).
     kq = get_tool("query_knowledge").callable(
-        query="WidgetServer authentication bypass remediation", k=3, _context=ctx,
+        query="WidgetServer authentication bypass remediation",
+        k=3,
+        _context=ctx,
     )
     assert kq["query"].startswith("WidgetServer")
     assert isinstance(kq["hits"], list)
@@ -209,11 +226,7 @@ def test_e2e_agent_run_persists_and_replays(seeded):
 
     # Direct DB inspection — this is the durability assertion that matters
     # for the "in-memory only" gap the user flagged.
-    row = (
-        session.query(AutonomousAgentRun)
-        .filter(AutonomousAgentRun.run_id == run.run_id)
-        .first()
-    )
+    row = session.query(AutonomousAgentRun).filter(AutonomousAgentRun.run_id == run.run_id).first()
     assert row is not None
     assert row.tenant_id == tenant.id
     assert row.case_id == case.id
@@ -233,11 +246,15 @@ def test_e2e_cross_tenant_isolation_is_preserved(seeded):
     ctx_other = _ctx(session, other)
 
     # Triage of A's specimen from B's context => 404
-    triage = get_tool("fetch_specimen_triage").callable(specimen_id=specimen_a.id, _context=ctx_other)
+    triage = get_tool("fetch_specimen_triage").callable(
+        specimen_id=specimen_a.id, _context=ctx_other
+    )
     assert triage.get("error") == "specimen_not_found"
 
     # Pivot on A's known IOC from B's context => no neighbors
-    pivot = get_tool("pivot_ioc").callable(indicator_value="c2.evil.example.com", _context=ctx_other)
+    pivot = get_tool("pivot_ioc").callable(
+        indicator_value="c2.evil.example.com", _context=ctx_other
+    )
     assert pivot["neighbors"] == []
     assert pivot.get("note") == "indicator_not_found"
 

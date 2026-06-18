@@ -7,12 +7,11 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "data" / "release_metadata" / "maintainer-demo-assessment.json"
@@ -35,7 +34,9 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
-def _request_json(method: str, url: str, *, payload: dict[str, Any] | None = None, token: str | None = None) -> dict[str, Any]:
+def _request_json(
+    method: str, url: str, *, payload: dict[str, Any] | None = None, token: str | None = None
+) -> dict[str, Any]:
     headers = {"Accept": "application/json"}
     body = None
     if payload is not None:
@@ -76,13 +77,15 @@ def _onboard_or_login(base_url: str, tenant_slug: str) -> str:
                 "tenant_slug": tenant_slug,
             },
         )
-    token = ((result.get("token") or result).get("access_token"))
+    token = (result.get("token") or result).get("access_token")
     if not token:
         raise RuntimeError("Demo tenant onboarding/login did not return a bearer token.")
     return str(token)
 
 
-def _run_cli(base_url: str, tenant_slug: str, token: str, repo_url: str, sbom: Path, vex: Path) -> dict[str, Any]:
+def _run_cli(
+    base_url: str, tenant_slug: str, token: str, repo_url: str, sbom: Path, vex: Path
+) -> dict[str, Any]:
     cmd = [
         sys.executable,
         str(ROOT / "scripts" / "sheshnaag_maintainer.py"),
@@ -138,12 +141,16 @@ def main() -> int:
     parser.add_argument("--sbom", type=Path, default=DEFAULT_SBOM)
     parser.add_argument("--vex", type=Path, default=DEFAULT_VEX)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--allow-skip", action="store_true", help="Write skipped proof when no local API is reachable.")
+    parser.add_argument(
+        "--allow-skip",
+        action="store_true",
+        help="Write skipped proof when no local API is reachable.",
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
     payload: dict[str, Any] = {
-        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "captured_at": datetime.now(UTC).isoformat(),
         "base_url": base_url,
         "tenant_slug": args.tenant_slug,
         "repo_url": args.repo_url,
@@ -154,9 +161,18 @@ def main() -> int:
     try:
         payload["health"] = _health(base_url)
         token = _onboard_or_login(base_url, args.tenant_slug)
-        payload.update(_run_cli(base_url, args.tenant_slug, token, args.repo_url, args.sbom, args.vex))
+        payload.update(
+            _run_cli(base_url, args.tenant_slug, token, args.repo_url, args.sbom, args.vex)
+        )
         payload["status"] = "passed"
-    except (HTTPError, URLError, OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+    except (
+        HTTPError,
+        URLError,
+        OSError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        json.JSONDecodeError,
+    ) as exc:
         payload["status"] = "skipped" if args.allow_skip else "failed"
         payload["reason"] = "local_api_unavailable_or_demo_tenant_unready"
         payload["detail"] = str(exc)

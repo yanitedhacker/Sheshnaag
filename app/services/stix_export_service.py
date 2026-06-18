@@ -15,7 +15,7 @@ or stream it back over HTTP.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import stix2
 from sqlalchemy.orm import Session
@@ -51,7 +51,7 @@ class StixExportService:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def export_case(self, tenant: Tenant, *, case_id: int) -> Dict[str, Any]:
+    def export_case(self, tenant: Tenant, *, case_id: int) -> dict[str, Any]:
         case = (
             self.session.query(AnalysisCase)
             .filter(AnalysisCase.tenant_id == tenant.id, AnalysisCase.id == case_id)
@@ -76,8 +76,8 @@ class StixExportService:
             )
             .all()
         )
-        specimen_ids: List[int] = list(case.specimen_ids or [])
-        specimens: List[Specimen] = (
+        specimen_ids: list[int] = list(case.specimen_ids or [])
+        specimens: list[Specimen] = (
             self.session.query(Specimen)
             .filter(Specimen.tenant_id == tenant.id, Specimen.id.in_(specimen_ids))
             .all()
@@ -91,8 +91,8 @@ class StixExportService:
             description=f"Sheshnaag tenant {tenant.slug}",
         )
 
-        objects: List[Any] = [identity]
-        object_refs: List[str] = []
+        objects: list[Any] = [identity]
+        object_refs: list[str] = []
 
         for ind in indicators:
             pattern_builder = _PATTERN_BUILDERS.get((ind.indicator_kind or "").lower())
@@ -153,4 +153,5 @@ class StixExportService:
         # `bundle.serialize()` returns JSON text; round-trip to dict so the
         # API can return a real JSON object rather than a string.
         import json
+
         return json.loads(bundle.serialize())

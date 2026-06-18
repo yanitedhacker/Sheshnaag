@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
-from app.lab.interfaces import Collector
+from typing import Any
 
 from app.lab.collectors.common import synthetic_from_plan
+from app.lab.interfaces import Collector
 
 
 class SyntheticCollector(Collector):
@@ -18,7 +17,9 @@ class SyntheticCollector(Collector):
         self._summary = summary
         self.collector_version = version
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         return [
             synthetic_from_plan(
                 collector_name=self.collector_name,

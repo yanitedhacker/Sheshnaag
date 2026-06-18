@@ -2,32 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.security import TokenData, verify_token
-from app.core.tenancy import resolve_tenant, require_writable_tenant
+from app.core.tenancy import require_writable_tenant, resolve_tenant
 from app.services.brief_service import BriefService, serialize_brief
 
 router = APIRouter(prefix="/api/v4/briefs", tags=["Sheshnaag V4 Briefs"])
 
 
 class BriefGenerateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     brief_type: str = Field(default="ad_hoc", max_length=40)
     period_hours: int = Field(default=24, ge=1, le=720)
 
 
 @router.get("/latest")
 def latest_brief(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
-    brief_type: Optional[str] = Query(None, max_length=40),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
+    brief_type: str | None = Query(None, max_length=40),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate
 ):
@@ -42,9 +40,9 @@ def latest_brief(
 
 @router.get("")
 def list_briefs(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
-    brief_type: Optional[str] = Query(None, max_length=40),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
+    brief_type: str | None = Query(None, max_length=40),
     limit: int = Query(20, ge=1, le=200),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — auth gate

@@ -27,8 +27,9 @@ import os
 import shutil
 import subprocess
 import textwrap
+from collections.abc import Iterable
 from types import TracebackType
-from typing import Any, Dict, Iterable, List, Optional, Type
+from typing import Any
 
 from app.core.time import utc_now
 
@@ -78,7 +79,7 @@ class EgressEnforcer:
         profile: Any,
         *,
         run_id: Any,
-        dry_run: Optional[bool] = None,
+        dry_run: bool | None = None,
     ) -> None:
         self._profile = profile
         self._run_id = run_id
@@ -89,7 +90,7 @@ class EgressEnforcer:
         self._dry_run = bool(dry_run)
 
         self._mode = self._resolve_mode(profile)
-        self._config: Dict[str, Any] = dict(getattr(profile, "config", None) or {})
+        self._config: dict[str, Any] = dict(getattr(profile, "config", None) or {})
         self._allow_hosts = self._resolve_allow_hosts(self._config)
         self._allow_cidrs = self._resolve_allow_cidrs(self._config)
         self._allow_ports = self._resolve_allow_ports(self._config)
@@ -102,7 +103,7 @@ class EgressEnforcer:
         self._inetsim_pid_path = os.path.join(self._inetsim_dir, "inetsim.pid")
 
         self._applied: bool = False
-        self._last_plan: Dict[str, Any] = {}
+        self._last_plan: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -117,14 +118,14 @@ class EgressEnforcer:
         return self._dry_run
 
     @property
-    def plan(self) -> Dict[str, Any]:
+    def plan(self) -> dict[str, Any]:
         return dict(self._last_plan)
 
-    def apply(self) -> Dict[str, Any]:
+    def apply(self) -> dict[str, Any]:
         """Compile rules and (when not dry-run) push them to the kernel."""
-        rules: List[str] = []
-        errors: List[str] = []
-        binaries: Dict[str, bool] = {
+        rules: list[str] = []
+        errors: list[str] = []
+        binaries: dict[str, bool] = {
             "nft": self._binary_ok("nft"),
             "dnsmasq": self._binary_ok("dnsmasq"),
             "inetsim": self._binary_ok("inetsim"),
@@ -214,15 +215,15 @@ class EgressEnforcer:
 
     # Context-manager surface -------------------------------------------------
 
-    def __enter__(self) -> "EgressEnforcer":
+    def __enter__(self) -> EgressEnforcer:
         self.apply()
         return self
 
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc: Optional[BaseException],
-        tb: Optional[TracebackType],
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
     ) -> None:
         self.teardown()
 
@@ -234,7 +235,7 @@ class EgressEnforcer:
         """Return an ``nft -f``-ready program describing the egress posture."""
         allow_hosts = list(allow_hosts or [])
         table = self._nft_table
-        lines: List[str] = [
+        lines: list[str] = [
             "#!/usr/sbin/nft -f",
             f"# sheshnaag egress enforcer run={self._run_id} mode={mode}",
             f"add table inet {table}",
@@ -247,16 +248,15 @@ class EgressEnforcer:
 
         if mode == "none":
             # Pure accept; rules omitted but table is still created so teardown works.
-            lines.append(f"# mode=none — no kernel enforcement beyond chain presence")
+            lines.append("# mode=none — no kernel enforcement beyond chain presence")
             return "\n".join(lines) + "\n"
 
         # Every non-none mode starts from a deny-default posture.
         lines[-1] = (
-            f"add chain inet {table} output "
-            "{ type filter hook output priority 0; policy drop; }"
+            f"add chain inet {table} output {{ type filter hook output priority 0; policy drop; }}"
         )
         # Always permit loopback.
-        lines.append(f"add rule inet {table} output oifname \"lo\" accept")
+        lines.append(f'add rule inet {table} output oifname "lo" accept')
         # Always permit DNS (we redirect / sinkhole it elsewhere).
         lines.append(f"add rule inet {table} output udp dport 53 accept")
         lines.append(f"add rule inet {table} output tcp dport 53 accept")
@@ -274,9 +274,7 @@ class EgressEnforcer:
             host_stripped = str(host).strip()
             if not host_stripped:
                 continue
-            lines.append(
-                f"# allow-host: {host_stripped} (resolved to A/AAAA at rule load)"
-            )
+            lines.append(f"# allow-host: {host_stripped} (resolved to A/AAAA at rule load)")
             lines.append(
                 f"add rule inet {table} output meta l4proto {{tcp,udp}} "
                 f"ip daddr $({host_stripped}) accept"
@@ -285,29 +283,23 @@ class EgressEnforcer:
         if mode == "sinkhole":
             # Redirect any non-dns traffic to localhost sinkhole at :9 (discard).
             lines.append(
-                f"add rule inet {table} output ip daddr != 127.0.0.0/8 "
-                "tcp dport != 53 drop"
+                f"add rule inet {table} output ip daddr != 127.0.0.0/8 tcp dport != 53 drop"
             )
             lines.append(
-                f"add rule inet {table} output ip daddr != 127.0.0.0/8 "
-                "udp dport != 53 drop"
+                f"add rule inet {table} output ip daddr != 127.0.0.0/8 udp dport != 53 drop"
             )
         elif mode == "fake_internet":
             # Accept traffic to the inetsim loopback listener cluster.
+            lines.append(f"add rule inet {table} output ip daddr 127.0.0.0/8 accept")
+            lines.append(f"add rule inet {table} output ip daddr 169.254.0.0/16 accept")
             lines.append(
-                f"add rule inet {table} output ip daddr 127.0.0.0/8 accept"
-            )
-            lines.append(
-                f"add rule inet {table} output ip daddr 169.254.0.0/16 accept"
-            )
-            lines.append(
-                f"# fake_internet mode: all egress is NAT-redirected into the "
+                "# fake_internet mode: all egress is NAT-redirected into the "
                 "inetsim listener; see inetsim.conf"
             )
         else:  # default_deny
-            lines.append(f"# default_deny: only explicit allow-rules above will pass")
+            lines.append("# default_deny: only explicit allow-rules above will pass")
 
-        lines.append(f"add rule inet {table} output counter log prefix \"sheshnaag-drop: \" drop")
+        lines.append(f'add rule inet {table} output counter log prefix "sheshnaag-drop: " drop')
         return "\n".join(lines) + "\n"
 
     def _dnsmasq_config(self, mode: str, run_id: Any) -> str:
@@ -315,9 +307,7 @@ class EgressEnforcer:
         pid_path = self._dnsmasq_pid_path
         slug = _slug_run_id(run_id)
         allow_hosts = self._allow_hosts
-        allow_lines = "\n".join(
-            f"address=/{host}/127.0.0.1" for host in allow_hosts
-        )
+        allow_lines = "\n".join(f"address=/{host}/127.0.0.1" for host in allow_hosts)
         config = textwrap.dedent(
             f"""\
             # sheshnaag dnsmasq sinkhole — run={slug} mode={mode}
@@ -377,10 +367,10 @@ class EgressEnforcer:
     def _execute_plan(
         self,
         *,
-        binaries: Dict[str, bool],
+        binaries: dict[str, bool],
         nft_program: str,
-    ) -> tuple[bool, List[str]]:
-        errors: List[str] = []
+    ) -> tuple[bool, list[str]]:
+        errors: list[str] = []
 
         if not binaries.get("nft"):
             errors.append("nft binary not found on host; egress rules not applied")
@@ -415,7 +405,7 @@ class EgressEnforcer:
 
         return True, errors
 
-    def _launch_dnsmasq(self, *, binaries: Dict[str, bool]) -> Optional[str]:
+    def _launch_dnsmasq(self, *, binaries: dict[str, bool]) -> str | None:
         if not binaries.get("dnsmasq"):
             return "dnsmasq binary not found; sinkhole DNS not active"
         try:
@@ -439,7 +429,7 @@ class EgressEnforcer:
             return f"dnsmasq invocation failed: {exc}"
         return None
 
-    def _launch_inetsim(self, *, binaries: Dict[str, bool]) -> Optional[str]:
+    def _launch_inetsim(self, *, binaries: dict[str, bool]) -> str | None:
         if not binaries.get("inetsim"):
             return "inetsim binary not found; fake-internet services not active"
         try:
@@ -486,7 +476,7 @@ class EgressEnforcer:
         return mode
 
     @staticmethod
-    def _resolve_allow_hosts(config: Dict[str, Any]) -> List[str]:
+    def _resolve_allow_hosts(config: dict[str, Any]) -> list[str]:
         raw: Iterable[Any] = (
             config.get("allow_egress_hosts")
             or config.get("allow_hosts")
@@ -496,7 +486,7 @@ class EgressEnforcer:
         return [str(item).strip() for item in raw if str(item).strip()]
 
     @staticmethod
-    def _resolve_allow_cidrs(config: Dict[str, Any]) -> List[str]:
+    def _resolve_allow_cidrs(config: dict[str, Any]) -> list[str]:
         raw: Iterable[Any] = (
             config.get("allow_cidrs")
             or ((config.get("network_policy") or {}).get("allow_cidrs") or [])
@@ -505,13 +495,13 @@ class EgressEnforcer:
         return [str(item).strip() for item in raw if str(item).strip()]
 
     @staticmethod
-    def _resolve_allow_ports(config: Dict[str, Any]) -> List[int]:
+    def _resolve_allow_ports(config: dict[str, Any]) -> list[int]:
         raw: Iterable[Any] = (
             config.get("allow_ports")
             or ((config.get("network_policy") or {}).get("allow_ports") or [])
             or []
         )
-        ports: List[int] = []
+        ports: list[int] = []
         for item in raw:
             try:
                 ports.append(int(item))
@@ -523,7 +513,7 @@ class EgressEnforcer:
         if not os.path.isfile(pid_path):
             return
         try:
-            with open(pid_path, "r", encoding="utf-8") as handle:
+            with open(pid_path, encoding="utf-8") as handle:
                 pid_text = handle.read().strip()
             pid = int(pid_text)
         except (OSError, ValueError) as exc:

@@ -16,7 +16,9 @@ def test_provider_registry_exposes_supported_v2_providers():
 
 @pytest.mark.unit
 def test_image_catalog_resolves_tracee_profile_from_collectors():
-    entry = resolve_catalog_entry(provider="docker_kali", collectors=["process_tree", "tracee_events"])
+    entry = resolve_catalog_entry(
+        provider="docker_kali", collectors=["process_tree", "tracee_events"]
+    )
     assert entry.profile == "tracee_capable"
     assert entry.supports_tracee is True
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 from app.services.ai_adapters.base import format_grounding_system_prompt
-
 
 DEFAULT_MODEL = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 DEFAULT_REGION = "us-east-1"
@@ -27,11 +27,13 @@ class BedrockAdapter:
     def __init__(
         self,
         *,
-        region: Optional[str] = None,
-        model_id: Optional[str] = None,
-        bedrock_client: Optional[Any] = None,
+        region: str | None = None,
+        model_id: str | None = None,
+        bedrock_client: Any | None = None,
     ) -> None:
-        self._region = region or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or DEFAULT_REGION
+        self._region = (
+            region or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or DEFAULT_REGION
+        )
         self.model_label = model_id or os.getenv("BEDROCK_MODEL_ID") or DEFAULT_MODEL
         self._client = bedrock_client  # Injected for tests.
         self.capabilities = [
@@ -57,13 +59,14 @@ class BedrockAdapter:
         # keys are present. Failure will surface as an API error during stream.
         return bool(os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"))
 
-    def health(self) -> Dict[str, Any]:
-        missing: List[str] = []
+    def health(self) -> dict[str, Any]:
+        missing: list[str] = []
         has_creds = self._has_credentials() or self._client is not None
         if not has_creds:
             missing.append("AWS credentials (AWS_ACCESS_KEY_ID / AWS_PROFILE / IAM role)")
         try:
             import boto3  # noqa: F401
+
             boto3_available = True
         except ImportError:
             boto3_available = False
@@ -85,10 +88,10 @@ class BedrockAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         client = self._client
         if client is None:
             try:
@@ -100,13 +103,22 @@ class BedrockAdapter:
             try:
                 client = boto3.client("bedrock-runtime", region_name=self._region)
             except Exception as exc:  # pragma: no cover - exercised via integration
-                yield {"type": "error", "error": f"bedrock client init: {exc}", "recoverable": False}
+                yield {
+                    "type": "error",
+                    "error": f"bedrock client init: {exc}",
+                    "recoverable": False,
+                }
                 yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
                 return
 
-        body = self._build_body(capability=capability, prompt=prompt, grounding=grounding, tools=tools)
+        body = self._build_body(
+            capability=capability, prompt=prompt, grounding=grounding, tools=tools
+        )
 
-        yield {"type": "message_start", "metadata": {"model": self.model_label, "region": self._region}}
+        yield {
+            "type": "message_start",
+            "metadata": {"model": self.model_label, "region": self._region},
+        }
         try:
             resp = client.invoke_model_with_response_stream(
                 modelId=self.model_label,
@@ -122,7 +134,11 @@ class BedrockAdapter:
         family = self._model_family()
         stream = resp.get("body") if isinstance(resp, dict) else getattr(resp, "body", None)
         if stream is None:
-            yield {"type": "error", "error": "bedrock response missing body stream", "recoverable": False}
+            yield {
+                "type": "error",
+                "error": "bedrock response missing body stream",
+                "recoverable": False,
+            }
             yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
             return
 
@@ -183,14 +199,14 @@ class BedrockAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
         family = self._model_family()
         system_text = f"Capability: {capability}\n\n" + format_grounding_system_prompt(grounding)
 
         if family == "anthropic":
-            body: Dict[str, Any] = {
+            body: dict[str, Any] = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 4096,
                 "system": system_text,
@@ -201,7 +217,8 @@ class BedrockAdapter:
                     {
                         "name": t["name"],
                         "description": t.get("description", ""),
-                        "input_schema": t.get("input_schema") or {"type": "object", "properties": {}},
+                        "input_schema": t.get("input_schema")
+                        or {"type": "object", "properties": {}},
                     }
                     for t in tools
                 ]
@@ -246,10 +263,10 @@ class BedrockAdapter:
     def _decode_chunk(
         self,
         family: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         *,
-        usage_sink: Dict[str, int],
-    ) -> Iterator[Dict[str, Any]]:
+        usage_sink: dict[str, int],
+    ) -> Iterator[dict[str, Any]]:
         if family == "anthropic":
             etype = payload.get("type")
             if etype == "content_block_delta":
@@ -260,10 +277,16 @@ class BedrockAdapter:
                 stop = (payload.get("delta") or {}).get("stop_reason")
                 u = payload.get("usage") or {}
                 if u:
-                    usage_sink["input_tokens"] = usage_sink.get("input_tokens", 0) + int(u.get("input_tokens", 0))
-                    usage_sink["output_tokens"] = usage_sink.get("output_tokens", 0) + int(u.get("output_tokens", 0))
+                    usage_sink["input_tokens"] = usage_sink.get("input_tokens", 0) + int(
+                        u.get("input_tokens", 0)
+                    )
+                    usage_sink["output_tokens"] = usage_sink.get("output_tokens", 0) + int(
+                        u.get("output_tokens", 0)
+                    )
                 if stop:
-                    normalized = {"tool_use": "tool_use", "max_tokens": "max_tokens"}.get(stop, "end_turn")
+                    normalized = {"tool_use": "tool_use", "max_tokens": "max_tokens"}.get(
+                        stop, "end_turn"
+                    )
                     yield {"type": "noop", "_stop_reason": normalized}
             elif etype == "content_block_start":
                 block = payload.get("content_block", {}) or {}
@@ -291,7 +314,10 @@ class BedrockAdapter:
                 yield {"type": "text_delta", "text": payload["text"]}
             if payload.get("is_finished"):
                 usage_sink["output_tokens"] = int(
-                    payload.get("response", {}).get("meta", {}).get("billed_units", {}).get("output_tokens", 0)
+                    payload.get("response", {})
+                    .get("meta", {})
+                    .get("billed_units", {})
+                    .get("output_tokens", 0)
                 )
             return
 

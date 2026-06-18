@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -32,18 +32,18 @@ class KEVClient:
         self._timeout = timeout
         self._max_retries = max_retries
 
-    async def fetch_catalog(self) -> Dict[str, Any]:
+    async def fetch_catalog(self) -> dict[str, Any]:
         """Download the full KEV catalog JSON with retry."""
         import asyncio
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, self._max_retries + 1):
             try:
                 async with aiohttp.ClientSession() as http:
                     async with http.get(self._url, timeout=self._timeout) as resp:
                         resp.raise_for_status()
                         return await resp.json(content_type=None)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, aiohttp.ClientError) as exc:
                 last_exc = exc
                 logger.warning(
                     "KEV fetch attempt %d/%d failed: %s",
@@ -56,10 +56,10 @@ class KEVClient:
 
         raise RuntimeError(f"KEV fetch failed after {self._max_retries} retries") from last_exc
 
-    def parse_vulnerabilities(self, catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def parse_vulnerabilities(self, catalog: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract and normalise individual vulnerability entries."""
         raw_vulns = catalog.get("vulnerabilities", [])
-        parsed: List[Dict[str, Any]] = []
+        parsed: list[dict[str, Any]] = []
 
         for v in raw_vulns:
             parsed.append(
@@ -72,9 +72,7 @@ class KEVClient:
                     "short_description": v.get("shortDescription"),
                     "required_action": v.get("requiredAction"),
                     "due_date": self._parse_date(v.get("dueDate")),
-                    "known_ransomware_campaign_use": v.get(
-                        "knownRansomwareCampaignUse", "Unknown"
-                    ),
+                    "known_ransomware_campaign_use": v.get("knownRansomwareCampaignUse", "Unknown"),
                     "raw": v,
                 }
             )
@@ -82,7 +80,7 @@ class KEVClient:
         return parsed
 
     @staticmethod
-    def _parse_date(value: Optional[str]) -> Optional[datetime]:
+    def _parse_date(value: str | None) -> datetime | None:
         if not value:
             return None
         try:

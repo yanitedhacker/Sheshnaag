@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -15,7 +15,6 @@ from app.ingestion.osv_client import OSVClient
 from app.ingestion.osv_connector import OSVConnector
 from app.models.cve import CVE
 from app.models.sheshnaag import AdvisoryPackageLink, AdvisoryRecord, PackageRecord, VersionRange
-
 
 SAMPLE_OSV_VULN = {
     "id": "GHSA-test-0001",
@@ -236,10 +235,14 @@ async def test_duplicate_package_not_created():
 
     session.flush()
 
-    packages = session.query(PackageRecord).filter(
-        PackageRecord.ecosystem == "pypi",
-        PackageRecord.name == "example-pkg",
-    ).all()
+    packages = (
+        session.query(PackageRecord)
+        .filter(
+            PackageRecord.ecosystem == "pypi",
+            PackageRecord.name == "example-pkg",
+        )
+        .all()
+    )
     assert len(packages) == 1
 
 

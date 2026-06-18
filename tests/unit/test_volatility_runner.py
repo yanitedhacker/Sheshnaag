@@ -75,9 +75,7 @@ def test_run_non_zero_exit_is_graceful(monkeypatch, tmp_path):
     dump = _touch(tmp_path / "memory.raw")
 
     def fake_run(cmd, capture_output, text, timeout):
-        return subprocess.CompletedProcess(
-            args=cmd, returncode=2, stdout="", stderr="boom"
-        )
+        return subprocess.CompletedProcess(args=cmd, returncode=2, stdout="", stderr="boom")
 
     monkeypatch.setattr(vol_module.subprocess, "run", fake_run)
     runner = VolatilityRunner(plugins=["windows.pslist"])
@@ -109,12 +107,8 @@ def test_run_parses_each_plugin_output(monkeypatch, tmp_path):
         "windows.cmdline": [
             {"PID": 1234, "Process": "powershell", "Args": "powershell -enc ZQBjAGgA"}
         ],
-        "windows.hollowfind": [
-            {"PID": 1234, "Process": "svchost.exe", "Notes": "hollowed"}
-        ],
-        "windows.modscan": [
-            {"Name": "C:\\Users\\Public\\foo.sys", "Offset": "0x1"}
-        ],
+        "windows.hollowfind": [{"PID": 1234, "Process": "svchost.exe", "Notes": "hollowed"}],
+        "windows.modscan": [{"Name": "C:\\Users\\Public\\foo.sys", "Offset": "0x1"}],
     }
 
     def fake_run(cmd, capture_output, text, timeout):
@@ -187,7 +181,7 @@ def test_linux_os_hint_switches_default_plugin_catalog(monkeypatch, tmp_path):
     monkeypatch.setattr(vol_module.shutil, "which", lambda _: "/usr/local/bin/vol")
     dump = _touch(tmp_path / "memory.raw")
 
-    invoked: List[str] = []
+    invoked: list[str] = []
 
     def fake_run(cmd, capture_output, text, timeout):
         invoked.append(cmd[-1])

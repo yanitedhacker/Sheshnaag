@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, func
@@ -22,21 +22,23 @@ _DEFAULT_STALE_SECONDS = 21600  # 6 hours
 
 @router.get("/overview")
 def get_intel_overview(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
     """Return source health and candidate-readiness overview."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return SheshnaagService(session).get_intel_overview(tenant)
 
 
 @router.get("/feed-history")
 def get_feed_history(
-    source: Optional[str] = Query(None, description="Filter by source key"),
+    source: str | None = Query(None, description="Filter by source key"),
     limit: int = Query(20, ge=1, le=100),
     session: Session = Depends(get_sync_session),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return recent FeedSyncRun rows, optionally filtered by source."""
     q = session.query(FeedSyncRun).order_by(desc(FeedSyncRun.id))
     if source:
@@ -62,7 +64,7 @@ def get_feed_history(
 @router.get("/feed-status")
 def get_feed_status(
     session: Session = Depends(get_sync_session),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Per-feed status with last run info and stale threshold check."""
     feeds = session.query(SourceFeed).order_by(SourceFeed.display_name.asc()).all()
 
@@ -79,10 +81,10 @@ def get_feed_status(
         .join(latest_run_subq, FeedSyncRun.id == latest_run_subq.c.max_id)
         .all()
     )
-    run_by_source: Dict[str, FeedSyncRun] = {r.source.lower(): r for r in latest_runs_q}
+    run_by_source: dict[str, FeedSyncRun] = {r.source.lower(): r for r in latest_runs_q}
 
     now = utc_now()
-    result: List[Dict[str, Any]] = []
+    result: list[dict[str, Any]] = []
     for feed in feeds:
         threshold = feed.freshness_seconds or _DEFAULT_STALE_SECONDS
         last_run = run_by_source.get(feed.feed_key)
@@ -91,7 +93,7 @@ def get_feed_status(
             age = (now - feed.last_synced_at).total_seconds()
             is_stale = age > threshold
 
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "feed_key": feed.feed_key,
             "display_name": feed.display_name,
             "status": feed.status,

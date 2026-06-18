@@ -25,7 +25,9 @@ def test_event_bus_uses_in_memory_fallback_when_redis_unavailable():
 
 
 def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     session = TestingSession()
@@ -44,7 +46,9 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
     )
     session.add(recipe)
     session.flush()
-    revision = RecipeRevision(recipe_id=recipe.id, revision_number=1, approval_state="approved", content={})
+    revision = RecipeRevision(
+        recipe_id=recipe.id, revision_number=1, approval_state="approved", content={}
+    )
     session.add(revision)
     session.flush()
     run = LabRun(
@@ -85,7 +89,9 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
 
     verify = TestingSession()
     stored = verify.get(LabRun, run_id)
-    event_types = [row.event_type for row in verify.query(RunEvent).filter(RunEvent.run_id == run_id).all()]
+    event_types = [
+        row.event_type for row in verify.query(RunEvent).filter(RunEvent.run_id == run_id).all()
+    ]
     verify.close()
 
     assert result["status"] == "completed"
@@ -95,17 +101,23 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
 
 
 def test_sandbox_worker_marks_run_errored_when_preflight_fails(monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     session = TestingSession()
     tenant = Tenant(slug="worker-preflight", name="Worker Preflight")
     session.add(tenant)
     session.flush()
-    recipe = LabRecipe(tenant_id=tenant.id, name="Worker recipe", provider="docker_kali", current_revision_number=1)
+    recipe = LabRecipe(
+        tenant_id=tenant.id, name="Worker recipe", provider="docker_kali", current_revision_number=1
+    )
     session.add(recipe)
     session.flush()
-    revision = RecipeRevision(recipe_id=recipe.id, revision_number=1, approval_state="approved", content={})
+    revision = RecipeRevision(
+        recipe_id=recipe.id, revision_number=1, approval_state="approved", content={}
+    )
     session.add(revision)
     session.flush()
     run = LabRun(
@@ -152,7 +164,9 @@ def test_sandbox_worker_marks_run_errored_when_preflight_fails(monkeypatch):
 
     verify = TestingSession()
     stored = verify.get(LabRun, run_id)
-    event_types = [row.event_type for row in verify.query(RunEvent).filter(RunEvent.run_id == run_id).all()]
+    event_types = [
+        row.event_type for row in verify.query(RunEvent).filter(RunEvent.run_id == run_id).all()
+    ]
     verify.close()
 
     assert stored.state == "errored"

@@ -6,14 +6,16 @@ Author: Security Enhancement
 Provides reusable pagination logic for API responses.
 """
 
-from typing import TypeVar, Generic, List, Any, Optional
+from typing import Any, TypeVar
+
 from pydantic import BaseModel, Field
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class PaginationParams(BaseModel):
     """Pagination parameters."""
+
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
     page_size: int = Field(default=20, ge=1, le=100, description="Items per page")
 
@@ -34,7 +36,8 @@ class PaginatedResponse(BaseModel):
 
     Can be used as a base for typed paginated responses.
     """
-    results: List[Any] = Field(default_factory=list, description="List of items")
+
+    results: list[Any] = Field(default_factory=list, description="List of items")
     total: int = Field(description="Total number of items")
     page: int = Field(description="Current page number")
     page_size: int = Field(description="Items per page")
@@ -44,11 +47,7 @@ class PaginatedResponse(BaseModel):
 
     @classmethod
     def create(
-        cls,
-        results: List[Any],
-        total: int,
-        page: int,
-        page_size: int
+        cls, results: list[Any], total: int, page: int, page_size: int
     ) -> "PaginatedResponse":
         """
         Create a paginated response.
@@ -71,7 +70,7 @@ class PaginatedResponse(BaseModel):
             page_size=page_size,
             total_pages=total_pages,
             has_next=page < total_pages,
-            has_previous=page > 1
+            has_previous=page > 1,
         )
 
 
@@ -105,7 +104,7 @@ def calculate_offset(page: int, page_size: int) -> int:
     return (max(1, page) - 1) * page_size
 
 
-def paginate_list(items: List[T], page: int, page_size: int) -> tuple[List[T], int]:
+def paginate_list(items: list[T], page: int, page_size: int) -> tuple[list[T], int]:
     """
     Paginate an in-memory list.
 
@@ -158,7 +157,7 @@ class Paginator:
         """Get limit for database query."""
         return self.page_size
 
-    def response(self, results: List[Any], total: int) -> dict:
+    def response(self, results: list[Any], total: int) -> dict:
         """
         Build paginated response dictionary.
 
@@ -178,10 +177,10 @@ class Paginator:
             "page_size": self.page_size,
             "total_pages": total_pages,
             "has_next": self.page < total_pages,
-            "has_previous": self.page > 1
+            "has_previous": self.page > 1,
         }
 
-    def paginated_response(self, results: List[Any], total: int) -> PaginatedResponse:
+    def paginated_response(self, results: list[Any], total: int) -> PaginatedResponse:
         """
         Build PaginatedResponse model.
 
@@ -193,8 +192,5 @@ class Paginator:
             PaginatedResponse instance
         """
         return PaginatedResponse.create(
-            results=results,
-            total=total,
-            page=self.page,
-            page_size=self.page_size
+            results=results, total=total, page=self.page, page_size=self.page_size
         )

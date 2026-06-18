@@ -1,14 +1,12 @@
 """Operational models: feed sync state and patch planning metadata."""
 
-from datetime import datetime
-
 from sqlalchemy import (
+    JSON,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -16,7 +14,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
-from app.core.time import utc_now
 from app.core.time import utc_now
 
 
@@ -43,11 +40,17 @@ class PatchDependency(Base):
     """Directed dependency or conflict between patches."""
 
     __tablename__ = "patch_dependencies"
-    __table_args__ = (UniqueConstraint("patch_id", "depends_on_patch_id", "kind", name="uq_patch_dependency"),)
+    __table_args__ = (
+        UniqueConstraint("patch_id", "depends_on_patch_id", "kind", name="uq_patch_dependency"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    patch_id = Column(String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True)
-    depends_on_patch_id = Column(String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True)
+    patch_id = Column(
+        String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    depends_on_patch_id = Column(
+        String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True
+    )
     kind = Column(String(20), default="requires")  # requires | conflicts
     reason = Column(Text)
 
@@ -80,8 +83,12 @@ class PatchPlanItem(Base):
     __table_args__ = (UniqueConstraint("plan_id", "patch_id", name="uq_plan_patch"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    plan_id = Column(Integer, ForeignKey("patch_plans.id", ondelete="CASCADE"), nullable=False, index=True)
-    patch_id = Column(String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(
+        Integer, ForeignKey("patch_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    patch_id = Column(
+        String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     window = Column(String(50))
     decision = Column(String(30))  # PATCH_NOW, SCHEDULE, DEFER

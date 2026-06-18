@@ -7,13 +7,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401
+from app.core.database import Base
 from app.models.capability import AuditLogEntry, AuthorizationArtifact
 from app.services.capability_policy import (
     CAPABILITIES,
-    CapabilityPolicy,
     GENESIS_HASH,
+    CapabilityPolicy,
     HmacDevSigner,
     IssuanceRequest,
     Reviewer,
@@ -64,9 +64,7 @@ def _issue_and_exercise(policy):
 def test_audit_chain_hash_linked(policy, session):
     _issue_and_exercise(policy)
 
-    rows = session.execute(
-        select(AuditLogEntry).order_by(AuditLogEntry.idx.asc())
-    ).scalars().all()
+    rows = session.execute(select(AuditLogEntry).order_by(AuditLogEntry.idx.asc())).scalars().all()
     assert len(rows) >= 4  # issue + approve + exercise + revoke
 
     previous = GENESIS_HASH
@@ -79,9 +77,11 @@ def test_audit_chain_tamper_detected(policy, session):
     _issue_and_exercise(policy)
 
     # Tamper with an earlier row — flip a byte in its scope JSON.
-    victim = session.execute(
-        select(AuditLogEntry).order_by(AuditLogEntry.idx.asc()).limit(1)
-    ).scalars().first()
+    victim = (
+        session.execute(select(AuditLogEntry).order_by(AuditLogEntry.idx.asc()).limit(1))
+        .scalars()
+        .first()
+    )
     original_scope = dict(victim.scope or {})
     victim.scope = {**original_scope, "tenant_id": 999}
     session.flush()

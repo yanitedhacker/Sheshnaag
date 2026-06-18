@@ -44,7 +44,9 @@ def _private_tenant_with_asset(session):
             environment="production",
             criticality="high",
             business_criticality="high",
-            installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+            installed_software=[
+                {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+            ],
         )
     )
     session.commit()
@@ -63,16 +65,26 @@ def test_live_alias_normalizes_to_execute_and_bundle_urls_are_tenant_aware():
         name="Parity recipe",
         objective="Validate canonical launch-mode semantics.",
         created_by="Parity Owner",
-        content={"command": ["bash", "-lc", "echo parity"], "network_policy": {"allow_egress_hosts": []}},
+        content={
+            "command": ["bash", "-lc", "echo parity"],
+            "network_policy": {"allow_egress_hosts": []},
+        },
     )
-    service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+    service.approve_recipe_revision(
+        tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+    )
 
     run = service.launch_run(
         tenant,
         recipe_id=recipe["id"],
         revision_number=1,
         analyst_name="Parity Owner",
-        workstation={"hostname": "mbp", "os_family": "macOS", "architecture": "arm64", "fingerprint": "parity-fp"},
+        workstation={
+            "hostname": "mbp",
+            "os_family": "macOS",
+            "architecture": "arm64",
+            "fingerprint": "parity-fp",
+        },
         launch_mode="live",
         acknowledge_sensitive=False,
     )

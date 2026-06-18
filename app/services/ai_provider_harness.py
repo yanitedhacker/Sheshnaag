@@ -24,7 +24,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.services.ai_adapters import (
     AnthropicAdapter,
@@ -36,7 +36,6 @@ from app.services.ai_adapters import (
     OpenAIAdapter,
     collect_stream,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ SUPPORTED_CAPABILITIES = {
 # Back-compat aliases from V3 provider keys to V4 native adapter keys. V3
 # callers using the old keys still work; a deprecation warning is logged once
 # per unique alias per process.
-DEPRECATED_PROVIDER_ALIASES: Dict[str, str] = {
+DEPRECATED_PROVIDER_ALIASES: dict[str, str] = {
     "goodbear-cli": "ollama",
     "openai-api": "openai",
     "anthropic-api": "anthropic",
@@ -68,9 +67,9 @@ def _grounded_fallback_markdown(
     model_label: str,
     capability: str,
     prompt: str,
-    grounding: Dict[str, Any],
+    grounding: dict[str, Any],
     execution_status: str,
-    execution_error: Optional[str] = None,
+    execution_error: str | None = None,
 ) -> str:
     items = grounding.get("items") or []
     lines = [
@@ -105,15 +104,15 @@ def _grounded_fallback_markdown(
 class AIProviderHarness:
     """Catalog and execute grounded AI draft runs across V4 native adapters."""
 
-    def __init__(self, adapters: Optional[Dict[str, NativeAIAdapter]] = None) -> None:
+    def __init__(self, adapters: dict[str, NativeAIAdapter] | None = None) -> None:
         if adapters is None:
             adapters = self._default_adapters()
-        self._adapters: Dict[str, NativeAIAdapter] = adapters
+        self._adapters: dict[str, NativeAIAdapter] = adapters
 
     # -- construction ---------------------------------------------------------
 
     @staticmethod
-    def _default_adapters() -> Dict[str, NativeAIAdapter]:
+    def _default_adapters() -> dict[str, NativeAIAdapter]:
         return {
             "anthropic": AnthropicAdapter(),
             "openai": OpenAIAdapter(),
@@ -125,8 +124,8 @@ class AIProviderHarness:
 
     # -- catalog --------------------------------------------------------------
 
-    def list_providers(self) -> List[Dict[str, Any]]:
-        entries: List[Dict[str, Any]] = []
+    def list_providers(self) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
         for key, adapter in self._adapters.items():
             try:
                 health = adapter.health()
@@ -182,7 +181,7 @@ class AIProviderHarness:
 
     # -- validation -----------------------------------------------------------
 
-    def validate_grounding(self, grounding: Dict[str, Any]) -> None:
+    def validate_grounding(self, grounding: dict[str, Any]) -> None:
         items = (grounding or {}).get("items") or []
         if not items:
             raise ValueError("Grounding evidence is required for V4 AI sessions.")
@@ -197,10 +196,10 @@ class AIProviderHarness:
         provider_key: str,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> dict[str, Any]:
         if capability not in SUPPORTED_CAPABILITIES:
             raise ValueError(f"Unsupported AI capability '{capability}'.")
         if not (prompt or "").strip():
@@ -241,8 +240,10 @@ class AIProviderHarness:
 
         healthy = bool(health.get("healthy"))
         errors = aggregated["errors"]
-        execution_status = "completed" if aggregated["stop_reason"] != "error" and not errors else (
-            "unconfigured" if not healthy else "error"
+        execution_status = (
+            "completed"
+            if aggregated["stop_reason"] != "error" and not errors
+            else ("unconfigured" if not healthy else "error")
         )
         provider_error = "; ".join(errors) if errors else None
 
@@ -277,9 +278,8 @@ class AIProviderHarness:
         resolved_key = self._resolve_key(provider_key)
         provider_entry = {
             "provider_key": resolved_key,
-            "provider_mode": getattr(adapter, "provider_mode", None) or (
-                "local" if resolved_key in {"ollama", "vllm"} else "api"
-            ),
+            "provider_mode": getattr(adapter, "provider_mode", None)
+            or ("local" if resolved_key in {"ollama", "vllm"} else "api"),
             "display_name": adapter.display_name,
             "capabilities": list(adapter.capabilities),
             "healthy": healthy,

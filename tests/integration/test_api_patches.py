@@ -33,7 +33,9 @@ def test_patches_delay_days_changes_scores(wait_for_lab_api, lab_httpx_client):
     assert common  # should have overlap
 
     # At least one patch should change score due to time pressure multiplier shift.
-    changed = any(abs(now[pid]["priority_score"] - later[pid]["priority_score"]) > 1e-9 for pid in common)
+    changed = any(
+        abs(now[pid]["priority_score"] - later[pid]["priority_score"]) > 1e-9 for pid in common
+    )
     assert changed
 
 
@@ -52,8 +54,9 @@ def test_patch_detail_links(wait_for_lab_api, lab_httpx_client):
 
 @pytest.mark.integration
 def test_patch_schedule_endpoint(wait_for_lab_api, lab_httpx_client):
-    r = lab_httpx_client.post("/api/patches/schedule", json={"downtime_budget_minutes": 30, "team_capacity": 2})
+    r = lab_httpx_client.post(
+        "/api/patches/schedule", json={"downtime_budget_minutes": 30, "team_capacity": 2}
+    )
     assert r.status_code == 200
     data = r.json()
     assert "schedule" in data
-

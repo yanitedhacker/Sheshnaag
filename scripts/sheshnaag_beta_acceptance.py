@@ -13,7 +13,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -59,7 +58,9 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
     if duplicate_artifacts:
         blockers.append("duplicate_artifacts")
 
-    compose_rc, compose_output = _run(["docker", "compose", "--env-file", compose_env, "config"], timeout=90)
+    compose_rc, compose_output = _run(
+        ["docker", "compose", "--env-file", compose_env, "config"], timeout=90
+    )
     if compose_rc != 0:
         blockers.append("docker_compose_config")
 
@@ -85,7 +86,9 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
         "autonomous_agent": os.getenv("SHESHNAAG_AUTONOMOUS_AGENT_PROOF"),
         "load_rehearsal": os.getenv("SHESHNAAG_LOAD_REHEARSAL_PROOF"),
     }
-    missing_proofs = [name for name, path in required_proofs.items() if not path or not Path(path).exists()]
+    missing_proofs = [
+        name for name, path in required_proofs.items() if not path or not Path(path).exists()
+    ]
     blockers.extend(f"missing_proof.{name}" for name in missing_proofs)
     real_detonation_proof = required_proofs.get("real_detonation")
     if real_detonation_proof and Path(real_detonation_proof).exists():
@@ -97,7 +100,9 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
             "pcap",
             "zeek",
         ]
-        missing_markers = [marker for marker in required_markers if marker.lower() not in proof_text.lower()]
+        missing_markers = [
+            marker for marker in required_markers if marker.lower() not in proof_text.lower()
+        ]
         if missing_markers:
             blockers.append("proof.real_detonation_incomplete")
     else:

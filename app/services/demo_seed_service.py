@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from app.core.time import utc_now
+from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
 from app.core.tenancy import get_or_create_demo_tenant
+from app.core.time import utc_now
 from app.models.asset import Asset, AssetVulnerability
-from app.models.cve import AffectedProduct, CVE
+from app.models.cve import CVE, AffectedProduct
 from app.models.patch import AssetPatch, Patch
 from app.models.risk_score import RiskScore
 from app.models.v2 import (
@@ -146,7 +146,11 @@ class DemoSeedService:
             for vendor, product, version in affected_products[item["cve_id"]]:
                 existing = (
                     self.session.query(AffectedProduct)
-                    .filter(AffectedProduct.cve_id == cve.id, AffectedProduct.vendor == vendor, AffectedProduct.product == product)
+                    .filter(
+                        AffectedProduct.cve_id == cve.id,
+                        AffectedProduct.vendor == vendor,
+                        AffectedProduct.product == product,
+                    )
                     .first()
                 )
                 if existing is None:
@@ -202,7 +206,9 @@ class DemoSeedService:
                 "criticality": "critical",
                 "business_criticality": "high",
                 "is_crown_jewel": False,
-                "installed_software": [{"vendor": "acme", "product": "edge-gateway", "version": "4.2.1"}],
+                "installed_software": [
+                    {"vendor": "acme", "product": "edge-gateway", "version": "4.2.1"}
+                ],
                 "owner": "platform",
             },
             {
@@ -214,7 +220,9 @@ class DemoSeedService:
                 "criticality": "high",
                 "business_criticality": "critical",
                 "is_crown_jewel": True,
-                "installed_software": [{"vendor": "acme", "product": "admin-portal", "version": "7.5.0"}],
+                "installed_software": [
+                    {"vendor": "acme", "product": "admin-portal", "version": "7.5.0"}
+                ],
                 "owner": "identity",
             },
             {
@@ -226,14 +234,20 @@ class DemoSeedService:
                 "criticality": "critical",
                 "business_criticality": "critical",
                 "is_crown_jewel": True,
-                "installed_software": [{"vendor": "acme", "product": "payments-api", "version": "2.3.0"}],
+                "installed_software": [
+                    {"vendor": "acme", "product": "payments-api", "version": "2.3.0"}
+                ],
                 "owner": "payments",
             },
         ]
 
         assets: dict[str, Asset] = {}
         for item in definitions:
-            asset = self.session.query(Asset).filter(Asset.tenant_id == tenant_id, Asset.name == item["name"]).first()
+            asset = (
+                self.session.query(Asset)
+                .filter(Asset.tenant_id == tenant_id, Asset.name == item["name"])
+                .first()
+            )
             if asset is None:
                 asset = Asset(tenant_id=tenant_id, **{k: v for k, v in item.items() if k != "key"})
                 self.session.add(asset)
@@ -283,9 +297,15 @@ class DemoSeedService:
 
         services: dict[str, Service] = {}
         for item in definitions:
-            service = self.session.query(Service).filter(Service.tenant_id == tenant_id, Service.slug == item["slug"]).first()
+            service = (
+                self.session.query(Service)
+                .filter(Service.tenant_id == tenant_id, Service.slug == item["slug"])
+                .first()
+            )
             if service is None:
-                service = Service(tenant_id=tenant_id, **{k: v for k, v in item.items() if k != "key"})
+                service = Service(
+                    tenant_id=tenant_id, **{k: v for k, v in item.items() if k != "key"}
+                )
                 self.session.add(service)
                 self.session.flush()
             services[item["key"]] = service
@@ -298,9 +318,27 @@ class DemoSeedService:
 
     def _seed_components(self, tenant_id: int) -> dict[str, SoftwareComponent]:
         definitions = [
-            {"key": "edge", "vendor": "acme", "name": "edge-gateway", "version": "4.2.1", "purl": "pkg:generic/acme/edge-gateway@4.2.1"},
-            {"key": "admin", "vendor": "acme", "name": "admin-portal", "version": "7.5.0", "purl": "pkg:generic/acme/admin-portal@7.5.0"},
-            {"key": "payments", "vendor": "acme", "name": "payments-api", "version": "2.3.0", "purl": "pkg:generic/acme/payments-api@2.3.0"},
+            {
+                "key": "edge",
+                "vendor": "acme",
+                "name": "edge-gateway",
+                "version": "4.2.1",
+                "purl": "pkg:generic/acme/edge-gateway@4.2.1",
+            },
+            {
+                "key": "admin",
+                "vendor": "acme",
+                "name": "admin-portal",
+                "version": "7.5.0",
+                "purl": "pkg:generic/acme/admin-portal@7.5.0",
+            },
+            {
+                "key": "payments",
+                "vendor": "acme",
+                "name": "payments-api",
+                "version": "2.3.0",
+                "purl": "pkg:generic/acme/payments-api@2.3.0",
+            },
         ]
         components: dict[str, SoftwareComponent] = {}
         for item in definitions:
@@ -328,7 +366,12 @@ class DemoSeedService:
             components[item["key"]] = component
         return components
 
-    def _link_asset_software(self, assets: dict[str, Asset], services: dict[str, Service], components: dict[str, SoftwareComponent]) -> None:
+    def _link_asset_software(
+        self,
+        assets: dict[str, Asset],
+        services: dict[str, Service],
+        components: dict[str, SoftwareComponent],
+    ) -> None:
         mappings = [
             (assets["edge"].id, components["edge"].id, services["gateway"].id),
             (assets["admin"].id, components["admin"].id, services["admin_portal"].id),
@@ -354,7 +397,9 @@ class DemoSeedService:
                     )
                 )
 
-    def _seed_network_exposures(self, tenant_id: int, assets: dict[str, Asset], services: dict[str, Service]) -> None:
+    def _seed_network_exposures(
+        self, tenant_id: int, assets: dict[str, Asset], services: dict[str, Service]
+    ) -> None:
         definitions = [
             (assets["edge"].id, services["gateway"].id, "api.demo.sheshnaag.local", 443),
             (assets["admin"].id, services["admin_portal"].id, "admin.demo.sheshnaag.local", 8443),
@@ -362,7 +407,11 @@ class DemoSeedService:
         for asset_id, service_id, hostname, port in definitions:
             existing = (
                 self.session.query(NetworkExposure)
-                .filter(NetworkExposure.tenant_id == tenant_id, NetworkExposure.asset_id == asset_id, NetworkExposure.service_id == service_id)
+                .filter(
+                    NetworkExposure.tenant_id == tenant_id,
+                    NetworkExposure.asset_id == asset_id,
+                    NetworkExposure.service_id == service_id,
+                )
                 .first()
             )
             if existing is None:
@@ -382,9 +431,23 @@ class DemoSeedService:
     def _seed_identities(self, tenant_id: int, assets: dict[str, Asset]) -> None:
         identities = [
             ("svc-admin-sync", assets["admin"].id, "service_account", "admin", True, True),
-            ("svc-payments-batch", assets["payments"].id, "service_account", "power_user", False, False),
+            (
+                "svc-payments-batch",
+                assets["payments"].id,
+                "service_account",
+                "power_user",
+                False,
+                False,
+            ),
         ]
-        for name, asset_id, principal_type, privilege_level, can_admin, can_lateral_move in identities:
+        for (
+            name,
+            asset_id,
+            principal_type,
+            privilege_level,
+            can_admin,
+            can_lateral_move,
+        ) in identities:
             existing = (
                 self.session.query(IdentityPrincipal)
                 .filter(IdentityPrincipal.tenant_id == tenant_id, IdentityPrincipal.name == name)
@@ -406,7 +469,9 @@ class DemoSeedService:
     def _seed_patches_and_vulns(self, assets: dict[str, Asset]) -> None:
         cves = {
             cve.cve_id: cve
-            for cve in self.session.query(CVE).filter(CVE.cve_id.in_(["CVE-2024-10001", "CVE-2024-10002", "CVE-2024-10003"])).all()
+            for cve in self.session.query(CVE)
+            .filter(CVE.cve_id.in_(["CVE-2024-10001", "CVE-2024-10002", "CVE-2024-10003"]))
+            .all()
         }
 
         patch_specs = [
@@ -484,7 +549,10 @@ class DemoSeedService:
                 asset = assets[asset_key]
                 vuln = (
                     self.session.query(AssetVulnerability)
-                    .filter(AssetVulnerability.asset_id == asset.id, AssetVulnerability.cve_id == cves[spec["cves"][0]].id)
+                    .filter(
+                        AssetVulnerability.asset_id == asset.id,
+                        AssetVulnerability.cve_id == cves[spec["cves"][0]].id,
+                    )
                     .first()
                 )
                 if vuln is None:
@@ -538,7 +606,11 @@ class DemoSeedService:
         for item in approvals:
             existing = (
                 self.session.query(PatchApproval)
-                .filter(PatchApproval.tenant_id == tenant.id, PatchApproval.patch_id == item["patch_id"], PatchApproval.approval_state == item["approval_state"])
+                .filter(
+                    PatchApproval.tenant_id == tenant.id,
+                    PatchApproval.patch_id == item["patch_id"],
+                    PatchApproval.approval_state == item["approval_state"],
+                )
                 .first()
             )
             if existing is None:
@@ -559,7 +631,11 @@ class DemoSeedService:
         for item in feedback_items:
             existing = (
                 self.session.query(AnalystFeedback)
-                .filter(AnalystFeedback.tenant_id == tenant.id, AnalystFeedback.action_id == item["action_id"], AnalystFeedback.feedback_type == item["feedback_type"])
+                .filter(
+                    AnalystFeedback.tenant_id == tenant.id,
+                    AnalystFeedback.action_id == item["action_id"],
+                    AnalystFeedback.feedback_type == item["feedback_type"],
+                )
                 .first()
             )
             if existing is None:

@@ -1,15 +1,13 @@
 """V2 domain models for tenancy, threat intelligence, graphing, and simulations."""
 
-from datetime import datetime
-
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -37,16 +35,36 @@ class Tenant(Base):
 
     assets = relationship("Asset", back_populates="tenant")
     services = relationship("Service", back_populates="tenant", cascade="all, delete-orphan")
-    software_components = relationship("SoftwareComponent", back_populates="tenant", cascade="all, delete-orphan")
-    network_exposures = relationship("NetworkExposure", back_populates="tenant", cascade="all, delete-orphan")
-    identity_principals = relationship("IdentityPrincipal", back_populates="tenant", cascade="all, delete-orphan")
-    evidence_items = relationship("EvidenceItem", back_populates="tenant", cascade="all, delete-orphan")
-    graph_nodes = relationship("ExposureGraphNode", back_populates="tenant", cascade="all, delete-orphan")
-    graph_edges = relationship("ExposureGraphEdge", back_populates="tenant", cascade="all, delete-orphan")
-    simulation_runs = relationship("SimulationRun", back_populates="tenant", cascade="all, delete-orphan")
-    memberships = relationship("TenantMembership", back_populates="tenant", cascade="all, delete-orphan")
-    patch_approvals = relationship("PatchApproval", back_populates="tenant", cascade="all, delete-orphan")
-    audit_events = relationship("DecisionAuditEvent", back_populates="tenant", cascade="all, delete-orphan")
+    software_components = relationship(
+        "SoftwareComponent", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    network_exposures = relationship(
+        "NetworkExposure", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    identity_principals = relationship(
+        "IdentityPrincipal", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    evidence_items = relationship(
+        "EvidenceItem", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    graph_nodes = relationship(
+        "ExposureGraphNode", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    graph_edges = relationship(
+        "ExposureGraphEdge", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    simulation_runs = relationship(
+        "SimulationRun", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    memberships = relationship(
+        "TenantMembership", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    patch_approvals = relationship(
+        "PatchApproval", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    audit_events = relationship(
+        "DecisionAuditEvent", back_populates="tenant", cascade="all, delete-orphan"
+    )
 
 
 class Service(Base):
@@ -56,9 +74,13 @@ class Service(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_service_tenant_name"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     asset_id = Column(Integer, ForeignKey("assets.id", ondelete="SET NULL"), index=True)
-    upstream_service_id = Column(Integer, ForeignKey("services.id", ondelete="SET NULL"), index=True)
+    upstream_service_id = Column(
+        Integer, ForeignKey("services.id", ondelete="SET NULL"), index=True
+    )
 
     name = Column(String(200), nullable=False)
     slug = Column(String(200), index=True)
@@ -76,18 +98,26 @@ class Service(Base):
     tenant = relationship("Tenant", back_populates="services")
     asset = relationship("Asset", back_populates="services")
     upstream_service = relationship("Service", remote_side=[id])
-    software_links = relationship("AssetSoftware", back_populates="service", cascade="all, delete-orphan")
-    network_exposures = relationship("NetworkExposure", back_populates="service", cascade="all, delete-orphan")
+    software_links = relationship(
+        "AssetSoftware", back_populates="service", cascade="all, delete-orphan"
+    )
+    network_exposures = relationship(
+        "NetworkExposure", back_populates="service", cascade="all, delete-orphan"
+    )
 
 
 class SoftwareComponent(Base):
     """Normalized software inventory entry."""
 
     __tablename__ = "software_components"
-    __table_args__ = (UniqueConstraint("tenant_id", "name", "version", "vendor", name="uq_component_identity"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", "version", "vendor", name="uq_component_identity"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     vendor = Column(String(120))
     name = Column(String(200), nullable=False, index=True)
@@ -101,8 +131,12 @@ class SoftwareComponent(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     tenant = relationship("Tenant", back_populates="software_components")
-    asset_links = relationship("AssetSoftware", back_populates="software_component", cascade="all, delete-orphan")
-    vex_statements = relationship("VexStatement", back_populates="software_component", cascade="all, delete-orphan")
+    asset_links = relationship(
+        "AssetSoftware", back_populates="software_component", cascade="all, delete-orphan"
+    )
+    vex_statements = relationship(
+        "VexStatement", back_populates="software_component", cascade="all, delete-orphan"
+    )
 
 
 class AssetSoftware(Base):
@@ -110,12 +144,21 @@ class AssetSoftware(Base):
 
     __tablename__ = "asset_software"
     __table_args__ = (
-        UniqueConstraint("asset_id", "software_component_id", "service_id", name="uq_asset_software_scope"),
+        UniqueConstraint(
+            "asset_id", "software_component_id", "service_id", name="uq_asset_software_scope"
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    software_component_id = Column(Integer, ForeignKey("software_components.id", ondelete="CASCADE"), nullable=False, index=True)
+    asset_id = Column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    software_component_id = Column(
+        Integer,
+        ForeignKey("software_components.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     service_id = Column(Integer, ForeignKey("services.id", ondelete="SET NULL"), index=True)
 
     discovered_by = Column(String(50), default="manual")
@@ -134,8 +177,12 @@ class NetworkExposure(Base):
     __tablename__ = "network_exposures"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    asset_id = Column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     service_id = Column(Integer, ForeignKey("services.id", ondelete="SET NULL"), index=True)
 
     hostname = Column(String(200))
@@ -159,7 +206,9 @@ class IdentityPrincipal(Base):
     __tablename__ = "identity_principals"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     asset_id = Column(Integer, ForeignKey("assets.id", ondelete="SET NULL"), index=True)
 
     name = Column(String(200), nullable=False)
@@ -186,8 +235,12 @@ class EvidenceItem(Base):
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
     patch_id = Column(String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), index=True)
     service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), index=True)
-    software_component_id = Column(Integer, ForeignKey("software_components.id", ondelete="CASCADE"), index=True)
-    technique_id = Column(Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), index=True)
+    software_component_id = Column(
+        Integer, ForeignKey("software_components.id", ondelete="CASCADE"), index=True
+    )
+    technique_id = Column(
+        Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), index=True
+    )
 
     evidence_type = Column(String(50), nullable=False)
     title = Column(String(255), nullable=False)
@@ -260,13 +313,13 @@ class CVEAttackTechnique(Base):
     """Mapping between CVEs and ATT&CK techniques used for explanation."""
 
     __tablename__ = "cve_attack_techniques"
-    __table_args__ = (
-        UniqueConstraint("cve_id", "technique_id", name="uq_cve_attack_technique"),
-    )
+    __table_args__ = (UniqueConstraint("cve_id", "technique_id", name="uq_cve_attack_technique"),)
 
     id = Column(Integer, primary_key=True, index=True)
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), nullable=False, index=True)
-    technique_id = Column(Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), nullable=False, index=True)
+    technique_id = Column(
+        Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     rationale = Column(Text)
     confidence = Column(Float, default=0.6)
     created_at = Column(DateTime, default=utc_now)
@@ -283,7 +336,9 @@ class KnowledgeDocument(Base):
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
-    technique_id = Column(Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), index=True)
+    technique_id = Column(
+        Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), index=True
+    )
 
     document_type = Column(String(50), nullable=False)
     title = Column(String(255), nullable=False)
@@ -301,10 +356,14 @@ class ExposureGraphNode(Base):
     """Persisted graph node for attack-path drill-downs."""
 
     __tablename__ = "exposure_graph_nodes"
-    __table_args__ = (UniqueConstraint("tenant_id", "node_type", "node_key", name="uq_graph_node_key"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "node_type", "node_key", name="uq_graph_node_key"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     node_type = Column(String(50), nullable=False, index=True)
     node_key = Column(String(255), nullable=False, index=True)
     label = Column(String(255), nullable=False)
@@ -341,13 +400,27 @@ class ExposureGraphEdge(Base):
 
     __tablename__ = "exposure_graph_edges"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "from_node_id", "to_node_id", "edge_type", name="uq_graph_edge_key"),
+        UniqueConstraint(
+            "tenant_id", "from_node_id", "to_node_id", "edge_type", name="uq_graph_edge_key"
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    from_node_id = Column(Integer, ForeignKey("exposure_graph_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
-    to_node_id = Column(Integer, ForeignKey("exposure_graph_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_node_id = Column(
+        Integer,
+        ForeignKey("exposure_graph_nodes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    to_node_id = Column(
+        Integer,
+        ForeignKey("exposure_graph_nodes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     edge_type = Column(String(50), nullable=False, index=True)
     weight = Column(Float, default=1.0)
     meta = Column("metadata", JSON, default=dict)
@@ -365,7 +438,9 @@ class SimulationRun(Base):
     __tablename__ = "simulation_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     name = Column(String(200), nullable=False)
     status = Column(String(30), default="completed", nullable=False)
     parameters = Column(JSON, default=dict, nullable=False)
@@ -384,7 +459,9 @@ class AnalystFeedback(Base):
     __tablename__ = "analyst_feedback"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     action_id = Column(String(255), nullable=False, index=True)
     feedback_type = Column(String(50), nullable=False)
     note = Column(Text)
@@ -397,12 +474,25 @@ class VexStatement(Base):
 
     __tablename__ = "vex_statements"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "software_component_id", "cve_id", "status", name="uq_vex_statement_identity"),
+        UniqueConstraint(
+            "tenant_id",
+            "software_component_id",
+            "cve_id",
+            "status",
+            name="uq_vex_statement_identity",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    software_component_id = Column(Integer, ForeignKey("software_components.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    software_component_id = Column(
+        Integer,
+        ForeignKey("software_components.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     cve_id = Column(String(20), nullable=False, index=True)
     status = Column(String(50), nullable=False)
     justification = Column(Text)
@@ -428,7 +518,9 @@ class TenantUser(Base):
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
-    memberships = relationship("TenantMembership", back_populates="user", cascade="all, delete-orphan")
+    memberships = relationship(
+        "TenantMembership", back_populates="user", cascade="all, delete-orphan"
+    )
     audit_events = relationship("DecisionAuditEvent", back_populates="actor")
 
 
@@ -439,8 +531,12 @@ class TenantMembership(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "user_id", name="uq_tenant_membership"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("tenant_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id = Column(
+        Integer, ForeignKey("tenant_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     role = Column(String(50), default="viewer", nullable=False)
     scopes = Column(JSON, default=list, nullable=False)
     created_at = Column(DateTime, default=utc_now)
@@ -457,10 +553,17 @@ class KnowledgeChunk(Base):
     __table_args__ = (UniqueConstraint("document_id", "chunk_index", name="uq_knowledge_chunk"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    document_id = Column(Integer, ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(
+        Integer,
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
     cve_id = Column(Integer, ForeignKey("cves.id", ondelete="CASCADE"), index=True)
-    technique_id = Column(Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), index=True)
+    technique_id = Column(
+        Integer, ForeignKey("attack_techniques.id", ondelete="CASCADE"), index=True
+    )
     chunk_index = Column(Integer, nullable=False)
     document_type = Column(String(50), nullable=False)
     title = Column(String(255), nullable=False)
@@ -483,8 +586,12 @@ class PatchApproval(Base):
     __tablename__ = "patch_approvals"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    patch_id = Column(String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    patch_id = Column(
+        String(120), ForeignKey("patches.patch_id", ondelete="CASCADE"), nullable=False, index=True
+    )
     action_id = Column(String(255), nullable=False, index=True)
     approval_type = Column(String(50), default="signoff", nullable=False)
     approval_state = Column(String(50), default="pending", nullable=False)
@@ -505,7 +612,9 @@ class DecisionAuditEvent(Base):
     __tablename__ = "decision_audit_events"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     actor_user_id = Column(Integer, ForeignKey("tenant_users.id", ondelete="SET NULL"), index=True)
     event_type = Column(String(80), nullable=False, index=True)
     entity_type = Column(String(80), nullable=False, index=True)

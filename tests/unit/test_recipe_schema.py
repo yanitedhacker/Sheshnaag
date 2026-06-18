@@ -156,7 +156,9 @@ def test_mount_missing_source_fails():
 def test_unsafe_mount_root_is_rejected():
     result = RecipeSchemaValidator().validate(
         _valid_recipe(
-            mounts=[{"source": "/Users/demo/Documents", "target": "/workspace/input", "read_only": True}]
+            mounts=[
+                {"source": "/Users/demo/Documents", "target": "/workspace/input", "read_only": True}
+            ]
         )
     )
     assert result.valid is False
@@ -257,9 +259,7 @@ def test_secure_mode_policy_requires_lima_provider():
 
 @pytest.mark.unit
 def test_pcap_requires_lima_provider():
-    result = RecipeSchemaValidator().validate(
-        _valid_recipe(collectors=["process_tree", "pcap"])
-    )
+    result = RecipeSchemaValidator().validate(_valid_recipe(collectors=["process_tree", "pcap"]))
     assert result.valid is False
     assert any("pcap" in e.lower() for e in result.errors)
 

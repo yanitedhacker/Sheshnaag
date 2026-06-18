@@ -12,8 +12,8 @@ from app.models.cve import CVE
 from app.models.sheshnaag import ResearchCandidate
 from app.services.auth_service import AuthService
 from app.services.demo_seed_service import DemoSeedService
+from app.services.candidate_scoring import CANDIDATE_SCORING_WEIGHTS
 from app.services.sheshnaag_service import (
-    CANDIDATE_SCORING_WEIGHTS,
     CANDIDATE_STATUS_TRANSITIONS,
     VALID_CANDIDATE_STATUSES,
     SheshnaagService,
@@ -50,7 +50,9 @@ def seed_private_tenant(session):
             environment="production",
             criticality="high",
             business_criticality="high",
-            installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+            installed_software=[
+                {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+            ],
         )
     )
     session.commit()
@@ -143,7 +145,9 @@ class TestScoringFactors:
         candidates = svc.list_candidates(tenant, limit=5)
         for item in candidates["items"]:
             for detail in item["explainability"]["factor_details"]:
-                assert 0.0 <= detail["raw"] <= 1.0, f"Factor {detail['key']} raw={detail['raw']} out of [0,1]"
+                assert 0.0 <= detail["raw"] <= 1.0, (
+                    f"Factor {detail['key']} raw={detail['raw']} out of [0,1]"
+                )
 
     def test_score_boundary_above_threshold_is_queued(self):
         session = make_session()
@@ -154,7 +158,9 @@ class TestScoringFactors:
         candidates = svc.list_candidates(tenant, limit=20)
         for item in candidates["items"]:
             if item["candidate_score"] >= 35:
-                assert item["status"] in ("queued", "in_review"), f"Score {item['candidate_score']} should be queued"
+                assert item["status"] in ("queued", "in_review"), (
+                    f"Score {item['candidate_score']} should be queued"
+                )
 
     def test_score_boundary_below_threshold_is_deferred(self):
         session = make_session()
@@ -165,7 +171,9 @@ class TestScoringFactors:
         candidates = svc.list_candidates(tenant, limit=20)
         for item in candidates["items"]:
             if item["candidate_score"] < 35:
-                assert item["status"] == "deferred", f"Score {item['candidate_score']} should be deferred"
+                assert item["status"] == "deferred", (
+                    f"Score {item['candidate_score']} should be deferred"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +184,14 @@ class TestScoringFactors:
 @pytest.mark.unit
 class TestStatusTransitions:
     def test_valid_statuses(self):
-        assert VALID_CANDIDATE_STATUSES == {"queued", "deferred", "in_review", "rejected", "duplicate", "archived"}
+        assert {
+            "queued",
+            "deferred",
+            "in_review",
+            "rejected",
+            "duplicate",
+            "archived",
+        } == VALID_CANDIDATE_STATUSES
 
     def test_transition_queued_to_deferred(self):
         session = make_session()
@@ -186,7 +201,9 @@ class TestStatusTransitions:
         if candidates["count"] == 0:
             pytest.skip("No queued candidates to test")
         cid = candidates["items"][0]["id"]
-        result = svc.transition_candidate_status(tenant, candidate_id=cid, new_status="deferred", reason="Postponed", changed_by="tester")
+        result = svc.transition_candidate_status(
+            tenant, candidate_id=cid, new_status="deferred", reason="Postponed", changed_by="tester"
+        )
         assert result["status"] == "deferred"
         assert result["status_reason"] == "Postponed"
         assert result["status_changed_by"] == "tester"
@@ -199,7 +216,9 @@ class TestStatusTransitions:
         if candidates["count"] == 0:
             pytest.skip("No queued candidates to test")
         cid = candidates["items"][0]["id"]
-        result = svc.transition_candidate_status(tenant, candidate_id=cid, new_status="rejected", reason="Not applicable")
+        result = svc.transition_candidate_status(
+            tenant, candidate_id=cid, new_status="rejected", reason="Not applicable"
+        )
         assert result["status"] == "rejected"
 
     def test_transition_rejected_to_queued(self):
@@ -211,7 +230,9 @@ class TestStatusTransitions:
             pytest.skip("No queued candidates to test")
         cid = candidates["items"][0]["id"]
         svc.transition_candidate_status(tenant, candidate_id=cid, new_status="rejected")
-        result = svc.transition_candidate_status(tenant, candidate_id=cid, new_status="queued", reason="Re-evaluating")
+        result = svc.transition_candidate_status(
+            tenant, candidate_id=cid, new_status="queued", reason="Re-evaluating"
+        )
         assert result["status"] == "queued"
 
     def test_invalid_transition_raises(self):
@@ -258,7 +279,9 @@ class TestCandidateMerge:
             pytest.skip("Need at least 2 queued candidates")
         id_a = candidates["items"][0]["id"]
         id_b = candidates["items"][1]["id"]
-        result = svc.merge_candidate_duplicate(tenant, candidate_id=id_a, merge_into_id=id_b, merged_by="tester")
+        result = svc.merge_candidate_duplicate(
+            tenant, candidate_id=id_a, merge_into_id=id_b, merged_by="tester"
+        )
         assert result["merged"]["status"] == "duplicate"
         assert result["merged"]["merged_into_id"] == id_b
 
@@ -336,7 +359,9 @@ class TestCandidateFilters:
         svc = SheshnaagService(session)
         candidates = svc.list_candidates(tenant, limit=5, status="queued")
         if candidates["count"] > 0:
-            svc.assign_candidate(tenant, candidate_id=candidates["items"][0]["id"], analyst_name="FilterTester")
+            svc.assign_candidate(
+                tenant, candidate_id=candidates["items"][0]["id"], analyst_name="FilterTester"
+            )
         assigned = svc.list_candidates(tenant, limit=50, assignment_state="assigned")
         for item in assigned["items"]:
             assert item["assignment_state"] == "assigned"
@@ -376,7 +401,9 @@ class TestCandidateFilters:
         session = make_session()
         tenant = seed_private_tenant(session)
         svc = SheshnaagService(session)
-        result = svc.list_candidates(tenant, limit=50, status="queued", min_score=10.0, sort_by="score", sort_order="desc")
+        result = svc.list_candidates(
+            tenant, limit=50, status="queued", min_score=10.0, sort_by="score", sort_order="desc"
+        )
         for item in result["items"]:
             assert item["status"] == "queued"
             assert item["candidate_score"] >= 10.0
@@ -464,8 +491,7 @@ class TestCandidateCitations:
         svc = SheshnaagService(session)
         candidates = svc.list_candidates(tenant, limit=20)
         kev_candidates = [
-            c for c in candidates["items"]
-            if c["explainability"]["factors"].get("kev") is True
+            c for c in candidates["items"] if c["explainability"]["factors"].get("kev") is True
         ]
         for c in kev_candidates:
             types = [cit["type"] for cit in c["explainability"]["citations"]]
@@ -487,7 +513,9 @@ class TestAssignmentMetadata:
         if candidates["count"] == 0:
             pytest.skip("No queued candidates")
         cid = candidates["items"][0]["id"]
-        result = svc.assign_candidate(tenant, candidate_id=cid, analyst_name="Alice", assigned_by="Bob")
+        result = svc.assign_candidate(
+            tenant, candidate_id=cid, analyst_name="Alice", assigned_by="Bob"
+        )
         assert result["assigned_to"] == "Alice"
         assert result["assigned_by"] == "Bob"
         assert result["assigned_at"] is not None
@@ -499,8 +527,12 @@ class TestAssignmentMetadata:
         svc = SheshnaagService(session)
         candidates = svc.list_candidates(tenant, limit=5, status="queued")
         if candidates["count"] >= 2:
-            svc.assign_candidate(tenant, candidate_id=candidates["items"][0]["id"], analyst_name="Alice")
-            svc.assign_candidate(tenant, candidate_id=candidates["items"][1]["id"], analyst_name="Alice")
+            svc.assign_candidate(
+                tenant, candidate_id=candidates["items"][0]["id"], analyst_name="Alice"
+            )
+            svc.assign_candidate(
+                tenant, candidate_id=candidates["items"][1]["id"], analyst_name="Alice"
+            )
         summary = svc.get_workload_summary(tenant)
         assert "total_active" in summary
         assert "unassigned" in summary

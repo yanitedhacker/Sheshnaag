@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
 from app.services.ai_adapters.base import format_grounding_system_prompt
-
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -24,11 +24,11 @@ class OpenAIAdapter:
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        http_client: Optional[httpx.Client] = None,
-        organization: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        http_client: httpx.Client | None = None,
+        organization: str | None = None,
     ) -> None:
         self._api_key = api_key or os.getenv("OPENAI_API_KEY")
         self._base_url = (base_url or os.getenv("OPENAI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
@@ -45,8 +45,8 @@ class OpenAIAdapter:
             "variant_diff_review",
         ]
 
-    def health(self) -> Dict[str, Any]:
-        missing: List[str] = []
+    def health(self) -> dict[str, Any]:
+        missing: list[str] = []
         if not self._api_key:
             missing.append("OPENAI_API_KEY")
         return {
@@ -62,16 +62,18 @@ class OpenAIAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         if not self._api_key:
             yield {"type": "error", "error": "OPENAI_API_KEY not set", "recoverable": False}
             yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
             return
 
-        body = self._build_body(capability=capability, prompt=prompt, grounding=grounding, tools=tools)
+        body = self._build_body(
+            capability=capability, prompt=prompt, grounding=grounding, tools=tools
+        )
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -91,7 +93,11 @@ class OpenAIAdapter:
                 with client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
                         text = resp.read().decode("utf-8", errors="replace")
-                        yield {"type": "error", "error": f"HTTP {resp.status_code}: {text[:500]}", "recoverable": False}
+                        yield {
+                            "type": "error",
+                            "error": f"HTTP {resp.status_code}: {text[:500]}",
+                            "recoverable": False,
+                        }
                         yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
                         return
                     yield from self._parse_sse(resp.iter_lines())
@@ -109,11 +115,11 @@ class OpenAIAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
         system_text = f"Capability: {capability}\n\n" + format_grounding_system_prompt(grounding)
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "model": self.model_label,
             "stream": True,
             "stream_options": {"include_usage": True},
@@ -128,7 +134,7 @@ class OpenAIAdapter:
         return body
 
     @staticmethod
-    def _encode_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
+    def _encode_tool(tool: dict[str, Any]) -> dict[str, Any]:
         return {
             "type": "function",
             "function": {
@@ -140,13 +146,13 @@ class OpenAIAdapter:
 
     # -- SSE parsing --------------------------------------------------------
 
-    def _parse_sse(self, lines: Iterator[str]) -> Iterator[Dict[str, Any]]:
+    def _parse_sse(self, lines: Iterator[str]) -> Iterator[dict[str, Any]]:
         # Stream of chat completion chunks. tool_calls arrive in deltas keyed by
         # an integer index; accumulate per-index and emit one tool_use at finish.
         started = False
-        usage: Dict[str, Any] = {}
-        finish_reason: Optional[str] = None
-        tool_buffers: Dict[int, Dict[str, Any]] = {}
+        usage: dict[str, Any] = {}
+        finish_reason: str | None = None
+        tool_buffers: dict[int, dict[str, Any]] = {}
 
         for raw_line in lines:
             if not raw_line:
@@ -154,7 +160,7 @@ class OpenAIAdapter:
             line = raw_line.strip()
             if not line or not line.startswith("data:"):
                 continue
-            data_str = line[len("data:"):].strip()
+            data_str = line[len("data:") :].strip()
             if not data_str or data_str == "[DONE]":
                 break
             try:

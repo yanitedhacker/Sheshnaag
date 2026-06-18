@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
-from app.core.time import utc_now
 from pathlib import Path
-from typing import Dict, List
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.ml.model_registry import get_predictor
 from app.models.risk_score import RiskScore
 from app.models.v2 import AnalystFeedback, EPSSSnapshot, KnowledgeChunk
@@ -25,10 +24,12 @@ class ModelTrustService:
         self.session = session
         self.governance = GovernanceService(session)
 
-    def get_trust_snapshot(self) -> Dict[str, object]:
+    def get_trust_snapshot(self) -> dict[str, object]:
         """Return trust metadata consumed by the frontend trust center."""
         predictor = get_predictor()
-        recent_scores = self.session.query(RiskScore).order_by(desc(RiskScore.created_at)).limit(200).all()
+        recent_scores = (
+            self.session.query(RiskScore).order_by(desc(RiskScore.created_at)).limit(200).all()
+        )
         latest_epss = self._latest_epss_scores()
 
         calibration_buckets = defaultdict(list)
@@ -45,11 +46,18 @@ class ModelTrustService:
             for bucket, values in sorted(calibration_buckets.items())
         ]
 
-        epss_average = round(sum(latest_epss.values()) / len(latest_epss), 4) if latest_epss else 0.0
-        exploit_average = round(
-            sum(score.exploit_probability or 0.0 for score in recent_scores) / len(recent_scores),
-            4,
-        ) if recent_scores else 0.0
+        epss_average = (
+            round(sum(latest_epss.values()) / len(latest_epss), 4) if latest_epss else 0.0
+        )
+        exploit_average = (
+            round(
+                sum(score.exploit_probability or 0.0 for score in recent_scores)
+                / len(recent_scores),
+                4,
+            )
+            if recent_scores
+            else 0.0
+        )
 
         drift_delta = round(abs(epss_average - exploit_average), 4)
         if drift_delta < 0.05:
@@ -68,7 +76,9 @@ class ModelTrustService:
 
         feature_importance = [
             {"feature": name, "frequency": count}
-            for name, count in sorted(top_feature_counts.items(), key=lambda item: item[1], reverse=True)[:8]
+            for name, count in sorted(
+                top_feature_counts.items(), key=lambda item: item[1], reverse=True
+            )[:8]
         ]
 
         feedback_rows = (
@@ -114,7 +124,9 @@ class ModelTrustService:
             "score_history": score_history,
             "analyst_feedback": {
                 "summary": dict(feedback_summary),
-                "recent_items": [self.governance._serialize_feedback(row) for row in feedback_rows[:8]],
+                "recent_items": [
+                    self.governance._serialize_feedback(row) for row in feedback_rows[:8]
+                ],
             },
             "retrieval": {
                 "embedding_model": settings.default_embedding_model,
@@ -133,9 +145,9 @@ class ModelTrustService:
             ],
         }
 
-    def _latest_epss_scores(self) -> Dict[str, float]:
+    def _latest_epss_scores(self) -> dict[str, float]:
         rows = self.session.query(EPSSSnapshot).order_by(desc(EPSSSnapshot.scored_at)).all()
-        latest: Dict[str, float] = {}
+        latest: dict[str, float] = {}
         for row in rows:
             if row.cve_id not in latest:
                 latest[row.cve_id] = float(row.score)

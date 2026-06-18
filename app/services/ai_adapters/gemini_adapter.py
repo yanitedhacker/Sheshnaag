@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
 from app.services.ai_adapters.base import format_grounding_system_prompt
-
 
 DEFAULT_MODEL = "gemini-1.5-pro-latest"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -24,10 +24,10 @@ class GeminiAdapter:
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        http_client: Optional[httpx.Client] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        http_client: httpx.Client | None = None,
     ) -> None:
         self._api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         self._base_url = (base_url or os.getenv("GEMINI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
@@ -43,8 +43,8 @@ class GeminiAdapter:
             "variant_diff_review",
         ]
 
-    def health(self) -> Dict[str, Any]:
-        missing: List[str] = []
+    def health(self) -> dict[str, Any]:
+        missing: list[str] = []
         if not self._api_key:
             missing.append("GOOGLE_API_KEY")
         return {
@@ -60,16 +60,18 @@ class GeminiAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         if not self._api_key:
             yield {"type": "error", "error": "GOOGLE_API_KEY not set", "recoverable": False}
             yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
             return
 
-        body = self._build_body(capability=capability, prompt=prompt, grounding=grounding, tools=tools)
+        body = self._build_body(
+            capability=capability, prompt=prompt, grounding=grounding, tools=tools
+        )
         # Gemini SSE requires the alt=sse query param.
         url = (
             f"{self._base_url}/models/{self.model_label}:streamGenerateContent"
@@ -84,7 +86,11 @@ class GeminiAdapter:
                 with client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
                         text = resp.read().decode("utf-8", errors="replace")
-                        yield {"type": "error", "error": f"HTTP {resp.status_code}: {text[:500]}", "recoverable": False}
+                        yield {
+                            "type": "error",
+                            "error": f"HTTP {resp.status_code}: {text[:500]}",
+                            "recoverable": False,
+                        }
                         yield {"type": "message_stop", "stop_reason": "error", "usage": {}}
                         return
                     yield {"type": "message_start", "metadata": {"model": self.model_label}}
@@ -101,11 +107,11 @@ class GeminiAdapter:
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
         system_text = f"Capability: {capability}\n\n" + format_grounding_system_prompt(grounding)
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "systemInstruction": {"role": "system", "parts": [{"text": system_text}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         }
@@ -116,7 +122,8 @@ class GeminiAdapter:
                         {
                             "name": t["name"],
                             "description": t.get("description", ""),
-                            "parameters": t.get("input_schema") or {"type": "object", "properties": {}},
+                            "parameters": t.get("input_schema")
+                            or {"type": "object", "properties": {}},
                         }
                         for t in tools
                     ]
@@ -124,16 +131,16 @@ class GeminiAdapter:
             ]
         return body
 
-    def _parse_sse(self, lines: Iterator[str]) -> Iterator[Dict[str, Any]]:
-        usage: Dict[str, Any] = {}
-        finish_reason: Optional[str] = None
+    def _parse_sse(self, lines: Iterator[str]) -> Iterator[dict[str, Any]]:
+        usage: dict[str, Any] = {}
+        finish_reason: str | None = None
         for raw_line in lines:
             if not raw_line:
                 continue
             line = raw_line.strip()
             if not line.startswith("data:"):
                 continue
-            data_str = line[len("data:"):].strip()
+            data_str = line[len("data:") :].strip()
             if not data_str or data_str == "[DONE]":
                 continue
             try:

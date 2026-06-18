@@ -13,9 +13,9 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.launchers.base import Launcher, LauncherResult
+from app.lab.launchers.base import LauncherResult
 
 
 class UrlLauncher:
@@ -27,7 +27,7 @@ class UrlLauncher:
     def _has_binary(self, name: str) -> bool:
         return shutil.which(name) is not None
 
-    def _exec(self, argv: List[str], *, timeout: int) -> subprocess.CompletedProcess:
+    def _exec(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess:
         return subprocess.run(
             argv,
             check=False,
@@ -36,7 +36,7 @@ class UrlLauncher:
             timeout=timeout,
         )
 
-    def _popen(self, argv: List[str]) -> subprocess.Popen:
+    def _popen(self, argv: list[str]) -> subprocess.Popen:
         return subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
@@ -55,9 +55,9 @@ class UrlLauncher:
         snapshot_snap: Any,
     ) -> LauncherResult:
         start = time.monotonic()
-        logs: List[str] = []
-        artifacts: List[str] = []
-        metadata: Dict[str, Any] = {"launcher": "url"}
+        logs: list[str] = []
+        artifacts: list[str] = []
+        metadata: dict[str, Any] = {"launcher": "url"}
 
         profile_cfg = getattr(profile, "config", {}) or {}
         timeout = int(profile_cfg.get("detonation_timeout_s", 45))
@@ -71,15 +71,17 @@ class UrlLauncher:
 
         mitm = None
         if self._has_binary("mitmdump"):
-            mitm = self._popen([
-                "mitmdump",
-                "--listen-host",
-                "127.0.0.1",
-                "--listen-port",
-                "8081",
-                "-w",
-                flows_path,
-            ])
+            mitm = self._popen(
+                [
+                    "mitmdump",
+                    "--listen-host",
+                    "127.0.0.1",
+                    "--listen-port",
+                    "8081",
+                    "-w",
+                    flows_path,
+                ]
+            )
             logs.append(f"mitmdump pid={mitm.pid}")
             metadata["mitm"] = True
         else:

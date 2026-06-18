@@ -14,8 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401  # register all model tables
+from app.core.database import Base
 from app.models.asset import Asset
 from app.models.cve import CVE
 from app.models.malware_lab import (
@@ -125,7 +125,7 @@ def _make_indicator(
     return indicator
 
 
-def _edge_types(session: Session, tenant: Tenant) -> list[Tuple[str, str, str, float]]:
+def _edge_types(session: Session, tenant: Tenant) -> list[tuple[str, str, str, float]]:
     # Build a (from_key, edge_type, to_key, weight) view for every edge.
     node_by_id = {
         node.id: node
@@ -133,12 +133,8 @@ def _edge_types(session: Session, tenant: Tenant) -> list[Tuple[str, str, str, f
         .filter(ExposureGraphNode.tenant_id == tenant.id)
         .all()
     }
-    edges = (
-        session.query(ExposureGraphEdge)
-        .filter(ExposureGraphEdge.tenant_id == tenant.id)
-        .all()
-    )
-    out: list[Tuple[str, str, str, float]] = []
+    edges = session.query(ExposureGraphEdge).filter(ExposureGraphEdge.tenant_id == tenant.id).all()
+    out: list[tuple[str, str, str, float]] = []
     for edge in edges:
         from_node = node_by_id.get(edge.from_node_id)
         to_node = node_by_id.get(edge.to_node_id)
@@ -160,9 +156,7 @@ def test_rebuild_ioc_graph_creates_expected_edges(session: Session) -> None:
     case = _make_case(session, tenant, title="Case A", specimen_ids=[specimen.id])
 
     f1 = _make_finding(session, tenant, case, title="C2 beacon", confidence=0.85)
-    f2 = _make_finding(
-        session, tenant, case, title="Persistence key", confidence=0.4
-    )
+    f2 = _make_finding(session, tenant, case, title="Persistence key", confidence=0.4)
 
     cve = CVE(cve_id="CVE-2025-00001", description="demo cve")
     session.add(cve)
@@ -205,9 +199,7 @@ def test_rebuild_ioc_graph_creates_expected_edges(session: Session) -> None:
     assert len(ioc_rows) == 8
 
     # ioc_to_finding weights must equal finding.confidence.
-    finding_edges = {
-        (row[0], row[2]): row[3] for row in ioc_rows if row[1] == "ioc_to_finding"
-    }
+    finding_edges = {(row[0], row[2]): row[3] for row in ioc_rows if row[1] == "ioc_to_finding"}
     assert finding_edges[(f"indicator:{ind_ip.id}", f"finding:{f1.id}")] == pytest.approx(0.85)
     assert finding_edges[(f"indicator:{ind_ip.id}", f"finding:{f2.id}")] == pytest.approx(0.4)
     assert finding_edges[(f"indicator:{ind_hash.id}", f"finding:{f1.id}")] == pytest.approx(0.85)
@@ -261,9 +253,7 @@ def test_ioc_neighborhood_depth_two(session: Session) -> None:
     service.rebuild_ioc_graph(tenant)
     session.flush()
 
-    slice_depth1 = service.ioc_neighborhood(
-        tenant, indicator_value="198.51.100.42", depth=1
-    )
+    slice_depth1 = service.ioc_neighborhood(tenant, indicator_value="198.51.100.42", depth=1)
     keys_depth1 = {node["node_key"] for node in slice_depth1["nodes"]}
     # depth=1 from the IP: its finding, its specimen, and the co-occurring hash.
     assert f"indicator:{ind_ip.id}" in keys_depth1
@@ -271,9 +261,7 @@ def test_ioc_neighborhood_depth_two(session: Session) -> None:
     assert f"specimen:{specimen.id}" in keys_depth1
     assert f"indicator:{ind_hash.id}" in keys_depth1
 
-    slice_depth2 = service.ioc_neighborhood(
-        tenant, indicator_value="198.51.100.42", depth=2
-    )
+    slice_depth2 = service.ioc_neighborhood(tenant, indicator_value="198.51.100.42", depth=2)
     keys_depth2 = {node["node_key"] for node in slice_depth2["nodes"]}
     assert keys_depth1.issubset(keys_depth2)
     # At depth 2 we should still reach the hash's own specimen edge if any
@@ -283,9 +271,7 @@ def test_ioc_neighborhood_depth_two(session: Session) -> None:
     assert len(slice_depth2["nodes"]) >= len(slice_depth1["nodes"])
 
     # Unknown indicator returns empty slice gracefully.
-    empty = service.ioc_neighborhood(
-        tenant, indicator_value="does-not-exist", depth=2
-    )
+    empty = service.ioc_neighborhood(tenant, indicator_value="does-not-exist", depth=2)
     assert empty["nodes"] == []
     assert empty["edges"] == []
     assert empty["root_node_ids"] == []
@@ -380,9 +366,7 @@ def test_attack_paths_for_ioc_returns_top_k(session: Session) -> None:
     session.flush()
 
     specimen = _make_specimen(session, tenant, name="paths.bin")
-    case = _make_case(
-        session, tenant, title="Paths Case", specimen_ids=[specimen.id]
-    )
+    case = _make_case(session, tenant, title="Paths Case", specimen_ids=[specimen.id])
     f = _make_finding(session, tenant, case, title="Impact", confidence=0.7)
 
     _make_indicator(
@@ -402,16 +386,12 @@ def test_attack_paths_for_ioc_returns_top_k(session: Session) -> None:
     session.flush()
 
     # top_k respected — ask for 1, expect exactly 1 path.
-    result = service.attack_paths_for_ioc(
-        tenant, indicator_value="192.0.2.55", top_k=1
-    )
+    result = service.attack_paths_for_ioc(tenant, indicator_value="192.0.2.55", top_k=1)
     assert len(result["paths"]) == 1
     assert result["paths"][0]["summary"].startswith("192.0.2.55 -> ")
 
     # Asking for up to 5 should return two CVE-terminating paths (at most).
-    bigger = service.attack_paths_for_ioc(
-        tenant, indicator_value="192.0.2.55", top_k=5
-    )
+    bigger = service.attack_paths_for_ioc(tenant, indicator_value="192.0.2.55", top_k=5)
     assert 1 <= len(bigger["paths"]) <= 5
     # Scores must be sorted descending.
     scores = [path["score"] for path in bigger["paths"]]
@@ -421,9 +401,7 @@ def test_attack_paths_for_ioc_returns_top_k(session: Session) -> None:
         assert path["labels"][-1].startswith("CVE-")
 
     # Unknown indicator — empty paths, no error.
-    empty = service.attack_paths_for_ioc(
-        tenant, indicator_value="unknown", top_k=3
-    )
+    empty = service.attack_paths_for_ioc(tenant, indicator_value="unknown", top_k=3)
     assert empty["paths"] == []
 
     # Argument validation.

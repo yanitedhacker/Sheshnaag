@@ -54,11 +54,12 @@ def test_scheduler_respects_budget_and_capacity(monkeypatch):
         ],
     )
 
-    out = scheduler.propose_schedule(SchedulingConstraints(downtime_budget_minutes=15, team_capacity=1))
+    out = scheduler.propose_schedule(
+        SchedulingConstraints(downtime_budget_minutes=15, team_capacity=1)
+    )
     schedule = out["schedule"]
     # Only one window bucket
     assert len(schedule) == 1
     assert schedule[0]["window"] == "01:00–03:00"
     # With 15 min budget and team_capacity 1, only P2 can fit
     assert schedule[0]["patches"] == ["P2"]
-

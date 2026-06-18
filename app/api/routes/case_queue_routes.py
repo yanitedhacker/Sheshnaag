@@ -10,7 +10,6 @@ section.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -24,34 +23,31 @@ from app.services.case_workflow import (
     CaseWorkflowService,
 )
 
-
-router = APIRouter(
-    prefix="/api/v5/cases/queue", tags=["Sheshnaag V5 Case Queue"]
-)
+router = APIRouter(prefix="/api/v5/cases/queue", tags=["Sheshnaag V5 Case Queue"])
 
 
 class CaseQueueItem(BaseModel):
     case_id: int
     title: str
-    summary: Optional[str]
+    summary: str | None
     lifecycle_state: str
-    state_changed_at: Optional[datetime]
-    state_changed_by: Optional[str]
+    state_changed_at: datetime | None
+    state_changed_by: str | None
     priority: str
     analyst_name: str
-    legal_transitions_for_caller: List[str]
-    last_transition_actor: Optional[str]
+    legal_transitions_for_caller: list[str]
+    last_transition_actor: str | None
 
 
 class CaseQueueResponse(BaseModel):
     count: int
     state_counts: dict[str, int]
-    items: List[CaseQueueItem]
+    items: list[CaseQueueItem]
 
 
 @router.get("", response_model=CaseQueueResponse)
 def list_case_queue(
-    lifecycle_state: Optional[str] = Query(
+    lifecycle_state: str | None = Query(
         None,
         description=(
             "One of triage/analysis/review/ready_to_ship/shipped/archived. "
@@ -78,23 +74,15 @@ def list_case_queue(
 
     query = session.query(AnalysisCase)
     if lifecycle_enum is not None:
-        query = query.filter(
-            AnalysisCase.lifecycle_state == lifecycle_enum.value
-        )
-    rows = (
-        query.order_by(AnalysisCase.state_changed_at.desc().nullslast())
-        .limit(limit)
-        .all()
-    )
+        query = query.filter(AnalysisCase.lifecycle_state == lifecycle_enum.value)
+    rows = query.order_by(AnalysisCase.state_changed_at.desc().nullslast()).limit(limit).all()
 
     # Lookup latest transition actor per case in one batch.
     case_ids = [row.id for row in rows]
     latest_actor: dict[int, str] = {}
     if case_ids:
         sub = (
-            session.query(
-                CaseStateTransition.case_id, CaseStateTransition.actor
-            )
+            session.query(CaseStateTransition.case_id, CaseStateTransition.actor)
             .filter(CaseStateTransition.case_id.in_(case_ids))
             .order_by(
                 CaseStateTransition.case_id,
@@ -105,20 +93,18 @@ def list_case_queue(
         for case_id, actor in sub:
             latest_actor.setdefault(case_id, actor)
 
-    items: List[CaseQueueItem] = []
+    items: list[CaseQueueItem] = []
     for row in rows:
         try:
             state_enum = CaseLifecycleState(row.lifecycle_state)
         except ValueError:
             # Defensive: row has a non-V5 state value somehow. Surface
             # the raw value but compute no transitions.
-            transitions: List[str] = []
+            transitions: list[str] = []
         else:
             transition_targets: set[str] = set()
             for caller_role in caller_roles:
-                for target in workflow.legal_transitions_for_role(
-                    state_enum, caller_role
-                ):
+                for target in workflow.legal_transitions_for_role(state_enum, caller_role):
                     transition_targets.add(target.value)
             transitions = sorted(transition_targets)
 
@@ -142,9 +128,7 @@ def list_case_queue(
     from sqlalchemy import func
 
     rows_by_state = (
-        session.query(
-            AnalysisCase.lifecycle_state, func.count(AnalysisCase.id)
-        )
+        session.query(AnalysisCase.lifecycle_state, func.count(AnalysisCase.id))
         .group_by(AnalysisCase.lifecycle_state)
         .all()
     )
@@ -161,7 +145,7 @@ def list_case_queue(
 
 class TransitionRequest(BaseModel):
     to_state: str
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class TransitionResponse(BaseModel):

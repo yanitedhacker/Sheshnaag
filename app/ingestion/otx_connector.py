@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 import requests
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 OTX_BASE_URL = "https://otx.alienvault.com/api/v1"
 
 # OTX indicator "type" → normalized indicator_kind
-_OTX_TYPE_MAP: Dict[str, str] = {
+_OTX_TYPE_MAP: dict[str, str] = {
     "IPv4": "ip",
     "IPv6": "ip",
     "domain": "domain",
@@ -60,13 +60,13 @@ class OTXConnector:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         *,
         base_url: str = OTX_BASE_URL,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
-        backoff_seconds: Optional[float] = None,
+        session: requests.Session | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        backoff_seconds: float | None = None,
         sleep_fn=time.sleep,
     ) -> None:
         self._api_key = api_key or os.getenv("OTX_API_KEY") or ""
@@ -85,7 +85,7 @@ class OTXConnector:
     def healthy(self) -> bool:
         return bool(self._api_key)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {
             "X-OTX-API-KEY": self._api_key,
             "Accept": "application/json",
@@ -98,8 +98,8 @@ class OTXConnector:
     def _get(
         self,
         path: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         if not self.healthy:
             return None
         url = f"{self._base_url}{path}"
@@ -114,7 +114,10 @@ class OTXConnector:
             except requests.RequestException as exc:
                 logger.warning(
                     "OTX request error (attempt %d/%d) for %s: %s",
-                    attempt, self._max_retries, path, exc,
+                    attempt,
+                    self._max_retries,
+                    path,
+                    exc,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -123,7 +126,9 @@ class OTXConnector:
             if resp.status_code == 429:
                 logger.warning(
                     "OTX rate limited (attempt %d/%d) for %s",
-                    attempt, self._max_retries, path,
+                    attempt,
+                    self._max_retries,
+                    path,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -136,16 +141,17 @@ class OTXConnector:
             if resp.status_code >= 500:
                 logger.warning(
                     "OTX %s for %s (attempt %d/%d)",
-                    resp.status_code, path, attempt, self._max_retries,
+                    resp.status_code,
+                    path,
+                    attempt,
+                    self._max_retries,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
                 continue
 
             if resp.status_code >= 400:
-                logger.warning(
-                    "OTX client error %s for %s", resp.status_code, path
-                )
+                logger.warning("OTX client error %s for %s", resp.status_code, path)
                 return None
 
             try:
@@ -165,9 +171,9 @@ class OTXConnector:
         *,
         limit: int = 50,
         page: int = 1,
-        modified_since: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {"limit": limit, "page": page}
+        modified_since: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit, "page": page}
         if modified_since:
             params["modified_since"] = modified_since
         body = self._get("/pulses/subscribed", params=params)
@@ -175,7 +181,7 @@ class OTXConnector:
             return []
         return self._normalize_pulses(body.get("results") or [])
 
-    def fetch_indicator(self, kind: str, value: str) -> Optional[Dict[str, Any]]:
+    def fetch_indicator(self, kind: str, value: str) -> dict[str, Any] | None:
         kind_path = self._kind_to_otx_path(kind)
         if not kind_path or not value:
             return None
@@ -188,7 +194,7 @@ class OTXConnector:
     # Generic fetch
     # ------------------------------------------------------------------
 
-    def fetch(self, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Fetch either pulses or per-indicator lookups.
 
         ``scope`` shape:
@@ -203,7 +209,7 @@ class OTXConnector:
         mode = (scope.get("mode") or "pulses").lower()
 
         if mode == "indicators":
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             for ioc in scope.get("iocs") or []:
                 if not isinstance(ioc, dict):
                     continue
@@ -226,10 +232,8 @@ class OTXConnector:
     # Normalization
     # ------------------------------------------------------------------
 
-    def _normalize_pulses(
-        self, pulses: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        records: List[Dict[str, Any]] = []
+    def _normalize_pulses(self, pulses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
         for pulse in pulses:
             if not isinstance(pulse, dict):
                 continue
@@ -263,14 +267,14 @@ class OTXConnector:
 
     @staticmethod
     def _normalize_indicator(
-        body: Dict[str, Any],
+        body: dict[str, Any],
         *,
         indicator_kind: str,
         value: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         pulse_info = body.get("pulse_info") or {}
         pulses = pulse_info.get("pulses") or []
-        tags: List[str] = []
+        tags: list[str] = []
         for pulse in pulses:
             if isinstance(pulse, dict):
                 tags.extend(pulse.get("tags") or [])
@@ -297,7 +301,7 @@ class OTXConnector:
         }
 
     @staticmethod
-    def _kind_to_otx_path(kind: str) -> Optional[str]:
+    def _kind_to_otx_path(kind: str) -> str | None:
         mapping = {
             "ip": "IPv4",
             "ipv4": "IPv4",

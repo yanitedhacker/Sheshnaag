@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -15,7 +14,6 @@ from app.services.case_workflow import (
     RoleNotPermittedError,
 )
 
-
 # Mention-action grammar:
 #   @sheshnaag transition CASE-<id> to=<state>
 #   @sheshnaag link CASE-<id>
@@ -23,14 +21,10 @@ _TRANSITION_RE = re.compile(
     r"@sheshnaag\s+transition\s+(?:case[-_]?)?(\d+)\s+to=([a-z_]+)",
     re.IGNORECASE,
 )
-_LINK_RE = re.compile(
-    r"@sheshnaag\s+link\s+(?:case[-_]?)?(\d+)", re.IGNORECASE
-)
+_LINK_RE = re.compile(r"@sheshnaag\s+link\s+(?:case[-_]?)?(\d+)", re.IGNORECASE)
 
 
-def lookup_case_by_link(
-    session: Session, *, provider: str, external_id: str
-) -> Optional[int]:
+def lookup_case_by_link(session: Session, *, provider: str, external_id: str) -> int | None:
     row = (
         session.query(CaseIntegrationLink)
         .filter_by(provider=provider, external_id=external_id)
@@ -45,7 +39,7 @@ def upsert_link(
     case_id: int,
     provider: str,
     external_id: str,
-    actor: Optional[str] = None,
+    actor: str | None = None,
 ) -> CaseIntegrationLink:
     existing = (
         session.query(CaseIntegrationLink)
@@ -66,7 +60,7 @@ def upsert_link(
     return row
 
 
-def parse_mention(text: str) -> Optional[dict]:
+def parse_mention(text: str) -> dict | None:
     """Recognize ``@sheshnaag transition`` / ``@sheshnaag link`` mentions.
 
     Returns ``None`` if the text is not a mention command.
@@ -93,7 +87,7 @@ def perform_transition(
     to_state: str,
     actor: str,
     actor_roles: list[str],
-    reason: Optional[str] = None,
+    reason: str | None = None,
 ) -> dict:
     """Wrapper around CaseWorkflowService.transition with chat-friendly errors.
 

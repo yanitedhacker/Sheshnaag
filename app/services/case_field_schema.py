@@ -13,8 +13,6 @@ becomes a concern, add a per-process cache keyed by
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from jsonschema import Draft202012Validator, SchemaError
 from sqlalchemy.orm import Session
 
@@ -28,7 +26,7 @@ class CustomFieldsValidationError(ValueError):
     one per Draft 2020-12 violation (path + message).
     """
 
-    def __init__(self, errors: List[str]) -> None:
+    def __init__(self, errors: list[str]) -> None:
         super().__init__("; ".join(errors) if errors else "validation_failed")
         self.errors = errors
 
@@ -79,7 +77,7 @@ class CaseFieldSchemaService:
         self._session.flush()
         return row
 
-    def current_schema(self, tenant_id: int) -> Optional[CaseFieldSchema]:
+    def current_schema(self, tenant_id: int) -> CaseFieldSchema | None:
         """Return the highest-version schema row for the tenant, or None."""
         return (
             self._session.query(CaseFieldSchema)
@@ -88,9 +86,7 @@ class CaseFieldSchemaService:
             .first()
         )
 
-    def validate_custom_fields(
-        self, tenant_id: int, fields: dict
-    ) -> None:
+    def validate_custom_fields(self, tenant_id: int, fields: dict) -> None:
         """Validate ``fields`` against the tenant's active schema.
 
         No-op when no schema is registered for the tenant (V4 default).
@@ -103,7 +99,7 @@ class CaseFieldSchemaService:
             return
 
         validator = Draft202012Validator(active.schema_doc)
-        errors: List[str] = []
+        errors: list[str] = []
         for err in sorted(validator.iter_errors(fields), key=lambda e: list(e.path)):
             path = "/".join(str(p) for p in err.path) or "(root)"
             errors.append(f"{path}: {err.message}")

@@ -12,7 +12,6 @@ from app.api.routes.autonomous_routes import router as autonomous_router
 from app.core.database import Base, get_sync_session
 from app.models.v2 import Tenant
 
-
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

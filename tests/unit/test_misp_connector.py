@@ -13,7 +13,6 @@ from app.ingestion.misp_connector import (
     get_registered_ioc_connectors,
 )
 
-
 SAMPLE_MISP_RESPONSE = {
     "response": [
         {
@@ -83,6 +82,7 @@ def _mock_response(status_code: int = 200, json_body=None, text: str = ""):
 # Health
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_health_false_when_env_missing(monkeypatch):
     monkeypatch.delenv("MISP_URL", raising=False)
@@ -111,6 +111,7 @@ def test_health_true_when_both_env_set(monkeypatch):
 # Fetch -- env missing
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_returns_empty_without_env(monkeypatch):
     monkeypatch.delenv("MISP_URL", raising=False)
@@ -124,6 +125,7 @@ def test_fetch_returns_empty_without_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # Fetch -- happy path
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_returns_normalized_records(monkeypatch):
@@ -173,6 +175,7 @@ def test_fetch_returns_normalized_records(monkeypatch):
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_handles_5xx(monkeypatch):
@@ -229,6 +232,7 @@ def test_fetch_handles_bad_json(monkeypatch):
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_misp_registered():

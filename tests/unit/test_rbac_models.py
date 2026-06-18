@@ -8,8 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401  registers all model tables
+from app.core.database import Base
 from app.models.rbac import Permission, Role, RolePermission
 
 

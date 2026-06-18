@@ -13,7 +13,6 @@ from app.ingestion.misp_connector import (
 )
 from app.ingestion.shodan_connector import ShodanConnector
 
-
 SAMPLE_HOST = {
     "ip_str": "198.51.100.7",
     "ports": [22, 80, 443, 8080],
@@ -96,6 +95,7 @@ def _mock_response(status_code: int = 200, json_body=None, text: str = ""):
 # Health
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_health_false_when_env_missing(monkeypatch):
     monkeypatch.delenv("SHODAN_API_KEY", raising=False)
@@ -111,6 +111,7 @@ def test_health_true_with_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # Fetch -- env missing
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_returns_empty_without_env(monkeypatch):
@@ -133,6 +134,7 @@ def test_fetch_host_returns_none_without_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # fetch_host
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_host_normalizes():
@@ -163,6 +165,7 @@ def test_fetch_host_normalizes():
 # fetch_search
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_search_normalizes():
     session = MagicMock()
@@ -189,6 +192,7 @@ def test_fetch_search_normalizes():
 # ---------------------------------------------------------------------------
 # fetch_dns
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_dns_normalizes():
@@ -220,6 +224,7 @@ def test_fetch_dns_normalizes():
 # Generic fetch dispatches across kinds
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_fetch_fans_out_across_hosts_searches_domains():
     session = MagicMock()
@@ -245,6 +250,7 @@ def test_fetch_fans_out_across_hosts_searches_domains():
 # ---------------------------------------------------------------------------
 # Error / rate-limit handling
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_fetch_host_retries_on_429_then_succeeds():
@@ -342,6 +348,7 @@ def test_fetch_returns_empty_on_bad_json():
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_shodan_registered():

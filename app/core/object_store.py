@@ -19,9 +19,10 @@ import hashlib
 import io
 import logging
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator, Optional, Protocol
+from typing import BinaryIO, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,12 @@ logger = logging.getLogger(__name__)
 class StoredObject:
     """Result of placing bytes into the object store."""
 
-    digest: str            # sha256 hex of the payload
+    digest: str  # sha256 hex of the payload
     size: int
-    backend: str           # "minio" | "filesystem"
-    location: str          # opaque URI: ``s3://bucket/key`` or ``file:///path``
-    bucket: Optional[str] = None
-    key: Optional[str] = None
+    backend: str  # "minio" | "filesystem"
+    location: str  # opaque URI: ``s3://bucket/key`` or ``file:///path``
+    bucket: str | None = None
+    key: str | None = None
 
 
 class ObjectBackend(Protocol):
@@ -53,7 +54,7 @@ class LocalFilesystemBackend:
 
     name = "filesystem"
 
-    def __init__(self, root: Optional[Path] = None) -> None:
+    def __init__(self, root: Path | None = None) -> None:
         self.root = Path(root or os.getenv("OBJECT_STORE_LOCAL_DIR", "./data/object_store"))
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -118,7 +119,7 @@ class MinIOBackend:
         secret_key: str,
         bucket: str,
         secure: bool = True,
-        region: Optional[str] = None,
+        region: str | None = None,
     ) -> None:
         from minio import Minio  # type: ignore[import-not-found]
 
@@ -210,7 +211,7 @@ class ObjectStore:
         self.backend = backend
 
     @classmethod
-    def from_env(cls) -> "ObjectStore":
+    def from_env(cls) -> ObjectStore:
         choice = os.getenv("OBJECT_STORE_BACKEND", "filesystem").strip().lower()
         if choice in {"minio", "s3"}:
             try:
@@ -238,7 +239,9 @@ class ObjectStore:
             backend = LocalFilesystemBackend()
         return cls(backend)
 
-    def put_bytes(self, data: bytes, *, content_type: str = "application/octet-stream") -> StoredObject:
+    def put_bytes(
+        self, data: bytes, *, content_type: str = "application/octet-stream"
+    ) -> StoredObject:
         digest = hashlib.sha256(data).hexdigest()
         return self.backend.put(digest, data, content_type=content_type)
 
@@ -269,7 +272,7 @@ class ObjectStore:
                 yield path.name, path
 
 
-_DEFAULT_STORE: Optional[ObjectStore] = None
+_DEFAULT_STORE: ObjectStore | None = None
 
 
 def get_object_store() -> ObjectStore:

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
-from app.lab.telemetry_slices import build_telemetry_slices
 from app.lab.collectors.runtime import guest_ref, guest_transport
+from app.lab.telemetry_slices import build_telemetry_slices
 
 
 def utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def stable_json_sha256(payload: Any) -> str:
@@ -28,11 +28,11 @@ def collector_health_meta(
     ended_at: str,
     status: str,
     output_bytes: int = 0,
-    skip_reason: Optional[str] = None,
-    error: Optional[str] = None,
-    tool: Optional[str] = None,
+    skip_reason: str | None = None,
+    error: str | None = None,
+    tool: str | None = None,
     **extra: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     try:
         t0 = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
         t1 = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
@@ -60,15 +60,15 @@ def build_evidence_dict(
     artifact_kind: str,
     title: str,
     summary: str,
-    payload: Dict[str, Any],
-    storage_path: Optional[str] = None,
+    payload: dict[str, Any],
+    storage_path: str | None = None,
     content_type: str = "application/json",
-    capture_started_at: Optional[str] = None,
-    capture_ended_at: Optional[str] = None,
-    collector_name: Optional[str] = None,
-    collector_version: Optional[str] = None,
+    capture_started_at: str | None = None,
+    capture_ended_at: str | None = None,
+    collector_name: str | None = None,
+    collector_version: str | None = None,
     truncated: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if isinstance(payload, dict):
         health = payload.get("collector_health")
         if isinstance(health, dict):
@@ -77,7 +77,7 @@ def build_evidence_dict(
                 payload.setdefault("collection_state", "live" if status == "ok" else status)
     serialized = json.dumps(payload, sort_keys=True, default=str)
     byte_size = len(serialized.encode("utf-8"))
-    item: Dict[str, Any] = {
+    item: dict[str, Any] = {
         "artifact_kind": artifact_kind,
         "title": title,
         "summary": summary,
@@ -105,10 +105,10 @@ def synthetic_from_plan(
     collector_name: str,
     title: str,
     summary: str,
-    run_context: Dict[str, Any],
-    provider_result: Dict[str, Any],
+    run_context: dict[str, Any],
+    provider_result: dict[str, Any],
     collector_version: str = "1.0.0",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     started = utc_iso()
     plan = provider_result.get("plan") or {}
     payload = {
@@ -158,11 +158,11 @@ def collector_error_evidence(
     collector_name: str,
     title: str,
     message: str,
-    run_context: Dict[str, Any],
-    provider_result: Dict[str, Any],
+    run_context: dict[str, Any],
+    provider_result: dict[str, Any],
     collector_version: str = "1.0.0",
-    tool: Optional[str] = None,
-) -> Dict[str, Any]:
+    tool: str | None = None,
+) -> dict[str, Any]:
     started = utc_iso()
     ended = utc_iso()
     payload = {
@@ -213,34 +213,34 @@ def build_advanced_telemetry_evidence(
     artifact_kind: str,
     title: str,
     summary: str,
-    run_context: Dict[str, Any],
-    provider_result: Dict[str, Any],
+    run_context: dict[str, Any],
+    provider_result: dict[str, Any],
     collector_version: str,
     tool: str,
     mode: str,
-    normalized_events: List[Dict[str, Any]],
-    findings: List[Dict[str, Any]],
+    normalized_events: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
     started_at: str,
     ended_at: str,
-    command: Optional[str] = None,
+    command: str | None = None,
     raw_preview: str = "",
     stderr_preview: str = "",
-    exit_code: Optional[int] = None,
+    exit_code: int | None = None,
     status: str = "ok",
-    skip_reason: Optional[str] = None,
-    error: Optional[str] = None,
-    event_limit: Optional[int] = None,
-    byte_limit: Optional[int] = None,
-    time_limit_seconds: Optional[int] = None,
+    skip_reason: str | None = None,
+    error: str | None = None,
+    event_limit: int | None = None,
+    byte_limit: int | None = None,
+    time_limit_seconds: int | None = None,
     truncated: bool = False,
     supported: bool = True,
-    support_reason: Optional[str] = None,
+    support_reason: str | None = None,
     storage_eligible: bool = False,
-    storage_path: Optional[str] = None,
+    storage_path: str | None = None,
     contains_raw_payload: bool = False,
-    sensitivity: Optional[Dict[str, Any]] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    sensitivity: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     collector_health = collector_health_meta(
         collector=artifact_kind,
         version=collector_version,

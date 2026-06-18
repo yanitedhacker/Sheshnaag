@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from typing import List, Optional, Tuple
 
 
 def docker_cli_available() -> bool:
@@ -18,11 +17,11 @@ def limactl_cli_available() -> bool:
 
 def run_in_container(
     container_id: str,
-    argv: List[str],
+    argv: list[str],
     *,
     timeout_sec: int = 90,
-    stdin_text: Optional[str] = None,
-) -> Tuple[int, str, str]:
+    stdin_text: str | None = None,
+) -> tuple[int, str, str]:
     """Run argv inside the container (docker CLI on host)."""
     cmdline = ["docker", "exec", container_id, *argv]
     try:
@@ -42,11 +41,11 @@ def run_in_container(
 
 def run_in_lima_guest(
     instance_name: str,
-    argv: List[str],
+    argv: list[str],
     *,
     timeout_sec: int = 90,
-    stdin_text: Optional[str] = None,
-) -> Tuple[int, str, str]:
+    stdin_text: str | None = None,
+) -> tuple[int, str, str]:
     """Run argv inside a Lima guest via ``limactl shell``."""
     cmdline = ["limactl", "shell", instance_name, "--", *argv]
     try:
@@ -64,7 +63,7 @@ def run_in_lima_guest(
         return 1, "", str(exc)
 
 
-def resolve_container_id(provider_result: dict) -> Optional[str]:
+def resolve_container_id(provider_result: dict) -> str | None:
     cid = provider_result.get("container_id")
     if cid:
         return str(cid)
@@ -73,7 +72,7 @@ def resolve_container_id(provider_result: dict) -> Optional[str]:
     return str(c) if c else None
 
 
-def resolve_host_workspace(provider_result: dict) -> Optional[str]:
+def resolve_host_workspace(provider_result: dict) -> str | None:
     plan = provider_result.get("plan") or {}
     path = plan.get("host_workspace")
     if path and os.path.isdir(path):
@@ -81,7 +80,7 @@ def resolve_host_workspace(provider_result: dict) -> Optional[str]:
     return str(path) if path else None
 
 
-def resolve_instance_name(provider_result: dict) -> Optional[str]:
+def resolve_instance_name(provider_result: dict) -> str | None:
     plan = provider_result.get("plan") or {}
     instance_name = plan.get("instance_name")
     if instance_name:
@@ -100,24 +99,26 @@ def guest_transport(provider_result: dict) -> str:
     return "unavailable"
 
 
-def guest_ref(provider_result: dict) -> Optional[str]:
+def guest_ref(provider_result: dict) -> str | None:
     return resolve_container_id(provider_result) or resolve_instance_name(provider_result)
 
 
 def run_in_guest(
     provider_result: dict,
-    argv: List[str],
+    argv: list[str],
     *,
     timeout_sec: int = 90,
-    stdin_text: Optional[str] = None,
-) -> Tuple[int, str, str]:
+    stdin_text: str | None = None,
+) -> tuple[int, str, str]:
     """Run argv inside whichever guest type the provider result references."""
     container_id = resolve_container_id(provider_result)
     if container_id:
         return run_in_container(container_id, argv, timeout_sec=timeout_sec, stdin_text=stdin_text)
     instance_name = resolve_instance_name(provider_result)
     if instance_name:
-        return run_in_lima_guest(instance_name, argv, timeout_sec=timeout_sec, stdin_text=stdin_text)
+        return run_in_lima_guest(
+            instance_name, argv, timeout_sec=timeout_sec, stdin_text=stdin_text
+        )
     return 1, "", "guest_unavailable"
 
 

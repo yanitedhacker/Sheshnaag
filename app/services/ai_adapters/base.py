@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Protocol, runtime_checkable
-
+from collections.abc import Iterable, Iterator
+from typing import Any, Protocol, runtime_checkable
 
 # -- Canonical streaming event shapes -----------------------------------------
 #
@@ -29,10 +29,10 @@ class NativeAIAdapter(Protocol):
 
     provider_key: str
     display_name: str
-    capabilities: List[str]
+    capabilities: list[str]
     model_label: str
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         """Report configuration + reachability status (read-only).
 
         Must return at minimum: status, healthy, model, missing_configuration.
@@ -45,17 +45,18 @@ class NativeAIAdapter(Protocol):
         *,
         capability: str,
         prompt: str,
-        grounding: Dict[str, Any],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        cache_key: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
+        grounding: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        cache_key: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         """Stream adapter events. See module docstring for event shapes."""
         ...
 
 
 # -- Shared helpers -----------------------------------------------------------
 
-def format_grounding_system_prompt(grounding: Dict[str, Any]) -> str:
+
+def format_grounding_system_prompt(grounding: dict[str, Any]) -> str:
     """Render a grounding bundle as a system-prompt preamble.
 
     All adapters use this to enforce the grounded-only contract without
@@ -82,7 +83,7 @@ def format_grounding_system_prompt(grounding: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def collect_stream(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+def collect_stream(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Consume a stream of adapter events into an aggregated result.
 
     Returns a dict:
@@ -94,23 +95,25 @@ def collect_stream(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
           "errors": [...],
         }
     """
-    text_parts: List[str] = []
-    tool_uses: List[Dict[str, Any]] = []
-    errors: List[str] = []
+    text_parts: list[str] = []
+    tool_uses: list[dict[str, Any]] = []
+    errors: list[str] = []
     stop_reason = "end_turn"
-    usage: Dict[str, Any] = {}
-    metadata: Dict[str, Any] = {}
+    usage: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
 
     for ev in events:
         etype = ev.get("type")
         if etype == "text_delta":
             text_parts.append(str(ev.get("text", "")))
         elif etype == "tool_use":
-            tool_uses.append({
-                "tool_use_id": ev.get("tool_use_id"),
-                "name": ev.get("name"),
-                "input": ev.get("input", {}),
-            })
+            tool_uses.append(
+                {
+                    "tool_use_id": ev.get("tool_use_id"),
+                    "name": ev.get("name"),
+                    "input": ev.get("input", {}),
+                }
+            )
         elif etype == "message_stop":
             stop_reason = ev.get("stop_reason", stop_reason)
             if ev.get("usage"):

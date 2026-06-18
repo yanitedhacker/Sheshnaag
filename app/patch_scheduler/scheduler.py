@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.patch import AssetPatch, Patch
 from app.models.ops import PatchDependency
+from app.models.patch import AssetPatch
 from app.patch_optimizer.engine import PatchDecisionResult, PatchOptimizer
 from app.patch_scheduler.constraints import SchedulingConstraints
 
@@ -16,7 +15,7 @@ from app.patch_scheduler.constraints import SchedulingConstraints
 @dataclass(frozen=True)
 class ScheduledWindow:
     window: str
-    patches: List[str]
+    patches: list[str]
     total_downtime: int
     risk_reduction: float
 
@@ -34,13 +33,13 @@ class PatchScheduler:
         self.session = session
         self.optimizer = PatchOptimizer(session)
 
-    def propose_schedule(self, constraints: SchedulingConstraints) -> Dict[str, List[dict]]:
+    def propose_schedule(self, constraints: SchedulingConstraints) -> dict[str, list[dict]]:
         decisions = self.optimizer.compute_decisions()
 
         # Build patch -> downtime and patch -> suggested window set
-        patch_windows: Dict[str, Optional[str]] = {}
-        patch_downtime: Dict[str, int] = {}
-        patch_reboot_group: Dict[str, Optional[str]] = {}
+        patch_windows: dict[str, str | None] = {}
+        patch_downtime: dict[str, int] = {}
+        patch_reboot_group: dict[str, str | None] = {}
         for ap in self.session.query(AssetPatch).all():
             if ap.patch_id not in patch_windows and ap.maintenance_window:
                 patch_windows[ap.patch_id] = ap.maintenance_window
@@ -55,7 +54,7 @@ class PatchScheduler:
         candidates = [d for d in decisions if d.decision in ("PATCH_NOW", "SCHEDULE")]
 
         # Group by window
-        buckets: Dict[str, List[PatchDecisionResult]] = {}
+        buckets: dict[str, list[PatchDecisionResult]] = {}
         for d in candidates:
             w = patch_windows.get(d.patch_id) or "UNASSIGNED"
             if constraints.allowed_windows and w not in constraints.allowed_windows:
@@ -63,7 +62,7 @@ class PatchScheduler:
             buckets.setdefault(w, []).append(d)
 
         dependencies = self._load_dependencies()
-        scheduled: List[ScheduledWindow] = []
+        scheduled: list[ScheduledWindow] = []
         for window, items in buckets.items():
             selected, total_dt, total_rr = self._solve_window(
                 items=items,
@@ -90,18 +89,18 @@ class PatchScheduler:
             "schedule": [asdict(w) for w in scheduled],
         }
 
-    def _load_dependencies(self) -> List[PatchDependency]:
+    def _load_dependencies(self) -> list[PatchDependency]:
         return self.session.query(PatchDependency).all()
 
     def _solve_window(
         self,
         *,
-        items: List[PatchDecisionResult],
-        patch_downtime: Dict[str, int],
-        patch_reboot_group: Dict[str, Optional[str]],
-        dependencies: List[PatchDependency],
+        items: list[PatchDecisionResult],
+        patch_downtime: dict[str, int],
+        patch_reboot_group: dict[str, str | None],
+        dependencies: list[PatchDependency],
         constraints: SchedulingConstraints,
-    ) -> Tuple[List[str], int, float]:
+    ) -> tuple[list[str], int, float]:
         """
         Optimize patch selection using OR-Tools if available; fallback to greedy.
         """
@@ -119,7 +118,12 @@ class PatchScheduler:
         x = {pid: solver.BoolVar(pid) for pid in patch_ids}
 
         # Objective: maximize total expected risk reduction
-        solver.Maximize(solver.Sum(x[pid] * float(next(i.expected_risk_reduction for i in items if i.patch_id == pid)) for pid in patch_ids))
+        solver.Maximize(
+            solver.Sum(
+                x[pid] * float(next(i.expected_risk_reduction for i in items if i.patch_id == pid))
+                for pid in patch_ids
+            )
+        )
 
         # Downtime budget
         solver.Add(
@@ -142,7 +146,7 @@ class PatchScheduler:
                     solver.Add(x[patch_id] + x[depends_on_patch_id] <= 1)
 
         # Reboot group constraint: avoid more than 1 per group per window
-        group_map: Dict[str, List[str]] = {}
+        group_map: dict[str, list[str]] = {}
         for pid in patch_ids:
             group = patch_reboot_group.get(pid)
             if group:
@@ -154,7 +158,7 @@ class PatchScheduler:
         if status != pywraplp.Solver.OPTIMAL:
             return self._greedy_select(items, patch_downtime, constraints)
 
-        selected: List[str] = []
+        selected: list[str] = []
         total_dt = 0
         total_rr = 0.0
         for item in items:
@@ -167,10 +171,10 @@ class PatchScheduler:
 
     def _greedy_select(
         self,
-        items: List[PatchDecisionResult],
-        patch_downtime: Dict[str, int],
+        items: list[PatchDecisionResult],
+        patch_downtime: dict[str, int],
         constraints: SchedulingConstraints,
-    ) -> Tuple[List[str], int, float]:
+    ) -> tuple[list[str], int, float]:
         # Greedy by risk_reduction per downtime
         def ratio(x: PatchDecisionResult) -> float:
             dt = max(1, patch_downtime.get(x.patch_id, 1))
@@ -180,7 +184,7 @@ class PatchScheduler:
 
         total_dt = 0
         total_rr = 0.0
-        selected: List[str] = []
+        selected: list[str] = []
 
         for item in items_sorted:
             if len(selected) >= constraints.team_capacity:

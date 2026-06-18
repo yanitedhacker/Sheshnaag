@@ -25,4 +25,3 @@ def test_cve_search_endpoint(wait_for_lab_api, lab_httpx_client):
     data = r.json()
     assert "results" in data
     assert data["page_size"] == 5
-

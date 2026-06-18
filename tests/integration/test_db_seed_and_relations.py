@@ -20,4 +20,3 @@ def test_seed_created_patches_and_mappings(wait_for_lab_api, lab_httpx_client):
             break
 
     assert found
-

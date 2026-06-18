@@ -17,7 +17,7 @@ from app.lab.ebpf_tracer import EbpfTracer
 class FakeProcess:
     """Minimal stand-in for subprocess.Popen used by EbpfTracer."""
 
-    def __init__(self, events_path: str, events: List[Dict[str, Any]]) -> None:
+    def __init__(self, events_path: str, events: list[dict[str, Any]]) -> None:
         self._events_path = events_path
         self._events = events
         self._emitted = False
@@ -153,7 +153,7 @@ def test_start_stop_roundtrip_tetragon(monkeypatch):
         },
     ]
 
-    captured_argv: List[List[str]] = []
+    captured_argv: list[list[str]] = []
 
     def fake_popen(argv, stdout, stderr, start_new_session):
         captured_argv.append(list(argv))

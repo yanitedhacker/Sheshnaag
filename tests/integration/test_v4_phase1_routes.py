@@ -13,7 +13,6 @@ from app.api.routes.capability_routes import router as capability_router
 from app.api.routes.ops_routes import router as ops_router
 from app.core.database import Base, get_sync_session
 
-
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -88,11 +87,15 @@ def test_authorization_lifecycle_and_capability_check(monkeypatch):
     assert verify.status_code == 200
     assert verify.json()["ok"] is True
 
-    approved = client.post(f"/api/v4/authorization/{artifact_id}/approve", json={"reviewer": "reviewer"})
+    approved = client.post(
+        f"/api/v4/authorization/{artifact_id}/approve", json={"reviewer": "reviewer"}
+    )
     assert approved.status_code == 200
     assert approved.json()["approval_status"] == "already_issued"
 
-    revoked = client.post(f"/api/v4/authorization/{artifact_id}/revoke", json={"actor": "reviewer", "reason": "done"})
+    revoked = client.post(
+        f"/api/v4/authorization/{artifact_id}/revoke", json={"actor": "reviewer", "reason": "done"}
+    )
     assert revoked.status_code == 200
     assert revoked.json() == {"artifact_id": artifact_id, "revoked": True}
 
@@ -104,5 +107,7 @@ def test_ops_health_shape():
     assert body["api"] == "ok"
     assert body["db"] == "ok"
     assert "redis" in body
-    assert {"nft", "dnsmasq", "inetsim", "virsh", "limactl", "vol", "zeek", "tetragon"}.issubset(body["lab_deps"])
+    assert {"nft", "dnsmasq", "inetsim", "virsh", "limactl", "vol", "zeek", "tetragon"}.issubset(
+        body["lab_deps"]
+    )
     assert "openai" in body["ai_providers"]

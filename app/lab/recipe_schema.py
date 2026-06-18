@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-KNOWN_COLLECTORS: FrozenSet[str] = frozenset(
+KNOWN_COLLECTORS: frozenset[str] = frozenset(
     {
         "process_tree",
         "package_inventory",
@@ -31,11 +32,13 @@ KNOWN_COLLECTORS: FrozenSet[str] = frozenset(
     }
 )
 
-VALID_PROVIDERS: FrozenSet[str] = frozenset({"docker_kali", "lima"})
-VALID_IMAGE_PROFILES: FrozenSet[str] = frozenset({"baseline", "osquery_capable", "tracee_capable", "secure_lima"})
-VALID_LAUNCH_MODES: FrozenSet[str] = frozenset({"dry_run", "simulated", "execute"})
+VALID_PROVIDERS: frozenset[str] = frozenset({"docker_kali", "lima"})
+VALID_IMAGE_PROFILES: frozenset[str] = frozenset(
+    {"baseline", "osquery_capable", "tracee_capable", "secure_lima"}
+)
+VALID_LAUNCH_MODES: frozenset[str] = frozenset({"dry_run", "simulated", "execute"})
 
-VALID_TEARDOWN_MODES: FrozenSet[str] = frozenset(
+VALID_TEARDOWN_MODES: frozenset[str] = frozenset(
     {
         "destroy_immediately",
         "retain_exports_only",
@@ -43,11 +46,11 @@ VALID_TEARDOWN_MODES: FrozenSet[str] = frozenset(
     }
 )
 
-VALID_WORKSPACE_RETENTION: FrozenSet[str] = frozenset(VALID_TEARDOWN_MODES)
+VALID_WORKSPACE_RETENTION: frozenset[str] = frozenset(VALID_TEARDOWN_MODES)
 
-VALID_RISK_LEVELS: FrozenSet[str] = frozenset({"standard", "sensitive", "high"})
+VALID_RISK_LEVELS: frozenset[str] = frozenset({"standard", "sensitive", "high"})
 
-DANGEROUS_CAPABILITIES: FrozenSet[str] = frozenset(
+DANGEROUS_CAPABILITIES: frozenset[str] = frozenset(
     {
         "SYS_ADMIN",
         "NET_RAW",
@@ -60,7 +63,7 @@ DANGEROUS_CAPABILITIES: FrozenSet[str] = frozenset(
     }
 )
 
-RESTRICTED_CAPABILITIES_FOR_SIGNOFF: FrozenSet[str] = frozenset(
+RESTRICTED_CAPABILITIES_FOR_SIGNOFF: frozenset[str] = frozenset(
     {
         "SYS_ADMIN",
         "NET_RAW",
@@ -71,7 +74,7 @@ RESTRICTED_CAPABILITIES_FOR_SIGNOFF: FrozenSet[str] = frozenset(
     }
 )
 
-POLICY_RELEVANT_PREFIXES: Tuple[str, ...] = (
+POLICY_RELEVANT_PREFIXES: tuple[str, ...] = (
     "provider",
     "image_profile",
     "execution_policy",
@@ -86,9 +89,9 @@ POLICY_RELEVANT_PREFIXES: Tuple[str, ...] = (
     "user",
 )
 
-DEFAULT_ALLOWED_HOST_PATH_ROOTS: FrozenSet[str] = frozenset({"/tmp", "/var/tmp"})
+DEFAULT_ALLOWED_HOST_PATH_ROOTS: frozenset[str] = frozenset({"/tmp", "/var/tmp"})
 
-BLOCKED_HOST_PATHS: FrozenSet[str] = frozenset(
+BLOCKED_HOST_PATHS: frozenset[str] = frozenset(
     {
         "/",
         "/run/docker.sock",
@@ -96,7 +99,7 @@ BLOCKED_HOST_PATHS: FrozenSet[str] = frozenset(
     }
 )
 
-BLOCKED_HOST_PREFIXES: Tuple[str, ...] = (
+BLOCKED_HOST_PREFIXES: tuple[str, ...] = (
     "/Applications",
     "/Library",
     "/System",
@@ -125,27 +128,27 @@ BLOCKED_HOST_PREFIXES: Tuple[str, ...] = (
 @dataclass
 class ValidationResult:
     valid: bool
-    errors: List[str]
-    warnings: List[str]
+    errors: list[str]
+    warnings: list[str]
 
 
 @dataclass
 class LintResult:
-    errors: List[str]
-    warnings: List[str]
+    errors: list[str]
+    warnings: list[str]
     has_blocking_errors: bool
 
 
 @dataclass
 class RecipeDiff:
-    changes: List[Dict[str, Any]]
-    policy_changes: List[Dict[str, Any]]
+    changes: list[dict[str, Any]]
+    policy_changes: list[dict[str, Any]]
     risk_level_changed: bool
     collector_changes: bool
     network_changes: bool
     human_readable: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Machine-readable summary of the diff."""
         return {
             "changes": list(self.changes),
@@ -160,8 +163,8 @@ class RecipeDiff:
 @dataclass
 class SignOffRequirement:
     required_approvals: int
-    restricted_caps_present: List[str]
-    eligible_roles: List[str]
+    restricted_caps_present: list[str]
+    eligible_roles: list[str]
     acknowledgement_text: str
 
 
@@ -187,10 +190,10 @@ def _stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
-def _normalize_str_list(items: Any, label: str) -> Tuple[Optional[List[str]], Optional[str]]:
+def _normalize_str_list(items: Any, label: str) -> tuple[list[str] | None, str | None]:
     if not isinstance(items, list):
         return None, f"{label} must be a list"
-    out: List[str] = []
+    out: list[str] = []
     for i, item in enumerate(items):
         if not isinstance(item, str):
             return None, f"{label}[{i}] must be a string"
@@ -202,13 +205,9 @@ def _normalized_host_path(value: str) -> str:
     return os.path.normpath(value.strip())
 
 
-def _allowed_host_roots() -> FrozenSet[str]:
+def _allowed_host_roots() -> frozenset[str]:
     configured = os.environ.get("SHESHNAAG_ALLOWED_HOST_PATH_ROOTS", "")
-    roots = {
-        _normalized_host_path(root)
-        for root in configured.split(",")
-        if root.strip()
-    }
+    roots = {_normalized_host_path(root) for root in configured.split(",") if root.strip()}
     return frozenset(DEFAULT_ALLOWED_HOST_PATH_ROOTS | roots)
 
 
@@ -219,7 +218,7 @@ def _path_within_root(path: str, root: str) -> bool:
         return False
 
 
-def _validate_allowed_host_path(path_value: Any, label: str) -> Optional[str]:
+def _validate_allowed_host_path(path_value: Any, label: str) -> str | None:
     if not isinstance(path_value, str):
         return f"{label} must be a string path"
 
@@ -249,11 +248,13 @@ class RecipeSchemaValidator:
     """Blocking schema checks for recipe content dicts."""
 
     def validate(self, content: Mapping[str, Any]) -> ValidationResult:
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
 
         if not isinstance(content, Mapping):
-            return ValidationResult(valid=False, errors=["Recipe content must be a mapping"], warnings=[])
+            return ValidationResult(
+                valid=False, errors=["Recipe content must be a mapping"], warnings=[]
+            )
 
         # base_image
         bi = content.get("base_image")
@@ -269,14 +270,18 @@ class RecipeSchemaValidator:
             if not isinstance(provider, str):
                 errors.append("'provider' must be a string when present")
             elif provider not in VALID_PROVIDERS:
-                errors.append(f"Invalid provider {provider!r}; must be one of {sorted(VALID_PROVIDERS)}")
+                errors.append(
+                    f"Invalid provider {provider!r}; must be one of {sorted(VALID_PROVIDERS)}"
+                )
 
         image_profile = content.get("image_profile")
         if image_profile is not None:
             if not isinstance(image_profile, str):
                 errors.append("'image_profile' must be a string when present")
             elif image_profile not in VALID_IMAGE_PROFILES:
-                errors.append(f"Invalid image_profile {image_profile!r}; must be one of {sorted(VALID_IMAGE_PROFILES)}")
+                errors.append(
+                    f"Invalid image_profile {image_profile!r}; must be one of {sorted(VALID_IMAGE_PROFILES)}"
+                )
 
         # command
         cmd = content.get("command")
@@ -308,7 +313,9 @@ class RecipeSchemaValidator:
                 else:
                     for i, h in enumerate(hosts):
                         if not isinstance(h, str):
-                            errors.append(f"'network_policy.allow_egress_hosts[{i}]' must be a string")
+                            errors.append(
+                                f"'network_policy.allow_egress_hosts[{i}]' must be a string"
+                            )
                             break
 
         # collectors
@@ -335,7 +342,9 @@ class RecipeSchemaValidator:
             if "pcap" in seen and provider != "lima":
                 errors.append("Collector 'pcap' is restricted to secure-mode Lima recipes.")
             if "tracee_events" in seen and image_profile not in (None, "tracee_capable"):
-                warnings.append("tracee_events is most reliable with image_profile='tracee_capable'.")
+                warnings.append(
+                    "tracee_events is most reliable with image_profile='tracee_capable'."
+                )
 
         # teardown_policy
         tp = content.get("teardown_policy")
@@ -353,7 +362,9 @@ class RecipeSchemaValidator:
                 )
             ew = tp.get("ephemeral_workspace")
             if ew is not None and not isinstance(ew, bool):
-                errors.append("'teardown_policy.ephemeral_workspace' must be a boolean when present")
+                errors.append(
+                    "'teardown_policy.ephemeral_workspace' must be a boolean when present"
+                )
 
         # risk_level & requires_acknowledgement
         rl = content.get("risk_level")
@@ -368,9 +379,7 @@ class RecipeSchemaValidator:
 
         if rl in ("sensitive", "high"):
             if ra is not True:
-                errors.append(
-                    f"risk_level {rl!r} requires 'requires_acknowledgement' to be True"
-                )
+                errors.append(f"risk_level {rl!r} requires 'requires_acknowledgement' to be True")
 
         execution_policy = content.get("execution_policy")
         secure_mode_required = False
@@ -387,7 +396,9 @@ class RecipeSchemaValidator:
                 allowed_modes = execution_policy.get("allowed_modes")
                 if allowed_modes is not None:
                     if not isinstance(allowed_modes, list):
-                        errors.append("'execution_policy.allowed_modes' must be a list when present")
+                        errors.append(
+                            "'execution_policy.allowed_modes' must be a list when present"
+                        )
                     else:
                         for i, mode in enumerate(allowed_modes):
                             if mode not in VALID_LAUNCH_MODES:
@@ -397,7 +408,9 @@ class RecipeSchemaValidator:
                 if "secure_mode_required" in execution_policy and not isinstance(
                     execution_policy.get("secure_mode_required"), bool
                 ):
-                    errors.append("'execution_policy.secure_mode_required' must be a boolean when present")
+                    errors.append(
+                        "'execution_policy.secure_mode_required' must be a boolean when present"
+                    )
 
         if secure_mode_required and provider != "lima":
             errors.append("secure-mode-required recipes must use provider 'lima'")
@@ -418,12 +431,16 @@ class RecipeSchemaValidator:
                     if "source" not in m:
                         errors.append(f"'mounts[{i}]' missing required key 'source'")
                     else:
-                        mount_err = _validate_allowed_host_path(m.get("source"), f"'mounts[{i}].source'")
+                        mount_err = _validate_allowed_host_path(
+                            m.get("source"), f"'mounts[{i}].source'"
+                        )
                         if mount_err:
                             errors.append(mount_err)
                     if "target" not in m:
                         errors.append(f"'mounts[{i}]' missing required key 'target'")
-                    elif not isinstance(m.get("target"), str) or not str(m.get("target")).startswith("/"):
+                    elif not isinstance(m.get("target"), str) or not str(
+                        m.get("target")
+                    ).startswith("/"):
                         errors.append(f"'mounts[{i}].target' must be an absolute container path")
                     read_only = m.get("read_only", True)
                     if not isinstance(read_only, bool):
@@ -445,7 +462,9 @@ class RecipeSchemaValidator:
         artifact_inputs = content.get("artifact_inputs", content.get("input_artifacts"))
         if artifact_inputs is not None:
             if not isinstance(artifact_inputs, list):
-                errors.append("'artifact_inputs' must be a list of input artifact objects when present")
+                errors.append(
+                    "'artifact_inputs' must be a list of input artifact objects when present"
+                )
             else:
                 for i, artifact in enumerate(artifact_inputs):
                     if not isinstance(artifact, dict):
@@ -497,7 +516,9 @@ class RecipeSchemaValidator:
         fmb = content.get("file_manifest_baseline")
         if fmb is not None:
             if not isinstance(fmb, list):
-                errors.append("'file_manifest_baseline' must be a list of path strings when present")
+                errors.append(
+                    "'file_manifest_baseline' must be a list of path strings when present"
+                )
             else:
                 for i, p in enumerate(fmb):
                     if not isinstance(p, str):
@@ -548,12 +569,12 @@ class RecipeSchemaValidator:
 class RecipeLinter:
     """Non-schema lint rules: risky configs, combinations, and policy hints."""
 
-    def __init__(self, expected_distro: Optional[str] = None) -> None:
+    def __init__(self, expected_distro: str | None = None) -> None:
         self.expected_distro = (expected_distro or "").strip().lower() or None
 
     def lint(self, content: Mapping[str, Any]) -> LintResult:
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
 
         bi = content.get("base_image")
         if bi is None or (isinstance(bi, str) and not bi.strip()):
@@ -578,7 +599,9 @@ class RecipeLinter:
             names = [c for c in coll if isinstance(c, str)]
             name_set = set(names)
             if len(names) != len(name_set):
-                warnings.append("Collectors list contains duplicates; dedupe for predictable telemetry")
+                warnings.append(
+                    "Collectors list contains duplicates; dedupe for predictable telemetry"
+                )
             if "tracee_events" in name_set and "process_tree" not in name_set:
                 warnings.append(
                     "Collector combination: 'tracee_events' without 'process_tree' may miss baseline process context"
@@ -587,7 +610,10 @@ class RecipeLinter:
                 warnings.append(
                     "Collector combination: 'network_metadata' without 'file_diff' limits filesystem drift correlation"
                 )
-            if "tracee_events" in name_set and content.get("image_profile") not in (None, "tracee_capable"):
+            if "tracee_events" in name_set and content.get("image_profile") not in (
+                None,
+                "tracee_capable",
+            ):
                 warnings.append("Tracee support should use image_profile='tracee_capable'.")
             if "pcap" in name_set and content.get("provider", "docker_kali") != "lima":
                 errors.append("PCAP is restricted to secure-mode Lima recipes.")
@@ -603,7 +629,9 @@ class RecipeLinter:
                 warnings.append(
                     f"Template/distro mismatch: expected Ubuntu-related image, got {bi!r}"
                 )
-            elif self.expected_distro == "debian" and "debian" not in img_l and "ubuntu" not in img_l:
+            elif (
+                self.expected_distro == "debian" and "debian" not in img_l and "ubuntu" not in img_l
+            ):
                 warnings.append(
                     f"Template/distro mismatch: expected Debian-family image, got {bi!r}"
                 )
@@ -640,8 +668,13 @@ class RecipeLinter:
 
         execution_policy = content.get("execution_policy")
         if isinstance(execution_policy, dict):
-            if execution_policy.get("secure_mode_required") is True and content.get("provider", "docker_kali") != "lima":
-                errors.append("Secure-mode-required execution policy conflicts with a non-Lima provider.")
+            if (
+                execution_policy.get("secure_mode_required") is True
+                and content.get("provider", "docker_kali") != "lima"
+            ):
+                errors.append(
+                    "Secure-mode-required execution policy conflicts with a non-Lima provider."
+                )
 
         has_blocking_errors = len(errors) > 0
         return LintResult(errors=errors, warnings=warnings, has_blocking_errors=has_blocking_errors)
@@ -655,7 +688,7 @@ class RecipeLinter:
 class RecipeDiffEngine:
     """Field-level diff between two recipe content revisions."""
 
-    _TOP_KEYS: Tuple[str, ...] = (
+    _TOP_KEYS: tuple[str, ...] = (
         "base_image",
         "provider",
         "image_profile",
@@ -674,7 +707,7 @@ class RecipeDiffEngine:
     )
 
     def diff(self, old_content: Mapping[str, Any], new_content: Mapping[str, Any]) -> RecipeDiff:
-        changes: List[Dict[str, Any]] = []
+        changes: list[dict[str, Any]] = []
 
         def add_change(path: str, old_v: Any, new_v: Any) -> None:
             pr = _is_policy_field(path)
@@ -709,14 +742,20 @@ class RecipeDiffEngine:
             else:
                 if old_v != new_v:
                     if _stable_json(old_v) != _stable_json(new_v):
-                        add_change(key, old_v if old_v is not _MISSING else None, new_v if new_v is not _MISSING else None)
+                        add_change(
+                            key,
+                            old_v if old_v is not _MISSING else None,
+                            new_v if new_v is not _MISSING else None,
+                        )
 
         policy_changes = [c for c in changes if c.get("is_policy_relevant")]
         risk_level_changed = any(c["field"] == "risk_level" for c in changes)
         collector_changes = any(c["field"] == "collectors" for c in changes)
         network_changes = any(c["field"].startswith("network_policy") for c in changes)
 
-        human = self._render_markdown(changes, policy_changes, risk_level_changed, collector_changes, network_changes)
+        human = self._render_markdown(
+            changes, policy_changes, risk_level_changed, collector_changes, network_changes
+        )
 
         return RecipeDiff(
             changes=changes,
@@ -732,7 +771,7 @@ class RecipeDiffEngine:
         prefix: str,
         old_v: Any,
         new_v: Any,
-        keys: FrozenSet[str],
+        keys: frozenset[str],
         add_change,
     ) -> None:
         if not isinstance(old_v, dict) and old_v is not _MISSING:
@@ -746,7 +785,11 @@ class RecipeDiffEngine:
         for k in sorted(keys | set(od.keys()) | set(nd.keys())):
             o, n = od.get(k, _MISSING), nd.get(k, _MISSING)
             if o != n and _stable_json(o) != _stable_json(n):
-                add_change(f"{prefix}.{k}", o if o is not _MISSING else None, n if n is not _MISSING else None)
+                add_change(
+                    f"{prefix}.{k}",
+                    o if o is not _MISSING else None,
+                    n if n is not _MISSING else None,
+                )
 
     def _diff_sequence(self, key: str, old_v: Any, new_v: Any, add_change) -> None:
         o_list = old_v if isinstance(old_v, list) else ([] if old_v is _MISSING else old_v)
@@ -758,7 +801,11 @@ class RecipeDiffEngine:
             add_change(key, old_v, new_v)
             return
         if o_list != n_list:
-            add_change(key, o_list if old_v is not _MISSING else None, n_list if new_v is not _MISSING else None)
+            add_change(
+                key,
+                o_list if old_v is not _MISSING else None,
+                n_list if new_v is not _MISSING else None,
+            )
 
     def _diff_mounts(self, old_v: Any, new_v: Any, add_change) -> None:
         if old_v == new_v:
@@ -772,17 +819,21 @@ class RecipeDiffEngine:
         ol = old_v if isinstance(old_v, list) else []
         nl = new_v if isinstance(new_v, list) else []
         if ol != nl:
-            add_change("mounts", ol if old_v is not _MISSING else None, nl if new_v is not _MISSING else None)
+            add_change(
+                "mounts",
+                ol if old_v is not _MISSING else None,
+                nl if new_v is not _MISSING else None,
+            )
 
     def _render_markdown(
         self,
-        changes: List[Dict[str, Any]],
-        policy_changes: List[Dict[str, Any]],
+        changes: list[dict[str, Any]],
+        policy_changes: list[dict[str, Any]],
         risk_level_changed: bool,
         collector_changes: bool,
         network_changes: bool,
     ) -> str:
-        lines: List[str] = ["## Recipe revision diff", ""]
+        lines: list[str] = ["## Recipe revision diff", ""]
         lines.append("### Summary")
         lines.append(f"- **Risk level changed:** {'yes' if risk_level_changed else 'no'}")
         lines.append(f"- **Collectors changed:** {'yes' if collector_changes else 'no'}")
@@ -795,9 +846,7 @@ class RecipeDiffEngine:
             lines.append("_None_")
         else:
             for c in policy_changes:
-                lines.append(
-                    f"- **`{c['field']}`:** `{c['old_value']!r}` → `{c['new_value']!r}`"
-                )
+                lines.append(f"- **`{c['field']}`:** `{c['old_value']!r}` → `{c['new_value']!r}`")
         lines.append("")
         lines.append("### All changes")
         if not changes:
@@ -832,43 +881,45 @@ class SignOffPolicy:
     role eligibility (high risk), and optional acknowledgement ledger.
     """
 
-    APPROVALS_BY_RISK: Dict[str, int] = {"standard": 1, "sensitive": 1, "high": 2}
+    APPROVALS_BY_RISK: dict[str, int] = {"standard": 1, "sensitive": 1, "high": 2}
 
-    HIGH_RISK_ELIGIBLE_ROLES: Tuple[str, ...] = ("lead", "security")
-    DEFAULT_ELIGIBLE_ROLES: Tuple[str, ...] = ("lead", "security", "researcher")
+    HIGH_RISK_ELIGIBLE_ROLES: tuple[str, ...] = ("lead", "security")
+    DEFAULT_ELIGIBLE_ROLES: tuple[str, ...] = ("lead", "security", "researcher")
 
     EXTRA_APPROVALS_FOR_RESTRICTED_CAP: int = 1
 
     def __init__(self) -> None:
-        self._approvals_by_risk: Dict[str, int] = dict(SignOffPolicy.APPROVALS_BY_RISK)
-        self._acknowledgements: List[AcknowledgementRecord] = []
+        self._approvals_by_risk: dict[str, int] = dict(SignOffPolicy.APPROVALS_BY_RISK)
+        self._acknowledgements: list[AcknowledgementRecord] = []
 
     @property
-    def restricted_capabilities(self) -> FrozenSet[str]:
+    def restricted_capabilities(self) -> frozenset[str]:
         return RESTRICTED_CAPABILITIES_FOR_SIGNOFF
 
     def register_acknowledgement(
         self,
         party: str,
         acknowledgement_text: str,
-        acknowledged_at: Optional[datetime] = None,
+        acknowledged_at: datetime | None = None,
     ) -> AcknowledgementRecord:
         """Record who acknowledged what and when (stored on this policy instance)."""
-        when = acknowledged_at or datetime.now(timezone.utc)
+        when = acknowledged_at or datetime.now(UTC)
         ts = when.isoformat().replace("+00:00", "Z")
-        rec = AcknowledgementRecord(party=party, acknowledgement_text=acknowledgement_text, acknowledged_at=ts)
+        rec = AcknowledgementRecord(
+            party=party, acknowledgement_text=acknowledgement_text, acknowledged_at=ts
+        )
         self._acknowledgements.append(rec)
         return rec
 
     @property
-    def acknowledgements(self) -> List[AcknowledgementRecord]:
+    def acknowledgements(self) -> list[AcknowledgementRecord]:
         return list(self._acknowledgements)
 
     def evaluate(
         self,
         risk_level: str,
-        capabilities: Optional[Sequence[str]] = None,
-        reviewer_role: Optional[str] = None,
+        capabilities: Sequence[str] | None = None,
+        reviewer_role: str | None = None,
     ) -> SignOffRequirement:
         """
         Compute required approvals, restricted caps hit, eligible reviewer roles,

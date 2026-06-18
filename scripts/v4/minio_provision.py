@@ -39,7 +39,9 @@ def main() -> int:
     secure = os.getenv("MINIO_SECURE", "false").lower() in {"1", "true", "yes"}
     region = os.getenv("MINIO_REGION", "us-east-1")
 
-    client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure, region=region)
+    client = Minio(
+        endpoint, access_key=access_key, secret_key=secret_key, secure=secure, region=region
+    )
 
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket, location=region)
@@ -68,7 +70,7 @@ def main() -> int:
     }
     try:
         client.set_bucket_policy(bucket, json.dumps(deny_public))
-        print(f"[minio_provision] bucket policy applied (deny insecure)")
+        print("[minio_provision] bucket policy applied (deny insecure)")
     except Exception as exc:
         print(f"[minio_provision] WARNING: failed to set bucket policy: {exc}", file=sys.stderr)
 

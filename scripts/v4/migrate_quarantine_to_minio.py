@@ -38,7 +38,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Migrate quarantine objects to MinIO")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep", action="store_true", help="Keep local copies after upload")
-    parser.add_argument("--root", default=os.getenv("OBJECT_STORE_LOCAL_DIR", "./data/object_store"))
+    parser.add_argument(
+        "--root", default=os.getenv("OBJECT_STORE_LOCAL_DIR", "./data/object_store")
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()

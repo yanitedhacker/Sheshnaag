@@ -1,6 +1,6 @@
 """Sheshnaag recipe APIs."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -14,41 +14,43 @@ router = APIRouter(prefix="/api/recipes", tags=["Sheshnaag Recipes"])
 
 
 class RecipeCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     candidate_id: int
     name: str
     objective: str
     created_by: str
-    content: Dict[str, Any] = Field(default_factory=dict)
+    content: dict[str, Any] = Field(default_factory=dict)
 
 
 class RecipeRevisionRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     updated_by: str
-    content: Dict[str, Any] = Field(default_factory=dict)
+    content: dict[str, Any] = Field(default_factory=dict)
 
 
 class RecipeApproveRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     reviewer: str
 
 
 class RecipeLintRequest(BaseModel):
-    content: Dict[str, Any] = Field(default_factory=dict)
-    expected_distro: Optional[str] = None
+    content: dict[str, Any] = Field(default_factory=dict)
+    expected_distro: str | None = None
 
 
 @router.get("")
 def list_recipes(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
     """List recipes."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return SheshnaagService(session).list_recipes(tenant)
 
 
@@ -63,7 +65,9 @@ def lint_recipe(request: RecipeLintRequest, session: Session = Depends(get_sync_
 @router.post("")
 def create_recipe(request: RecipeCreateRequest, session: Session = Depends(get_sync_session)):
     """Create a recipe and first revision."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).create_recipe(
             tenant,
@@ -80,12 +84,14 @@ def create_recipe(request: RecipeCreateRequest, session: Session = Depends(get_s
 @router.get("/{recipe_id}")
 def get_recipe(
     recipe_id: int,
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
     """Get a recipe with revisions."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     try:
         return SheshnaagService(session).get_recipe(tenant, recipe_id)
     except ValueError as exc:
@@ -97,12 +103,14 @@ def diff_recipe_revisions(
     recipe_id: int,
     old_revision: int = Query(...),
     new_revision: int = Query(...),
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
     """Diff two recipe revisions."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     try:
         return SheshnaagService(session).diff_recipe_revisions(
             tenant, recipe_id=recipe_id, old_revision=old_revision, new_revision=new_revision
@@ -112,9 +120,13 @@ def diff_recipe_revisions(
 
 
 @router.post("/{recipe_id}/revisions")
-def add_recipe_revision(recipe_id: int, request: RecipeRevisionRequest, session: Session = Depends(get_sync_session)):
+def add_recipe_revision(
+    recipe_id: int, request: RecipeRevisionRequest, session: Session = Depends(get_sync_session)
+):
     """Create a new recipe revision."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).add_recipe_revision(
             tenant,
@@ -134,7 +146,9 @@ def approve_recipe_revision(
     session: Session = Depends(get_sync_session),
 ):
     """Approve a recipe revision."""
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return SheshnaagService(session).approve_recipe_revision(
             tenant,

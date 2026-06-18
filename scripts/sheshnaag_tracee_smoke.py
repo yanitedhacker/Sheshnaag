@@ -33,7 +33,9 @@ def docker_ready() -> bool:
 
 def image_present(image: str) -> bool:
     try:
-        result = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(
+            ["docker", "image", "inspect", image], capture_output=True, text=True, timeout=15
+        )
         return result.returncode == 0
     except Exception:
         return False
@@ -46,7 +48,9 @@ def main() -> int:
 
     image = os.environ.get("SHESHNAAG_TRACEE_IMAGE", "sheshnaag-kali-tracee:2026.1")
     if not image_present(image):
-        print(f"SKIP: Tracee-capable image {image} is not present. Run scripts/build_sheshnaag_tracee_image.sh first.")
+        print(
+            f"SKIP: Tracee-capable image {image} is not present. Run scripts/build_sheshnaag_tracee_image.sh first."
+        )
         return 0
 
     engine = create_engine(
@@ -77,7 +81,9 @@ def main() -> int:
                 environment="production",
                 criticality="high",
                 business_criticality="high",
-                installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+                installed_software=[
+                    {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+                ],
             )
         )
         session.commit()
@@ -92,24 +98,37 @@ def main() -> int:
             created_by="Tracee Smoke",
             content={
                 "image_profile": "tracee_capable",
-                "command": ["bash", "-lc", "echo tracee-smoke > /workspace/tracee-smoke.txt && sleep 5"],
+                "command": [
+                    "bash",
+                    "-lc",
+                    "echo tracee-smoke > /workspace/tracee-smoke.txt && sleep 5",
+                ],
                 "network_policy": {"allow_egress_hosts": []},
                 "collectors": ["process_tree", "tracee_events", "file_diff"],
             },
         )
-        service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+        service.approve_recipe_revision(
+            tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+        )
         run = service.launch_run(
             tenant,
             recipe_id=recipe["id"],
             revision_number=1,
             analyst_name="Tracee Smoke",
-            workstation={"hostname": "tracee-smoke", "os_family": "macOS", "architecture": "arm64", "fingerprint": "tracee-smoke-fp"},
+            workstation={
+                "hostname": "tracee-smoke",
+                "os_family": "macOS",
+                "architecture": "arm64",
+                "fingerprint": "tracee-smoke-fp",
+            },
             launch_mode="execute",
             acknowledge_sensitive=False,
         )
 
         if run["state"] not in {"running", "completed"}:
-            raise RuntimeError(f"Tracee smoke failed: state={run['state']} transcript={run.get('run_transcript')}")
+            raise RuntimeError(
+                f"Tracee smoke failed: state={run['state']} transcript={run.get('run_transcript')}"
+            )
 
         evidence = service.list_evidence(tenant, run_id=run["id"])
         tracee_rows = [row for row in evidence["items"] if row["artifact_kind"] == "tracee_events"]

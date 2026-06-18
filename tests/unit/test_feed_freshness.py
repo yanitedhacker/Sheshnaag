@@ -32,6 +32,7 @@ def _make_session():
 # FeedSyncRun model creation
 # ------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_feed_sync_run_creation():
     session = _make_session()
@@ -81,6 +82,7 @@ def test_feed_sync_run_failed_with_error_summary():
 # ------------------------------------------------------------------
 # record_sync_run from ConnectorResult
 # ------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_record_sync_run_from_connector_result():
@@ -136,6 +138,7 @@ def test_record_sync_run_failed():
 # ------------------------------------------------------------------
 # Stale status detection
 # ------------------------------------------------------------------
+
 
 def _is_stale(last_synced_at: datetime | None, threshold_seconds: int) -> bool:
     """Reproduce the staleness logic used by the feed-status route."""

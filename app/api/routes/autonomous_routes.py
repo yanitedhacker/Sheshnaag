@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -28,21 +26,22 @@ def _actor_from_token(token_data: TokenData, fallback: str) -> str:
         return name
     return fallback
 
+
 router = APIRouter(prefix="/api/v4/autonomous", tags=["Sheshnaag V4 Autonomous"])
 
 # Process-level instance keeps the in-memory replay log. Callers that need
 # durability should persist the returned payload onto their own AISession or
 # AnalysisCase rows.
-_AGENT: Optional[AutonomousAgent] = None
+_AGENT: AutonomousAgent | None = None
 
 
 class AutonomousRunRequest(BaseModel):
     goal: str = Field(min_length=4, max_length=2000)
-    tenant_slug: Optional[str] = None
-    tenant_id: Optional[int] = None
-    case_id: Optional[int] = None
+    tenant_slug: str | None = None
+    tenant_id: int | None = None
+    case_id: int | None = None
     actor: str = "ui"
-    max_steps: Optional[int] = Field(default=None, ge=1, le=10)
+    max_steps: int | None = Field(default=None, ge=1, le=10)
 
 
 @router.post("/run")
@@ -74,8 +73,8 @@ def run_autonomous_agent(
 
 @router.get("/runs")
 def list_autonomous_runs(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — gate only
 ):

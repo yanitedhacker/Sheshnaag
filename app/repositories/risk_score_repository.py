@@ -8,14 +8,13 @@ eliminating code duplication across services.
 """
 
 import logging
-from datetime import datetime, timedelta
-from app.core.time import utc_now
-from typing import Dict, List, Optional
+from datetime import timedelta
 
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
-from app.models.risk_score import RiskScore, RiskHistory
+from app.core.time import utc_now
+from app.models.risk_score import RiskHistory, RiskScore
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ class RiskScoreRepository:
         """
         self.session = session
 
-    def get_latest_for_cve(self, cve_id: int) -> Optional[RiskScore]:
+    def get_latest_for_cve(self, cve_id: int) -> RiskScore | None:
         """
         Get the most recent risk score for a CVE.
 
@@ -47,11 +46,14 @@ class RiskScoreRepository:
         Returns:
             Latest RiskScore or None if not found
         """
-        return self.session.query(RiskScore).filter(
-            RiskScore.cve_id == cve_id
-        ).order_by(desc(RiskScore.created_at)).first()
+        return (
+            self.session.query(RiskScore)
+            .filter(RiskScore.cve_id == cve_id)
+            .order_by(desc(RiskScore.created_at))
+            .first()
+        )
 
-    def get_latest_for_cves(self, cve_ids: List[int]) -> Dict[int, RiskScore]:
+    def get_latest_for_cves(self, cve_ids: list[int]) -> dict[int, RiskScore]:
         """
         Get the most recent risk scores for multiple CVEs.
 
@@ -65,23 +67,22 @@ class RiskScoreRepository:
             return {}
 
         # Fetch all scores for the given CVEs, ordered by created_at desc
-        scores = self.session.query(RiskScore).filter(
-            RiskScore.cve_id.in_(cve_ids)
-        ).order_by(desc(RiskScore.created_at)).all()
+        scores = (
+            self.session.query(RiskScore)
+            .filter(RiskScore.cve_id.in_(cve_ids))
+            .order_by(desc(RiskScore.created_at))
+            .all()
+        )
 
         # Keep only the latest score per CVE
-        latest: Dict[int, RiskScore] = {}
+        latest: dict[int, RiskScore] = {}
         for score in scores:
             if score.cve_id not in latest:
                 latest[score.cve_id] = score
 
         return latest
 
-    def get_by_risk_level(
-        self,
-        risk_level: str,
-        limit: int = 100
-    ) -> List[RiskScore]:
+    def get_by_risk_level(self, risk_level: str, limit: int = 100) -> list[RiskScore]:
         """
         Get risk scores by risk level.
 
@@ -92,11 +93,15 @@ class RiskScoreRepository:
         Returns:
             List of RiskScore objects
         """
-        return self.session.query(RiskScore).filter(
-            RiskScore.risk_level == risk_level
-        ).order_by(desc(RiskScore.overall_score)).limit(limit).all()
+        return (
+            self.session.query(RiskScore)
+            .filter(RiskScore.risk_level == risk_level)
+            .order_by(desc(RiskScore.overall_score))
+            .limit(limit)
+            .all()
+        )
 
-    def get_top_scores(self, limit: int = 10) -> List[RiskScore]:
+    def get_top_scores(self, limit: int = 10) -> list[RiskScore]:
         """
         Get top risk scores ordered by overall score.
 
@@ -106,15 +111,11 @@ class RiskScoreRepository:
         Returns:
             List of RiskScore objects
         """
-        return self.session.query(RiskScore).order_by(
-            desc(RiskScore.overall_score)
-        ).limit(limit).all()
+        return (
+            self.session.query(RiskScore).order_by(desc(RiskScore.overall_score)).limit(limit).all()
+        )
 
-    def get_scores_needing_update(
-        self,
-        max_age_hours: int = 24,
-        limit: int = 500
-    ) -> List[int]:
+    def get_scores_needing_update(self, max_age_hours: int = 24, limit: int = 500) -> list[int]:
         """
         Get CVE IDs that need risk score recalculation.
 
@@ -125,39 +126,42 @@ class RiskScoreRepository:
         Returns:
             List of CVE IDs needing update
         """
+
         from app.models.cve import CVE
-        from sqlalchemy import or_
 
         cutoff = utc_now() - timedelta(hours=max_age_hours)
 
         # Find CVEs with no score or outdated score
-        subquery = self.session.query(RiskScore.cve_id).filter(
-            RiskScore.created_at >= cutoff
-        ).subquery()
+        subquery = (
+            self.session.query(RiskScore.cve_id).filter(RiskScore.created_at >= cutoff).subquery()
+        )
 
-        cve_ids = self.session.query(CVE.id).outerjoin(
-            subquery, CVE.id == subquery.c.cve_id
-        ).filter(
-            subquery.c.cve_id.is_(None)
-        ).limit(limit).all()
+        cve_ids = (
+            self.session.query(CVE.id)
+            .outerjoin(subquery, CVE.id == subquery.c.cve_id)
+            .filter(subquery.c.cve_id.is_(None))
+            .limit(limit)
+            .all()
+        )
 
         return [cve_id for (cve_id,) in cve_ids]
 
-    def get_risk_level_distribution(self) -> Dict[str, int]:
+    def get_risk_level_distribution(self) -> dict[str, int]:
         """
         Get count of CVEs by risk level.
 
         Returns:
             Dictionary mapping risk level to count
         """
-        counts = self.session.query(
-            RiskScore.risk_level,
-            func.count(RiskScore.id)
-        ).group_by(RiskScore.risk_level).all()
+        counts = (
+            self.session.query(RiskScore.risk_level, func.count(RiskScore.id))
+            .group_by(RiskScore.risk_level)
+            .all()
+        )
 
         return {level: count for level, count in counts}
 
-    def get_average_scores(self) -> Dict[str, float]:
+    def get_average_scores(self) -> dict[str, float]:
         """
         Get average scores across all CVEs.
 
@@ -165,13 +169,12 @@ class RiskScoreRepository:
             Dictionary with average overall_score and exploit_probability
         """
         result = self.session.query(
-            func.avg(RiskScore.overall_score),
-            func.avg(RiskScore.exploit_probability)
+            func.avg(RiskScore.overall_score), func.avg(RiskScore.exploit_probability)
         ).first()
 
         return {
             "average_overall_score": round(result[0] or 0, 2),
-            "average_exploit_probability": round(result[1] or 0, 4)
+            "average_exploit_probability": round(result[1] or 0, 4),
         }
 
     def create(self, risk_score: RiskScore) -> RiskScore:
@@ -194,7 +197,7 @@ class RiskScoreRepository:
         overall_score: float,
         risk_level: str,
         exploit_probability: float,
-        change_reason: str
+        change_reason: str,
     ) -> RiskHistory:
         """
         Record a risk score change in history.
@@ -214,16 +217,12 @@ class RiskScoreRepository:
             overall_score=overall_score,
             risk_level=risk_level,
             exploit_probability=exploit_probability,
-            change_reason=change_reason
+            change_reason=change_reason,
         )
         self.session.add(history)
         return history
 
-    def get_history(
-        self,
-        cve_id: int,
-        limit: int = 30
-    ) -> List[RiskHistory]:
+    def get_history(self, cve_id: int, limit: int = 30) -> list[RiskHistory]:
         """
         Get risk score history for a CVE.
 
@@ -234,14 +233,15 @@ class RiskScoreRepository:
         Returns:
             List of RiskHistory records
         """
-        return self.session.query(RiskHistory).filter(
-            RiskHistory.cve_id == cve_id
-        ).order_by(desc(RiskHistory.recorded_at)).limit(limit).all()
+        return (
+            self.session.query(RiskHistory)
+            .filter(RiskHistory.cve_id == cve_id)
+            .order_by(desc(RiskHistory.recorded_at))
+            .limit(limit)
+            .all()
+        )
 
-    def delete_old_scores(
-        self,
-        older_than_days: int = 90
-    ) -> int:
+    def delete_old_scores(self, older_than_days: int = 90) -> int:
         """
         Delete risk scores older than specified days.
 
@@ -257,9 +257,11 @@ class RiskScoreRepository:
 
         # Keep only the latest score per CVE
         # This is a soft cleanup - we don't delete the most recent score
-        deleted = self.session.query(RiskScore).filter(
-            RiskScore.created_at < cutoff
-        ).delete(synchronize_session=False)
+        deleted = (
+            self.session.query(RiskScore)
+            .filter(RiskScore.created_at < cutoff)
+            .delete(synchronize_session=False)
+        )
 
         logger.info(f"Deleted {deleted} old risk score records")
         return deleted

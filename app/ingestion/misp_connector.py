@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 import requests
 
@@ -22,25 +22,23 @@ logger = logging.getLogger(__name__)
 # IOC connector registry (parallel to FeedConnector's CVE-advisory registry)
 # ---------------------------------------------------------------------------
 
-_IOC_CONNECTOR_REGISTRY: Dict[str, type] = {}
+_IOC_CONNECTOR_REGISTRY: dict[str, type] = {}
 
 
 def register_ioc_connector(cls: type) -> type:
     """Class decorator that registers an IOC intel connector subclass."""
     if not getattr(cls, "name", None):
-        raise ValueError(
-            f"IOC connector {cls.__name__} must define a 'name' class attribute"
-        )
+        raise ValueError(f"IOC connector {cls.__name__} must define a 'name' class attribute")
     _IOC_CONNECTOR_REGISTRY[cls.name] = cls
     logger.debug("Registered IOC intel connector: %s", cls.name)
     return cls
 
 
-def get_ioc_connector(name: str) -> Optional[type]:
+def get_ioc_connector(name: str) -> type | None:
     return _IOC_CONNECTOR_REGISTRY.get(name)
 
 
-def get_registered_ioc_connectors() -> Dict[str, type]:
+def get_registered_ioc_connectors() -> dict[str, type]:
     return dict(_IOC_CONNECTOR_REGISTRY)
 
 
@@ -48,7 +46,7 @@ def get_registered_ioc_connectors() -> Dict[str, type]:
 # MISP attribute-type → normalized indicator_kind mapping
 # ---------------------------------------------------------------------------
 
-_MISP_TYPE_MAP: Dict[str, str] = {
+_MISP_TYPE_MAP: dict[str, str] = {
     "ip-src": "ip",
     "ip-dst": "ip",
     "ip-src|port": "ip",
@@ -80,9 +78,9 @@ def _map_indicator_kind(misp_type: str) -> str:
     return _MISP_TYPE_MAP.get(misp_type, misp_type or "unknown")
 
 
-def _extract_tags(raw: Dict[str, Any]) -> List[str]:
+def _extract_tags(raw: dict[str, Any]) -> list[str]:
     """Flatten both event-level and attribute-level tag lists."""
-    tags: List[str] = []
+    tags: list[str] = []
     for tag in raw.get("Tag") or []:
         name = tag.get("name") if isinstance(tag, dict) else None
         if name:
@@ -102,11 +100,11 @@ class MISPConnector:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
         *,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
+        session: requests.Session | None = None,
+        timeout: float | None = None,
     ) -> None:
         self._base_url = (base_url or os.getenv("MISP_URL") or "").rstrip("/")
         self._api_key = api_key or os.getenv("MISP_KEY") or ""
@@ -121,7 +119,7 @@ class MISPConnector:
     def healthy(self) -> bool:
         return bool(self._base_url and self._api_key)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {
             "Authorization": self._api_key,
             "Accept": "application/json",
@@ -132,7 +130,7 @@ class MISPConnector:
     # Public API
     # ------------------------------------------------------------------
 
-    def fetch(self, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Fetch normalized IOC records from MISP ``/events/restSearch``.
 
         ``scope`` accepts optional filters forwarded to MISP:
@@ -147,7 +145,7 @@ class MISPConnector:
             return []
 
         scope = scope or {}
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "returnFormat": "json",
             "limit": int(scope.get("limit", 100)),
         }
@@ -190,9 +188,9 @@ class MISPConnector:
     # Normalization
     # ------------------------------------------------------------------
 
-    def _normalize_events(self, body: Any) -> List[Dict[str, Any]]:
+    def _normalize_events(self, body: Any) -> list[dict[str, Any]]:
         """Flatten MISP's ``{response: [{Event: {...}}, ...]}`` into IOC rows."""
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
 
         if isinstance(body, dict):
             events_wrapper = body.get("response", body)
@@ -253,14 +251,11 @@ class MISPConnector:
                             "source": "misp",
                             "event_id": event_id,
                             "event_info": event_info,
-                            "indicator_kind": _map_indicator_kind(
-                                attr.get("type", "")
-                            ),
+                            "indicator_kind": _map_indicator_kind(attr.get("type", "")),
                             "value": str(value),
                             "tags": list({*event_tags, *_extract_tags(attr)}),
                             "confidence": self._confidence_from(event, attr),
-                            "first_seen": attr.get("first_seen")
-                            or event.get("date"),
+                            "first_seen": attr.get("first_seen") or event.get("date"),
                             "last_seen": attr.get("last_seen")
                             or attr.get("timestamp")
                             or event.get("timestamp"),
@@ -271,7 +266,7 @@ class MISPConnector:
         return records
 
     @staticmethod
-    def _confidence_from(event: Dict[str, Any], attr: Dict[str, Any]) -> float:
+    def _confidence_from(event: dict[str, Any], attr: dict[str, Any]) -> float:
         """Map MISP threat_level_id (1..4) + to_ids flag to a 0..1 score."""
         try:
             threat_level = int(event.get("threat_level_id", 4))

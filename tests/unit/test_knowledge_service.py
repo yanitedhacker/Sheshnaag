@@ -18,8 +18,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401  -- register all tables on Base.metadata
+from app.core.database import Base
 from app.models.v2 import KnowledgeDocument
 from app.services import knowledge_service as ks_module
 from app.services.knowledge_service import (
@@ -30,7 +30,6 @@ from app.services.knowledge_service import (
     cosine_similarity,
     reciprocal_rank_fusion,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -63,7 +62,7 @@ def session(sqlite_engine):
         sess.close()
 
 
-def _seed_documents(session) -> List[KnowledgeDocument]:
+def _seed_documents(session) -> list[KnowledgeDocument]:
     docs = [
         KnowledgeDocument(
             document_type="advisory",
@@ -128,9 +127,7 @@ def test_hash_embedding_provider_dim_1024():
     assert len(vec) == 1024
     assert len(vec) == EMBEDDING_DIM
     # L2 norm should be ~1 for a non-empty input.
-    assert math.isclose(
-        math.sqrt(sum(v * v for v in vec)), 1.0, rel_tol=1e-6
-    )
+    assert math.isclose(math.sqrt(sum(v * v for v in vec)), 1.0, rel_tol=1e-6)
     # Empty input returns a zero vector of the right length.
     empty = provider.embed("")
     assert len(empty) == 1024
@@ -249,7 +246,14 @@ def test_grounding_provenance_shape(session):
     assert entry["rank"] == 1
     assert entry["score"] == results[0]["fusion_score"]
     # The source identifier must be an actual label, not a placeholder.
-    assert entry["source"] in {"Vendor Advisory", "MITRE ATT&CK", "Sheshnaag Wiki", "advisory", "attack-note", "wiki"}
+    assert entry["source"] in {
+        "Vendor Advisory",
+        "MITRE ATT&CK",
+        "Sheshnaag Wiki",
+        "advisory",
+        "attack-note",
+        "wiki",
+    }
 
 
 def test_ingest_indexes_documents(session):

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -41,7 +41,7 @@ from app.services.knowledge_service import (
 logger = logging.getLogger(__name__)
 
 
-def _embed_text(text: str) -> List[float]:
+def _embed_text(text: str) -> list[float]:
     return HashFallbackEmbeddingProvider().embed(text)
 
 
@@ -53,23 +53,17 @@ class BehaviorSimilarityService:
 
     # ------------------------------------------------------------- features
 
-    def _collect_features(self, tenant: Tenant, specimen: Specimen) -> Dict[str, Any]:
+    def _collect_features(self, tenant: Tenant, specimen: Specimen) -> dict[str, Any]:
         """Gather the feature set used for both the embedding and the diff."""
 
-        cases = (
-            self.session.query(AnalysisCase)
-            .filter(AnalysisCase.tenant_id == tenant.id)
-            .all()
-        )
-        case_ids = [
-            c.id for c in cases if specimen.id in (c.specimen_ids or [])
-        ]
+        cases = self.session.query(AnalysisCase).filter(AnalysisCase.tenant_id == tenant.id).all()
+        case_ids = [c.id for c in cases if specimen.id in (c.specimen_ids or [])]
 
-        indicator_kinds: List[str] = []
-        indicator_values: List[str] = []
-        finding_types: List[str] = []
-        finding_titles: List[str] = []
-        attack_techniques: List[str] = []
+        indicator_kinds: list[str] = []
+        indicator_values: list[str] = []
+        finding_types: list[str] = []
+        finding_titles: list[str] = []
+        attack_techniques: list[str] = []
 
         if case_ids:
             for ind in (
@@ -111,10 +105,10 @@ class BehaviorSimilarityService:
         }
 
     @staticmethod
-    def _features_to_text(features: Dict[str, Any]) -> str:
+    def _features_to_text(features: dict[str, Any]) -> str:
         """Flatten the feature dict into a deterministic embedding-input string."""
 
-        parts: List[str] = [f"kind:{features.get('specimen_kind') or ''}"]
+        parts: list[str] = [f"kind:{features.get('specimen_kind') or ''}"]
         for label in features.get("labels", []):
             parts.append(f"label:{label}")
         for k in features.get("indicator_kinds", []):
@@ -131,7 +125,7 @@ class BehaviorSimilarityService:
         return " ".join(parts)
 
     @staticmethod
-    def _feature_digest(features: Dict[str, Any]) -> str:
+    def _feature_digest(features: dict[str, Any]) -> str:
         """Stable digest of the feature set so we can detect re-embed-no-op."""
 
         canonical = "\n".join(
@@ -148,7 +142,7 @@ class BehaviorSimilarityService:
         tenant: Tenant,
         *,
         specimen_id: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compute and persist (upsert by specimen_id) a behavior embedding."""
 
         specimen = (
@@ -203,7 +197,7 @@ class BehaviorSimilarityService:
         specimen_id: int,
         top_k: int = 10,
         min_score: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         anchor = (
             self.session.query(Specimen)
             .filter(Specimen.tenant_id == tenant.id, Specimen.id == specimen_id)
@@ -231,7 +225,7 @@ class BehaviorSimilarityService:
 
         # Tenant-scoped: join through Specimen so we never compare against
         # another tenant's specimens even if their PKs collide on indices.
-        candidates: List[Tuple[Specimen, SpecimenBehaviorEmbedding]] = (
+        candidates: list[tuple[Specimen, SpecimenBehaviorEmbedding]] = (
             self.session.query(Specimen, SpecimenBehaviorEmbedding)
             .join(
                 SpecimenBehaviorEmbedding,
@@ -241,18 +235,20 @@ class BehaviorSimilarityService:
             .all()
         )
 
-        scored: List[Dict[str, Any]] = []
+        scored: list[dict[str, Any]] = []
         for spec, emb in candidates:
             score = cosine_similarity(anchor_vec, list(emb.embedding or []))
             if score < min_score:
                 continue
-            scored.append({
-                "specimen_id": spec.id,
-                "name": spec.name,
-                "specimen_kind": spec.specimen_kind,
-                "score": round(float(score), 6),
-                "feature_digest": emb.feature_digest,
-            })
+            scored.append(
+                {
+                    "specimen_id": spec.id,
+                    "name": spec.name,
+                    "specimen_kind": spec.specimen_kind,
+                    "score": round(float(score), 6),
+                    "feature_digest": emb.feature_digest,
+                }
+            )
         scored.sort(key=lambda r: r["score"], reverse=True)
         return {
             "specimen_id": anchor.id,
@@ -268,7 +264,7 @@ class BehaviorSimilarityService:
         *,
         specimen_id_a: int,
         specimen_id_b: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if specimen_id_a == specimen_id_b:
             raise ValueError("specimens_must_differ")
 
@@ -328,10 +324,7 @@ class BehaviorSimilarityService:
             shared = sorted(set_a & set_b)
             only_a = sorted(set_a - set_b)
             only_b = sorted(set_b - set_a)
-            jaccard = (
-                len(set_a & set_b) / len(set_a | set_b)
-                if (set_a or set_b) else 0.0
-            )
+            jaccard = len(set_a & set_b) / len(set_a | set_b) if (set_a or set_b) else 0.0
             diff[category] = {
                 "shared": shared,
                 "only_a": only_a,

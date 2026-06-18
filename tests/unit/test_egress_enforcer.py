@@ -7,8 +7,9 @@ tests exercise both the planning path and the teardown idempotency.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from types import SimpleNamespace
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 import pytest
 
@@ -19,7 +20,7 @@ from app.lab.egress_enforcer import EgressEnforcer
 def _profile(
     *,
     egress_mode: str,
-    config: Dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
     name: str = "profile-under-test",
     provider_hint: str = "lima",
 ) -> SimpleNamespace:
@@ -35,9 +36,7 @@ def _profile(
 def _isolate_env(monkeypatch):
     """Force dry-run default and scrub enforcement env vars per-test."""
     monkeypatch.delenv("SHESHNAAG_EGRESS_ENFORCE", raising=False)
-    monkeypatch.setattr(
-        ee_module.shutil, "which", lambda _name: None, raising=True
-    )
+    monkeypatch.setattr(ee_module.shutil, "which", lambda _name: None, raising=True)
     yield
 
 
@@ -47,7 +46,7 @@ def test_default_deny_plan(monkeypatch):
     # Explicitly dry-run even if an operator env somehow slipped through.
     enforcer = EgressEnforcer(profile, run_id=42, dry_run=True)
 
-    sentinel_calls: List[Iterable[str]] = []
+    sentinel_calls: list[Iterable[str]] = []
 
     def _explode(*args, **kwargs):  # pragma: no cover - would fail the test
         sentinel_calls.append(args)
@@ -127,7 +126,7 @@ def test_missing_binaries_records_errors_not_raises(monkeypatch):
 def test_context_manager_tears_down_on_exit(monkeypatch):
     profile = _profile(egress_mode="default_deny")
 
-    teardown_calls: List[str] = []
+    teardown_calls: list[str] = []
     original_teardown = EgressEnforcer.teardown
 
     def _spy(self):  # type: ignore[no-untyped-def]
@@ -146,7 +145,7 @@ def test_context_manager_tears_down_on_exit(monkeypatch):
 def test_context_manager_tears_down_on_exception(monkeypatch):
     profile = _profile(egress_mode="default_deny")
 
-    teardown_calls: List[str] = []
+    teardown_calls: list[str] = []
 
     def _spy_teardown(self):  # type: ignore[no-untyped-def]
         teardown_calls.append("called")

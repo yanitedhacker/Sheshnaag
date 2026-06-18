@@ -17,7 +17,7 @@ Launchers are intentionally thin:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -31,11 +31,11 @@ class LauncherResult:
 
     exit_code: int = 0
     duration_ms: int = 0
-    pcap_path: Optional[str] = None
-    memory_dump_path: Optional[str] = None
-    ebpf_events: List[dict] = field(default_factory=list)
-    artifacts: List[str] = field(default_factory=list)
-    logs: List[str] = field(default_factory=list)
+    pcap_path: str | None = None
+    memory_dump_path: str | None = None
+    ebpf_events: list[dict] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
+    logs: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
 
 
@@ -51,8 +51,7 @@ class Launcher(Protocol):
 
     kind: str
 
-    def can_handle(self, specimen_kind: str, metadata: dict) -> bool:
-        ...
+    def can_handle(self, specimen_kind: str, metadata: dict) -> bool: ...
 
     def launch(
         self,
@@ -64,8 +63,7 @@ class Launcher(Protocol):
         quarantine_path: str,
         egress: Any,
         snapshot_snap: Any,
-    ) -> LauncherResult:
-        ...
+    ) -> LauncherResult: ...
 
 
 __all__ = ["Launcher", "LauncherResult"]

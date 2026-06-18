@@ -19,7 +19,9 @@ class _Completed:
 def test_lima_execute_boot_records_secure_mode_audit(monkeypatch, tmp_path):
     provider = LimaProvider()
     monkeypatch.setattr("app.lab.lima_provider.shutil.which", lambda name: "/usr/bin/limactl")
-    monkeypatch.setattr(provider, "_workspace_for_ref", lambda provider_run_ref: tmp_path / provider_run_ref)
+    monkeypatch.setattr(
+        provider, "_workspace_for_ref", lambda provider_run_ref: tmp_path / provider_run_ref
+    )
     monkeypatch.setattr(provider, "_limactl_version", lambda: "limactl version 1.2.3")
     monkeypatch.setattr(
         "app.lab.lima_provider.subprocess.run",
@@ -50,7 +52,10 @@ def test_lima_execute_boot_records_secure_mode_audit(monkeypatch, tmp_path):
 
     assert result.state == RunState.RUNNING
     assert result.plan["execute_result"]["exit_code"] == 0
-    assert result.plan["secure_mode_audit"]["execute_result"]["command_text"] == "bash -lc 'echo secure-run'"
+    assert (
+        result.plan["secure_mode_audit"]["execute_result"]["command_text"]
+        == "bash -lc 'echo secure-run'"
+    )
     lifecycle = result.plan["secure_mode_audit"]["lifecycle"]
     assert any(item["event"] == "booted" for item in lifecycle)
     assert any(item["event"] == "executed" for item in lifecycle)
@@ -63,7 +68,12 @@ def test_lima_launch_blocks_without_limactl(monkeypatch):
     monkeypatch.setattr("app.lab.lima_provider.shutil.which", lambda name: None)
     result = provider.launch(
         revision_content={"provider": "lima", "image_profile": "secure_lima"},
-        run_context={"tenant_slug": "demo", "analyst_name": "Tester", "run_id": 1, "launch_mode": "execute"},
+        run_context={
+            "tenant_slug": "demo",
+            "analyst_name": "Tester",
+            "run_id": 1,
+            "launch_mode": "execute",
+        },
     )
     assert result.state == RunState.BLOCKED
     assert result.error == "provider_not_ready"
@@ -77,7 +87,13 @@ def test_lima_capabilities_are_guest_tool_aware(monkeypatch):
         revision_content={
             "provider": "lima",
             "image_profile": "secure_lima",
-            "collectors": ["process_tree", "file_diff", "network_metadata", "pcap", "tracee_events"],
+            "collectors": [
+                "process_tree",
+                "file_diff",
+                "network_metadata",
+                "pcap",
+                "tracee_events",
+            ],
         },
         run_context={"tenant_slug": "demo", "analyst_name": "Tester", "run_id": 1},
     )
@@ -97,7 +113,9 @@ def test_lima_capabilities_are_guest_tool_aware(monkeypatch):
 def test_lima_teardown_records_ephemeral_destroy_not_disk_revert(monkeypatch, tmp_path):
     provider = LimaProvider()
     monkeypatch.setattr("app.lab.lima_provider.shutil.which", lambda name: "/usr/bin/limactl")
-    monkeypatch.setattr(provider, "_workspace_for_ref", lambda provider_run_ref: tmp_path / provider_run_ref)
+    monkeypatch.setattr(
+        provider, "_workspace_for_ref", lambda provider_run_ref: tmp_path / provider_run_ref
+    )
     monkeypatch.setattr(provider, "_limactl_version", lambda: "limactl version 1.2.3")
 
     plan = provider.build_plan(

@@ -20,18 +20,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 import app.models  # noqa: F401
+from app.core.database import Base
 from app.models.malware_lab import AnalysisCase
 from app.models.v2 import Tenant
 from app.services.case_workflow import (
+    TRANSITIONS,
     CaseLifecycleState,
     CaseWorkflowService,
     IllegalTransitionError,
     RoleNotPermittedError,
-    TRANSITIONS,
 )
-
 
 V5_ROLES = ("analyst", "senior_analyst", "reviewer", "lab_lead", "read_only")
 ALL_STATES = tuple(CaseLifecycleState)
@@ -126,9 +125,7 @@ def test_no_role_can_skip_review():
     and READY_TO_SHIP before SHIPPED. The transition table does not
     contain a direct edge to SHIPPED from anywhere except READY_TO_SHIP.
     """
-    edges_into_shipped = [
-        r for r in TRANSITIONS if r.to_state == CaseLifecycleState.SHIPPED
-    ]
+    edges_into_shipped = [r for r in TRANSITIONS if r.to_state == CaseLifecycleState.SHIPPED]
     sources = {r.from_state for r in edges_into_shipped}
     assert sources == {CaseLifecycleState.READY_TO_SHIP}, (
         f"unexpected SHIPPED predecessors: {sources}"
@@ -141,9 +138,7 @@ def test_archive_terminal_for_non_lab_lead():
     Defensive check: if any other role gains an `archived -> *` rule,
     this test trips so we re-evaluate the safety story.
     """
-    archived_outbound = [
-        r for r in TRANSITIONS if r.from_state == CaseLifecycleState.ARCHIVED
-    ]
+    archived_outbound = [r for r in TRANSITIONS if r.from_state == CaseLifecycleState.ARCHIVED]
     for rule in archived_outbound:
         assert rule.allowed_roles == frozenset({"lab_lead"}), (
             f"{rule.from_state.value} -> {rule.to_state.value} "
@@ -154,6 +149,4 @@ def test_archive_terminal_for_non_lab_lead():
 def test_read_only_has_no_transition_authority():
     """The read_only role must not appear in any rule's allowed_roles."""
     for rule in TRANSITIONS:
-        assert "read_only" not in rule.allowed_roles, (
-            f"read_only must not transition: {rule}"
-        )
+        assert "read_only" not in rule.allowed_roles, f"read_only must not transition: {rule}"

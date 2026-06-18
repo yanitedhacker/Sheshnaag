@@ -1,7 +1,5 @@
 """V3 defang workflow APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -14,38 +12,42 @@ router = APIRouter(prefix="/api/defang", tags=["Sheshnaag V3 Defang"])
 
 
 class DefangCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     analysis_case_id: int
     action_type: str
     title: str
-    result_summary: Optional[str] = None
+    result_summary: str | None = None
     payload: dict = Field(default_factory=dict)
 
 
 class DefangReviewRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     action_id: int
     reviewer_name: str
     decision: str
-    rationale: Optional[str] = None
+    rationale: str | None = None
 
 
 @router.get("")
 def list_defang(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
-    analysis_case_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
+    analysis_case_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return MalwareLabService(session).list_defang_actions(tenant, analysis_case_id=analysis_case_id)
 
 
 @router.post("")
 def create_defang(request: DefangCreateRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     return MalwareLabService(session).create_defang_action(
         tenant,
         analysis_case_id=request.analysis_case_id,
@@ -58,7 +60,9 @@ def create_defang(request: DefangCreateRequest, session: Session = Depends(get_s
 
 @router.post("/review")
 def review_defang(request: DefangReviewRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     try:
         return MalwareLabService(session).review_defang_action(
             tenant,

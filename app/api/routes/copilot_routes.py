@@ -1,7 +1,5 @@
 """Grounded copilot APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -15,8 +13,8 @@ router = APIRouter(prefix="/api/copilot", tags=["Copilot"])
 
 class CopilotQueryRequest(BaseModel):
     query: str = Field(..., min_length=3)
-    tenant_slug: Optional[str] = None
-    tenant_id: Optional[int] = None
+    tenant_slug: str | None = None
+    tenant_id: int | None = None
 
 
 @router.post("/query")

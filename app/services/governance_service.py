@@ -5,13 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from datetime import datetime
-from app.core.time import utc_now
-from typing import Dict, Iterable, List, Optional, Sequence
+from collections.abc import Iterable
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.models.v2 import AnalystFeedback, DecisionAuditEvent, PatchApproval, Tenant, TenantUser
 
 
@@ -27,10 +26,10 @@ class GovernanceService:
         *,
         action_id: str,
         feedback_type: str,
-        note: Optional[str] = None,
-        actor: Optional[TenantUser] = None,
-        metadata: Optional[dict] = None,
-    ) -> Dict[str, object]:
+        note: str | None = None,
+        actor: TenantUser | None = None,
+        metadata: dict | None = None,
+    ) -> dict[str, object]:
         """Persist analyst feedback and append an audit event."""
         record = AnalystFeedback(
             tenant_id=tenant.id,
@@ -59,7 +58,7 @@ class GovernanceService:
 
         return self._serialize_feedback(record)
 
-    def list_feedback(self, tenant: Tenant, *, limit: int = 25) -> Dict[str, object]:
+    def list_feedback(self, tenant: Tenant, *, limit: int = 25) -> dict[str, object]:
         """List recent analyst feedback for a tenant."""
         rows = (
             self.session.query(AnalystFeedback)
@@ -75,7 +74,9 @@ class GovernanceService:
             "items": [self._serialize_feedback(row) for row in rows],
         }
 
-    def get_latest_feedback_map(self, tenant: Tenant, action_ids: Iterable[str]) -> Dict[str, AnalystFeedback]:
+    def get_latest_feedback_map(
+        self, tenant: Tenant, action_ids: Iterable[str]
+    ) -> dict[str, AnalystFeedback]:
         """Return the latest feedback per action id."""
         wanted = {action_id for action_id in action_ids if action_id}
         if not wanted:
@@ -86,7 +87,7 @@ class GovernanceService:
             .order_by(desc(AnalystFeedback.created_at))
             .all()
         )
-        latest: Dict[str, AnalystFeedback] = {}
+        latest: dict[str, AnalystFeedback] = {}
         for row in rows:
             if row.action_id not in latest:
                 latest[row.action_id] = row
@@ -100,12 +101,12 @@ class GovernanceService:
         action_id: str,
         approval_type: str,
         approval_state: str,
-        maintenance_window: Optional[str] = None,
-        note: Optional[str] = None,
-        decided_by: Optional[str] = None,
-        actor: Optional[TenantUser] = None,
-        metadata: Optional[dict] = None,
-    ) -> Dict[str, object]:
+        maintenance_window: str | None = None,
+        note: str | None = None,
+        decided_by: str | None = None,
+        actor: TenantUser | None = None,
+        metadata: dict | None = None,
+    ) -> dict[str, object]:
         """Create an approval or sign-off record."""
         record = PatchApproval(
             tenant_id=tenant.id,
@@ -141,7 +142,7 @@ class GovernanceService:
 
         return self._serialize_approval(record)
 
-    def list_approvals(self, tenant: Tenant, *, limit: int = 50) -> Dict[str, object]:
+    def list_approvals(self, tenant: Tenant, *, limit: int = 50) -> dict[str, object]:
         """Return recent patch approvals and sign-offs."""
         rows = (
             self.session.query(PatchApproval)
@@ -155,7 +156,9 @@ class GovernanceService:
             "items": [self._serialize_approval(row) for row in rows],
         }
 
-    def get_latest_patch_approval_map(self, tenant: Tenant, patch_ids: Iterable[str]) -> Dict[str, PatchApproval]:
+    def get_latest_patch_approval_map(
+        self, tenant: Tenant, patch_ids: Iterable[str]
+    ) -> dict[str, PatchApproval]:
         """Return the latest approval per patch."""
         wanted = {patch_id for patch_id in patch_ids if patch_id}
         if not wanted:
@@ -166,13 +169,13 @@ class GovernanceService:
             .order_by(desc(PatchApproval.decided_at), desc(PatchApproval.created_at))
             .all()
         )
-        latest: Dict[str, PatchApproval] = {}
+        latest: dict[str, PatchApproval] = {}
         for row in rows:
             if row.patch_id not in latest:
                 latest[row.patch_id] = row
         return latest
 
-    def list_audit_events(self, tenant: Tenant, *, limit: int = 100) -> Dict[str, object]:
+    def list_audit_events(self, tenant: Tenant, *, limit: int = 100) -> dict[str, object]:
         """Return append-only audit events for a tenant."""
         rows = (
             self.session.query(DecisionAuditEvent)
@@ -195,7 +198,7 @@ class GovernanceService:
         entity_id: str,
         summary: str,
         details: dict,
-        actor: Optional[TenantUser] = None,
+        actor: TenantUser | None = None,
     ) -> DecisionAuditEvent:
         previous = (
             self.session.query(DecisionAuditEvent)
@@ -217,7 +220,7 @@ class GovernanceService:
             },
             sort_keys=True,
         )
-        event_hash = hashlib.sha256(f"{previous_hash}:{payload}".encode("utf-8")).hexdigest()
+        event_hash = hashlib.sha256(f"{previous_hash}:{payload}".encode()).hexdigest()
         record = DecisionAuditEvent(
             tenant_id=tenant.id,
             actor_user_id=actor.id if actor else None,
@@ -234,7 +237,7 @@ class GovernanceService:
         return record
 
     @staticmethod
-    def feedback_adjustment(feedback: Optional[AnalystFeedback]) -> float:
+    def feedback_adjustment(feedback: AnalystFeedback | None) -> float:
         """Translate analyst feedback into a deterministic score adjustment."""
         if feedback is None:
             return 0.0
@@ -248,7 +251,7 @@ class GovernanceService:
         return mapping.get(feedback.feedback_type, 0.0)
 
     @staticmethod
-    def feedback_confidence_multiplier(feedback: Optional[AnalystFeedback]) -> float:
+    def feedback_confidence_multiplier(feedback: AnalystFeedback | None) -> float:
         """Adjust confidence based on analyst input."""
         if feedback is None:
             return 1.0

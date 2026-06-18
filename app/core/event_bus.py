@@ -7,7 +7,8 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from typing import Any, Dict, Iterator, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import redis
 
@@ -22,20 +23,22 @@ _memory_streams: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
 class EventBus:
     """Small Redis Streams wrapper with a dev/test in-memory fallback."""
 
-    def __init__(self, *, redis_url: Optional[str] = None, client: Optional[redis.Redis] = None) -> None:
+    def __init__(self, *, redis_url: str | None = None, client: redis.Redis | None = None) -> None:
         self._redis_url = redis_url or settings.redis_url
         self._client = client
         self._redis_checked = client is not None
 
     @property
-    def client(self) -> Optional[redis.Redis]:
+    def client(self) -> redis.Redis | None:
         if self._client is not None:
             return self._client
         if self._redis_checked:
             return None
         self._redis_checked = True
         try:
-            self._client = redis.from_url(self._redis_url, socket_connect_timeout=1, socket_timeout=5)
+            self._client = redis.from_url(
+                self._redis_url, socket_connect_timeout=1, socket_timeout=5
+            )
             self._client.ping()
             return self._client
         except Exception as exc:  # pragma: no cover - depends on runtime infra
@@ -56,7 +59,9 @@ class EventBus:
             _memory_lock.notify_all()
             return entry_id
 
-    def subscribe(self, stream: str, *, last_id: str = "$", block_ms: int = 5000) -> Iterator[dict[str, Any]]:
+    def subscribe(
+        self, stream: str, *, last_id: str = "$", block_ms: int = 5000
+    ) -> Iterator[dict[str, Any]]:
         client = self.client
         if client is not None:
             current_id = last_id
@@ -64,7 +69,11 @@ class EventBus:
                 rows = client.xread({stream: current_id}, block=block_ms, count=10)
                 for _, messages in rows:
                     for entry_id, fields in messages:
-                        current_id = entry_id.decode("utf-8") if isinstance(entry_id, bytes) else str(entry_id)
+                        current_id = (
+                            entry_id.decode("utf-8")
+                            if isinstance(entry_id, bytes)
+                            else str(entry_id)
+                        )
                         raw = fields.get(b"data") or fields.get("data")
                         if isinstance(raw, bytes):
                             raw = raw.decode("utf-8")
@@ -114,9 +123,7 @@ def build_tls_redis_client(
     """
 
     if not redis_url.startswith("rediss://"):
-        raise ValueError(
-            f"build_tls_redis_client requires rediss:// URL, got {redis_url!r}"
-        )
+        raise ValueError(f"build_tls_redis_client requires rediss:// URL, got {redis_url!r}")
     return redis.from_url(
         redis_url,
         ssl_certfile=ssl_certfile,

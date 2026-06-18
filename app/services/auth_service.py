@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Optional, Sequence
+from collections.abc import Sequence
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -11,11 +11,16 @@ from app.core.config import settings
 from app.core.security import TokenData, create_access_token, get_password_hash, verify_password
 from app.models.v2 import Tenant, TenantMembership, TenantUser
 
-
 ROLE_SCOPES: dict[str, list[str]] = {
     "viewer": ["tenant:read"],
     "analyst": ["tenant:read", "tenant:write", "model:feedback", "governance:read"],
-    "admin": ["tenant:read", "tenant:write", "model:feedback", "governance:read", "governance:write"],
+    "admin": [
+        "tenant:read",
+        "tenant:write",
+        "model:feedback",
+        "governance:read",
+        "governance:write",
+    ],
     "owner": [
         "tenant:read",
         "tenant:write",
@@ -44,15 +49,17 @@ class AuthService:
         tenant_slug: str,
         admin_email: str,
         admin_password: str,
-        admin_name: Optional[str] = None,
-        description: Optional[str] = None,
-    ) -> Dict[str, object]:
+        admin_name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, object]:
         """Create a private tenant with an owner membership and JWT."""
         existing_tenant = self.session.query(Tenant).filter(Tenant.slug == tenant_slug).first()
         if existing_tenant is not None:
             raise HTTPException(status_code=409, detail="Tenant slug already exists")
 
-        user = self.session.query(TenantUser).filter(TenantUser.email == admin_email.lower()).first()
+        user = (
+            self.session.query(TenantUser).filter(TenantUser.email == admin_email.lower()).first()
+        )
         if user is None:
             user = TenantUser(
                 email=admin_email.lower(),
@@ -62,7 +69,9 @@ class AuthService:
             self.session.add(user)
             self.session.flush()
         elif not verify_password(admin_password, user.password_hash):
-            raise HTTPException(status_code=409, detail="User already exists with a different password")
+            raise HTTPException(
+                status_code=409, detail="User already exists with a different password"
+            )
 
         tenant = Tenant(
             slug=tenant_slug,
@@ -92,15 +101,25 @@ class AuthService:
             "token": token,
         }
 
-    def login(self, *, email: str, password: str, tenant_slug: Optional[str] = None) -> Dict[str, object]:
+    def login(
+        self, *, email: str, password: str, tenant_slug: str | None = None
+    ) -> dict[str, object]:
         """Authenticate an existing workspace user."""
-        user = self.session.query(TenantUser).filter(TenantUser.email == email.lower(), TenantUser.is_active.is_(True)).first()
+        user = (
+            self.session.query(TenantUser)
+            .filter(TenantUser.email == email.lower(), TenantUser.is_active.is_(True))
+            .first()
+        )
         if user is None or not verify_password(password, user.password_hash):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
+            )
 
         query = self.session.query(TenantMembership).filter(TenantMembership.user_id == user.id)
         if tenant_slug:
-            query = query.join(Tenant, Tenant.id == TenantMembership.tenant_id).filter(Tenant.slug == tenant_slug)
+            query = query.join(Tenant, Tenant.id == TenantMembership.tenant_id).filter(
+                Tenant.slug == tenant_slug
+            )
         memberships = query.all()
         if not memberships:
             raise HTTPException(status_code=403, detail="No memberships found for that workspace")
@@ -111,48 +130,61 @@ class AuthService:
             "token": self._build_token_for_user(user, memberships=memberships),
         }
 
-    def me(self, token_data: TokenData) -> Dict[str, object]:
+    def me(self, token_data: TokenData) -> dict[str, object]:
         """Return the current authenticated actor and memberships."""
         user = self.get_user_from_token(token_data)
         if user is None:
             raise HTTPException(status_code=401, detail="Authenticated user not found")
-        memberships = self.session.query(TenantMembership).filter(TenantMembership.user_id == user.id).all()
+        memberships = (
+            self.session.query(TenantMembership).filter(TenantMembership.user_id == user.id).all()
+        )
         return {
             "user": self._serialize_user(user),
             "memberships": [self._serialize_membership(membership) for membership in memberships],
         }
 
-    def get_user_from_token(self, token_data: Optional[TokenData]) -> Optional[TenantUser]:
+    def get_user_from_token(self, token_data: TokenData | None) -> TenantUser | None:
         """Resolve a user from token claims if present."""
         if token_data is None or token_data.username in {None, "anonymous"}:
             return None
 
         user = None
         if token_data.user_id is not None:
-            user = self.session.query(TenantUser).filter(TenantUser.id == token_data.user_id).first()
+            user = (
+                self.session.query(TenantUser).filter(TenantUser.id == token_data.user_id).first()
+            )
         if user is None and token_data.username:
-            user = self.session.query(TenantUser).filter(TenantUser.email == token_data.username.lower()).first()
+            user = (
+                self.session.query(TenantUser)
+                .filter(TenantUser.email == token_data.username.lower())
+                .first()
+            )
         return user
 
     def assert_tenant_access(
         self,
         tenant: Tenant,
-        token_data: Optional[TokenData],
+        token_data: TokenData | None,
         *,
         access: str = "read",
-    ) -> Optional[TenantMembership]:
+    ) -> TenantMembership | None:
         """Require that the token has access to a private tenant when auth is in use."""
         if tenant.is_demo:
             return None
 
         if token_data is None or token_data.username in {None, "anonymous"}:
             if settings.auth_enabled:
-                raise HTTPException(status_code=401, detail="Authentication required for private tenant access")
+                raise HTTPException(
+                    status_code=401, detail="Authentication required for private tenant access"
+                )
             return None
 
         membership = (
             self.session.query(TenantMembership)
-            .filter(TenantMembership.tenant_id == tenant.id, TenantMembership.user_id == token_data.user_id)
+            .filter(
+                TenantMembership.tenant_id == tenant.id,
+                TenantMembership.user_id == token_data.user_id,
+            )
             .first()
         )
         if membership is None:
@@ -173,32 +205,48 @@ class AuthService:
     def resolve_private_tenant(
         self,
         *,
-        token_data: Optional[TokenData],
-        tenant_id: Optional[int] = None,
-        tenant_slug: Optional[str] = None,
+        token_data: TokenData | None,
+        tenant_id: int | None = None,
+        tenant_slug: str | None = None,
     ) -> Tenant:
         """Resolve a writable tenant, defaulting from auth context when possible."""
-        query = self.session.query(Tenant).filter(Tenant.is_active.is_(True), Tenant.is_read_only.is_(False))
+        query = self.session.query(Tenant).filter(
+            Tenant.is_active.is_(True), Tenant.is_read_only.is_(False)
+        )
         tenant = None
         if tenant_id is not None:
             tenant = query.filter(Tenant.id == tenant_id).first()
         elif tenant_slug:
             tenant = query.filter(Tenant.slug == tenant_slug).first()
         elif token_data and token_data.memberships:
-            tenant_ids = [membership.get("tenant_id") for membership in token_data.memberships if membership.get("tenant_id")]
+            tenant_ids = [
+                membership.get("tenant_id")
+                for membership in token_data.memberships
+                if membership.get("tenant_id")
+            ]
             if len(tenant_ids) == 1:
                 tenant = query.filter(Tenant.id == tenant_ids[0]).first()
 
         if tenant is None:
-            raise HTTPException(status_code=400, detail="A private tenant id or slug is required for this action")
+            raise HTTPException(
+                status_code=400, detail="A private tenant id or slug is required for this action"
+            )
         return tenant
 
     @staticmethod
     def _scopes_for_role(role: str) -> list[str]:
         return list(ROLE_SCOPES.get(role, ROLE_SCOPES["viewer"]))
 
-    def _build_token_for_user(self, user: TenantUser, *, memberships: Sequence[TenantMembership]) -> Dict[str, object]:
-        scopes = sorted({scope for membership in memberships for scope in (membership.scopes or self._scopes_for_role(membership.role))})
+    def _build_token_for_user(
+        self, user: TenantUser, *, memberships: Sequence[TenantMembership]
+    ) -> dict[str, object]:
+        scopes = sorted(
+            {
+                scope
+                for membership in memberships
+                for scope in (membership.scopes or self._scopes_for_role(membership.role))
+            }
+        )
         token_payload = {
             "sub": user.email,
             "user_id": user.id,
@@ -224,7 +272,10 @@ class AuthService:
         }
 
     def _serialize_membership(self, membership: TenantMembership) -> dict:
-        tenant = membership.tenant or self.session.query(Tenant).filter(Tenant.id == membership.tenant_id).first()
+        tenant = (
+            membership.tenant
+            or self.session.query(Tenant).filter(Tenant.id == membership.tenant_id).first()
+        )
         return {
             "tenant_id": membership.tenant_id,
             "tenant_slug": tenant.slug if tenant else None,

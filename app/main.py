@@ -4,32 +4,32 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import redis
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import make_asgi_app
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.core.config import settings, validate_settings_for_startup
-from app.core.database import engine, Base, SessionLocal
-from app.core.logging import bind_log_context, clear_log_context, configure_logging
-from app.core.observability import configure_telemetry
-from app.core.rate_limit import rate_limiter
-from app.core.security import decode_token
 from app.api.routes import (
+    admin_roles_router,
     ai_router,
     analysis_case_router,
-    asset_router,
     artifact_router,
+    asset_router,
     attack_router,
-    authorization_router,
+    auth_oidc_router,
     auth_router,
+    authorization_router,
+    autonomous_router,
+    blast_radius_router,
+    brief_router,
     candidate_router,
     capability_router,
+    case_graph_router,
+    case_queue_router,
     copilot_router,
     cve_router,
     defang_router,
@@ -39,49 +39,46 @@ from app.api.routes import (
     finding_router,
     governance_router,
     graph_router,
+    hunt_router,
     import_router,
     indicator_router,
+    integrations_webhook_router,
     intel_router,
     ledger_router,
     live_run_router,
     maintainer_router,
-    admin_roles_router,
-    workers_router,
-    auth_oidc_router,
-    case_queue_router,
-    integrations_webhook_router,
-    team_analytics_router,
     model_router,
     ops_router,
-    case_graph_router,
-    autonomous_router,
-    blast_radius_router,
-    hunt_router,
-    brief_router,
-    stix_export_router,
-    similarity_router,
     patch_router,
     policy_router,
     prevention_router,
     provenance_router,
-    report_router,
-    risk_router,
     recipe_router,
+    report_router,
     review_queue_router,
+    risk_router,
     run_router,
     sandbox_profile_router,
+    similarity_router,
     simulation_router,
     specimen_revision_router,
     specimen_router,
+    stix_export_router,
     supply_chain_router,
+    team_analytics_router,
     template_router,
     tenant_router,
     workbench_router,
+    workers_router,
 )
+from app.core.config import settings, validate_settings_for_startup
+from app.core.database import Base, SessionLocal, engine
+from app.core.logging import bind_log_context, clear_log_context, configure_logging
+from app.core.observability import configure_telemetry
+from app.core.rate_limit import rate_limiter
+from app.core.security import decode_token
 from app.ingestion.scheduler import FeedScheduler
-from app.services.brief_scheduler import BriefScheduler
 from app.ml.model_registry import preload_models
-from app.services.demo_seed_service import DemoSeedService
 from app.models.v2 import (
     AttackTechnique,
     EPSSSnapshot,
@@ -91,6 +88,8 @@ from app.models.v2 import (
     KnowledgeChunk,
     KnowledgeDocument,
 )
+from app.services.brief_scheduler import BriefScheduler
+from app.services.demo_seed_service import DemoSeedService
 
 # Get project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -159,7 +158,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Content Security Policy (relaxed for dashboard)
         if not request.url.path.startswith("/dashboard"):
-            response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+            )
 
         return response
 
@@ -182,9 +183,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             await rate_limiter.check(request)
         except HTTPException as e:
             return JSONResponse(
-                status_code=e.status_code,
-                content={"detail": e.detail},
-                headers=e.headers
+                status_code=e.status_code, content={"detail": e.detail}, headers=e.headers
             )
 
         response = await call_next(request)
@@ -209,16 +208,15 @@ class MetricsAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
-        if (
-            settings.metrics_enabled
-            and request.url.path in {"/metrics", "/metrics/"}
-        ):
+        if settings.metrics_enabled and request.url.path in {"/metrics", "/metrics/"}:
             env = (settings.environment or "development").lower()
             require_auth = settings.metrics_require_auth or env != "development"
             if require_auth:
                 auth_header = request.headers.get("Authorization", "")
                 if not auth_header.startswith("Bearer "):
-                    return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+                    return JSONResponse(
+                        status_code=401, content={"detail": "Authentication required"}
+                    )
                 token = auth_header.split(" ", 1)[1].strip()
                 try:
                     decode_token(token)
@@ -309,8 +307,12 @@ app = FastAPI(
     # development discovery, but a recon win for an attacker on a deployed
     # box. Only expose them under ENVIRONMENT=development.
     docs_url="/docs" if (settings.environment or "development").lower() == "development" else None,
-    redoc_url="/redoc" if (settings.environment or "development").lower() == "development" else None,
-    openapi_url="/openapi.json" if (settings.environment or "development").lower() == "development" else None,
+    redoc_url="/redoc"
+    if (settings.environment or "development").lower() == "development"
+    else None,
+    openapi_url="/openapi.json"
+    if (settings.environment or "development").lower() == "development"
+    else None,
 )
 
 # Wire OpenTelemetry tracing when an exporter endpoint is configured.
@@ -445,8 +447,8 @@ def root():
             "feeds": "/api/feeds",
             "patches": "/api/patches",
             "templates": "/api/templates",
-            "metrics": "/metrics" if settings.metrics_enabled else None
-        }
+            "metrics": "/metrics" if settings.metrics_enabled else None,
+        },
     }
 
 
@@ -468,8 +470,8 @@ def health_check():
         "rate_limit_enabled": settings.rate_limit_enabled,
         "dependencies": {
             "database": "healthy",  # If we got here, DB is working
-            "redis": "healthy" if redis_healthy else "unavailable"
-        }
+            "redis": "healthy" if redis_healthy else "unavailable",
+        },
     }
 
 
@@ -482,11 +484,11 @@ def get_dashboard_data():
     """
     from app.core.database import SessionLocal
     from app.core.tenancy import get_or_create_demo_tenant
-    from app.services.graph_service import ExposureGraphService
-    from app.services.governance_service import GovernanceService
-    from app.services.model_trust_service import ModelTrustService
-    from app.services.cve_service import CVEService
     from app.services.asset_service import AssetService
+    from app.services.cve_service import CVEService
+    from app.services.governance_service import GovernanceService
+    from app.services.graph_service import ExposureGraphService
+    from app.services.model_trust_service import ModelTrustService
     from app.services.risk_aggregator import RiskAggregator
     from app.services.workbench_service import WorkbenchService
 
@@ -515,15 +517,21 @@ def get_dashboard_data():
                 "attack_techniques": session.query(AttackTechnique).count(),
                 "knowledge_documents": session.query(KnowledgeDocument).count(),
                 "knowledge_chunks": session.query(KnowledgeChunk).count(),
-                "graph_nodes": session.query(ExposureGraphNode).filter(ExposureGraphNode.tenant_id == tenant.id).count(),
-                "graph_edges": session.query(ExposureGraphEdge).filter(ExposureGraphEdge.tenant_id == tenant.id).count(),
+                "graph_nodes": session.query(ExposureGraphNode)
+                .filter(ExposureGraphNode.tenant_id == tenant.id)
+                .count(),
+                "graph_edges": session.query(ExposureGraphEdge)
+                .filter(ExposureGraphEdge.tenant_id == tenant.id)
+                .count(),
             },
             "showcase_highlights": [
                 "Fuses vulnerability records with KEV, EPSS, ATT&CK, advisory knowledge, and tenant-specific exposure context.",
                 "Ranks remediation actions using exploit likelihood, public exposure, crown-jewel impact, path reachability, and operational patch cost.",
                 "Keeps recommendations explainable with evidence, citations, approval state, and analyst feedback instead of opaque AI-only scoring.",
             ],
-            "organization_summary": asset_service.get_organization_risk_summary(tenant_id=tenant.id),
+            "organization_summary": asset_service.get_organization_risk_summary(
+                tenant_id=tenant.id
+            ),
             "model_trust": model_trust_service.get_trust_snapshot(),
             "governance": {
                 "approvals": governance_service.list_approvals(tenant, limit=5)["items"],
@@ -539,18 +547,13 @@ def get_dashboard_data():
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Custom HTTP exception handler."""
     # Include request ID in error response if available
-    request_id = getattr(request.state, 'request_id', None)
-    content = {
-        "error": exc.detail,
-        "status_code": exc.status_code
-    }
+    request_id = getattr(request.state, "request_id", None)
+    content = {"error": exc.detail, "status_code": exc.status_code}
     if request_id:
         content["request_id"] = request_id
 
     return JSONResponse(
-        status_code=exc.status_code,
-        content=content,
-        headers=getattr(exc, 'headers', None)
+        status_code=exc.status_code, content=content, headers=getattr(exc, "headers", None)
     )
 
 
@@ -565,7 +568,7 @@ async def general_exception_handler(request: Request, exc: Exception):
     artifact), which would re-expose internals. Client-side debugging should
     rely on the request_id to correlate with server logs instead.
     """
-    request_id = getattr(request.state, 'request_id', None)
+    request_id = getattr(request.state, "request_id", None)
     logger.exception(f"Unhandled exception (request_id={request_id}): {exc}")
 
     content = {"error": "Internal server error", "status_code": 500}
@@ -576,9 +579,5 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.debug
-    )
+
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=settings.debug)

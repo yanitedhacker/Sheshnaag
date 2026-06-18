@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -18,11 +16,13 @@ router = APIRouter(prefix="/api/v4/cases", tags=["Sheshnaag V4 Blast Radius"])
 def get_case_blast_radius(
     case_id: int,
     depth: int = Query(1, ge=1, le=2),
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     try:
         return BlastRadiusService(session).case_blast_radius(tenant, case_id=case_id, depth=depth)
     except ValueError as exc:

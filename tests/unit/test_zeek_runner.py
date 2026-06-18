@@ -11,7 +11,6 @@ import pytest
 from app.lab import zeek_runner as zeek_module
 from app.lab.zeek_runner import ZeekRunner
 
-
 CONN_LOG = """#separator \\x09
 #set_separator\t,
 #empty_field\t(empty)
@@ -86,7 +85,9 @@ def test_health_healthy_with_version(monkeypatch):
     monkeypatch.setattr(zeek_module.shutil, "which", lambda _: "/usr/local/bin/zeek")
 
     def fake_run(cmd, capture_output, text, timeout):
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="zeek version 6.0.0\n", stderr="")
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout="zeek version 6.0.0\n", stderr=""
+        )
 
     monkeypatch.setattr(zeek_module.subprocess, "run", fake_run)
     runner = ZeekRunner(zeek_binary="zeek")
@@ -112,7 +113,11 @@ def test_run_returns_empty_when_pcap_missing(monkeypatch, tmp_path):
     runner = ZeekRunner()
     result = runner.run(pcap_path=str(tmp_path / "missing.pcap"))
     assert result["summary"]["counts"] == {
-        "connections": 0, "dns": 0, "http": 0, "ssl": 0, "files": 0
+        "connections": 0,
+        "dns": 0,
+        "http": 0,
+        "ssl": 0,
+        "files": 0,
     }
 
 
@@ -215,7 +220,11 @@ def test_empty_pcap_produces_no_logs(monkeypatch, tmp_path):
     runner = ZeekRunner()
     result = runner.run(pcap_path=str(pcap), workdir=str(workdir))
     assert result["summary"]["counts"] == {
-        "connections": 0, "dns": 0, "http": 0, "ssl": 0, "files": 0
+        "connections": 0,
+        "dns": 0,
+        "http": 0,
+        "ssl": 0,
+        "files": 0,
     }
     assert runner.extract_indicators(result) == []
 

@@ -19,8 +19,8 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -45,16 +45,18 @@ _INDICATOR_PATTERNS = {
     "email": re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"),
     "cve": re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE),
 }
-_RELATIVE_TIME_RE = re.compile(r"\b(?:last|past)\s+(\d+)\s+(day|days|week|weeks|hour|hours)\b", re.IGNORECASE)
+_RELATIVE_TIME_RE = re.compile(
+    r"\b(?:last|past)\s+(\d+)\s+(day|days|week|weeks|hour|hours)\b", re.IGNORECASE
+)
 _SINCE_DATE_RE = re.compile(r"\bsince\s+(\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
 
 
 @dataclass
 class HuntFilter:
-    severities: List[str] = field(default_factory=list)
-    indicators: Dict[str, List[str]] = field(default_factory=dict)
-    since: Optional[datetime] = None
-    free_text: List[str] = field(default_factory=list)
+    severities: list[str] = field(default_factory=list)
+    indicators: dict[str, list[str]] = field(default_factory=dict)
+    since: datetime | None = None
+    free_text: list[str] = field(default_factory=list)
 
 
 class HuntService:
@@ -73,8 +75,8 @@ class HuntService:
         lower = text.lower()
 
         # Extract IOCs greedily, capturing the matched substring for SQL filters.
-        indicators: Dict[str, List[str]] = {}
-        consumed: List[str] = []
+        indicators: dict[str, list[str]] = {}
+        consumed: list[str] = []
         # Order matters: longer/more specific patterns first so a sha256 match
         # doesn't get re-grabbed as a domain (e.g. all-hex strings).
         for kind in ("sha256", "md5", "cve", "url", "email", "ipv4", "domain"):
@@ -99,7 +101,7 @@ class HuntService:
         severities = ["info" if s == "informational" else s for s in severities]
 
         # Time hints.
-        since: Optional[datetime] = None
+        since: datetime | None = None
         rel = _RELATIVE_TIME_RE.search(text)
         if rel:
             n = int(rel.group(1))
@@ -110,15 +112,15 @@ class HuntService:
                 "week": timedelta(weeks=n),
             }.get(unit)
             if delta is not None:
-                since = datetime.now(timezone.utc) - delta
+                since = datetime.now(UTC) - delta
         elif _SINCE_DATE_RE.search(text):
             ds = _SINCE_DATE_RE.search(text).group(1)
             try:
-                since = datetime.fromisoformat(ds).replace(tzinfo=timezone.utc)
+                since = datetime.fromisoformat(ds).replace(tzinfo=UTC)
             except ValueError:
                 since = None
         elif "yesterday" in lower:
-            since = datetime.now(timezone.utc) - timedelta(days=1)
+            since = datetime.now(UTC) - timedelta(days=1)
 
         # Free text — strip out the parts we already extracted so we don't
         # double-match. Keep tokens that look like real words (3+ chars).
@@ -128,10 +130,23 @@ class HuntService:
                 residue = residue.replace(v, " ")
         for sev in severities:
             residue = re.sub(rf"\b{sev}\b", " ", residue, flags=re.IGNORECASE)
-        for stop in ("last", "past", "days", "day", "weeks", "week", "hours", "hour", "since", "yesterday"):
+        for stop in (
+            "last",
+            "past",
+            "days",
+            "day",
+            "weeks",
+            "week",
+            "hours",
+            "hour",
+            "since",
+            "yesterday",
+        ):
             residue = re.sub(rf"\b{stop}\b", " ", residue, flags=re.IGNORECASE)
         residue = re.sub(r"\d+", " ", residue)
-        free_text = sorted({w for w in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", residue) if len(w) >= 3})
+        free_text = sorted(
+            {w for w in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", residue) if len(w) >= 3}
+        )
 
         return HuntFilter(
             severities=severities,
@@ -148,17 +163,21 @@ class HuntService:
         *,
         query: str,
         limit: int = 50,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         parsed = self.parse(query)
         limit = max(1, min(int(limit), 500))
 
         # Indicators
-        ind_q = self.session.query(IndicatorArtifact).filter(IndicatorArtifact.tenant_id == tenant.id)
+        ind_q = self.session.query(IndicatorArtifact).filter(
+            IndicatorArtifact.tenant_id == tenant.id
+        )
         ind_values = [v for vals in parsed.indicators.values() for v in vals]
         if ind_values:
             ind_q = ind_q.filter(IndicatorArtifact.value.in_(ind_values))
         elif parsed.free_text:
-            ind_q = ind_q.filter(or_(*[IndicatorArtifact.value.ilike(f"%{w}%") for w in parsed.free_text]))
+            ind_q = ind_q.filter(
+                or_(*[IndicatorArtifact.value.ilike(f"%{w}%") for w in parsed.free_text])
+            )
         if parsed.since is not None:
             ind_q = ind_q.filter(IndicatorArtifact.created_at >= parsed.since)
         indicator_hits = ind_q.order_by(IndicatorArtifact.created_at.desc()).limit(limit).all()
@@ -168,7 +187,9 @@ class HuntService:
         if parsed.severities:
             find_q = find_q.filter(BehaviorFinding.severity.in_(parsed.severities))
         if parsed.free_text:
-            find_q = find_q.filter(or_(*[BehaviorFinding.title.ilike(f"%{w}%") for w in parsed.free_text]))
+            find_q = find_q.filter(
+                or_(*[BehaviorFinding.title.ilike(f"%{w}%") for w in parsed.free_text])
+            )
         if parsed.since is not None:
             find_q = find_q.filter(BehaviorFinding.created_at >= parsed.since)
         finding_hits = find_q.order_by(BehaviorFinding.created_at.desc()).limit(limit).all()
@@ -176,7 +197,9 @@ class HuntService:
         # Cases
         case_q = self.session.query(AnalysisCase).filter(AnalysisCase.tenant_id == tenant.id)
         if parsed.free_text:
-            case_q = case_q.filter(or_(*[AnalysisCase.title.ilike(f"%{w}%") for w in parsed.free_text]))
+            case_q = case_q.filter(
+                or_(*[AnalysisCase.title.ilike(f"%{w}%") for w in parsed.free_text])
+            )
         if parsed.since is not None:
             case_q = case_q.filter(AnalysisCase.created_at >= parsed.since)
         case_hits = case_q.order_by(AnalysisCase.created_at.desc()).limit(limit).all()

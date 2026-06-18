@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -37,7 +37,7 @@ _DEFAULT_TIMEOUT_SECONDS = 20.0
 #: Per-verdict weight used in the consensus calculation. ``malicious`` votes
 #: are worth 1.0, ``suspicious`` 0.5, ``clean`` 0.0. Sources report
 #: a numeric confidence in ``[0, 1]``; we blend weight × confidence.
-_VERDICT_WEIGHT: Dict[str, float] = {
+_VERDICT_WEIGHT: dict[str, float] = {
     "malicious": 1.0,
     "suspicious": 0.5,
     "clean": 0.0,
@@ -49,7 +49,7 @@ def _now_iso() -> str:
     return utc_now().isoformat().replace("+00:00", "Z")
 
 
-def _discover_connectors() -> List[Any]:
+def _discover_connectors() -> list[Any]:
     """Instantiate every registered IOC connector class.
 
     The registry lives in :mod:`app.ingestion.misp_connector` (a parallel
@@ -61,7 +61,7 @@ def _discover_connectors() -> List[Any]:
     # touching every connector module at import time.
     from app.ingestion.misp_connector import get_registered_ioc_connectors
 
-    instances: List[Any] = []
+    instances: list[Any] = []
     for name, cls in get_registered_ioc_connectors().items():
         try:
             instances.append(cls())
@@ -70,7 +70,7 @@ def _discover_connectors() -> List[Any]:
     return instances
 
 
-def _classify_verdict(record: Dict[str, Any]) -> str:
+def _classify_verdict(record: dict[str, Any]) -> str:
     """Translate a connector's normalized record into a verdict label."""
 
     if not isinstance(record, dict):
@@ -99,7 +99,7 @@ def _classify_verdict(record: Dict[str, Any]) -> str:
     return "unknown"
 
 
-def _verdict_record(source: str, raw: Any) -> Optional[Dict[str, Any]]:
+def _verdict_record(source: str, raw: Any) -> dict[str, Any] | None:
     """Collapse a connector's raw response into a single verdict entry.
 
     Each connector returns ``List[Dict]``. We keep the highest-confidence row
@@ -109,7 +109,7 @@ def _verdict_record(source: str, raw: Any) -> Optional[Dict[str, Any]]:
 
     if raw is None:
         return None
-    rows: List[Dict[str, Any]]
+    rows: list[dict[str, Any]]
     if isinstance(raw, list):
         rows = [r for r in raw if isinstance(r, dict)]
     elif isinstance(raw, dict):
@@ -133,7 +133,7 @@ def _verdict_record(source: str, raw: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def _consensus_score(verdicts: Iterable[Dict[str, Any]]) -> float:
+def _consensus_score(verdicts: Iterable[dict[str, Any]]) -> float:
     """Compute a weighted consensus score in ``[0.0, 1.0]``.
 
     Each verdict contributes ``weight(verdict) * confidence``. The final
@@ -163,7 +163,7 @@ class IocEnrichment:
     def __init__(
         self,
         session: Session,
-        connectors: Optional[List[Any]] = None,
+        connectors: list[Any] | None = None,
         *,
         max_workers: int = 4,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
@@ -175,9 +175,9 @@ class IocEnrichment:
         # connector has no credentials / no base URL / is otherwise unable
         # to answer; calling it is wasteful and pollutes the consensus.
         self._connectors = [
-            c for c in connectors
-            if getattr(c, "healthy", False)
-            and callable(getattr(c, "fetch", None))
+            c
+            for c in connectors
+            if getattr(c, "healthy", False) and callable(getattr(c, "fetch", None))
         ]
         self._max_workers = max(1, int(max_workers))
         self._timeout = float(timeout_seconds)
@@ -187,10 +187,10 @@ class IocEnrichment:
     # ------------------------------------------------------------------
 
     @property
-    def active_connectors(self) -> List[str]:
+    def active_connectors(self) -> list[str]:
         return [getattr(c, "name", c.__class__.__name__) for c in self._connectors]
 
-    def enrich(self, indicator: IndicatorArtifact) -> Dict[str, Any]:
+    def enrich(self, indicator: IndicatorArtifact) -> dict[str, Any]:
         """Fan out one indicator to every healthy connector in parallel.
 
         Returns a dict shaped ``{indicator_id, verdicts, consensus}``.
@@ -200,11 +200,9 @@ class IocEnrichment:
 
         scope = self._scope_for_indicator(indicator)
 
-        verdicts: List[Dict[str, Any]] = []
+        verdicts: list[dict[str, Any]] = []
         if self._connectors:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=self._max_workers
-            ) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self._max_workers) as executor:
                 futures = {
                     executor.submit(self._safe_fetch, conn, scope): conn
                     for conn in self._connectors
@@ -217,9 +215,7 @@ class IocEnrichment:
                     try:
                         raw = future.result(timeout=self._timeout)
                     except Exception:  # pragma: no cover — defensive
-                        logger.warning(
-                            "IOC enrichment failed for source %r", source, exc_info=True
-                        )
+                        logger.warning("IOC enrichment failed for source %r", source, exc_info=True)
                         continue
                     record = _verdict_record(source, raw)
                     if record is not None:
@@ -249,7 +245,7 @@ class IocEnrichment:
             "sources": self.active_connectors,
         }
 
-    def enrich_case(self, tenant: Tenant, case_id: int) -> Dict[str, Any]:
+    def enrich_case(self, tenant: Tenant, case_id: int) -> dict[str, Any]:
         """Enrich every indicator attached to ``case_id`` under ``tenant``."""
 
         indicators = (
@@ -260,7 +256,7 @@ class IocEnrichment:
             )
             .all()
         )
-        results: Dict[int, Dict[str, Any]] = {}
+        results: dict[int, dict[str, Any]] = {}
         for indicator in indicators:
             results[indicator.id] = self.enrich(indicator)
         return {
@@ -275,7 +271,7 @@ class IocEnrichment:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _scope_for_indicator(indicator: IndicatorArtifact) -> Dict[str, Any]:
+    def _scope_for_indicator(indicator: IndicatorArtifact) -> dict[str, Any]:
         """Produce the per-indicator scope dict accepted by every IOC connector.
 
         The uniform shape is ``{"iocs": [{"kind", "value"}], "single": True}``
@@ -295,7 +291,7 @@ class IocEnrichment:
             "single": True,
         }
 
-    def _safe_fetch(self, connector: Any, scope: Dict[str, Any]) -> Any:
+    def _safe_fetch(self, connector: Any, scope: dict[str, Any]) -> Any:
         """Call ``connector.fetch(scope)`` with conservative exception handling."""
 
         try:

@@ -13,7 +13,7 @@ import base64
 import logging
 import os
 import time
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 import requests
 
@@ -44,13 +44,13 @@ class VirusTotalConnector:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         *,
         base_url: str = VT_BASE_URL,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
-        backoff_seconds: Optional[float] = None,
+        session: requests.Session | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        backoff_seconds: float | None = None,
         sleep_fn=time.sleep,
     ) -> None:
         self._api_key = api_key or os.getenv("VT_API_KEY") or ""
@@ -69,7 +69,7 @@ class VirusTotalConnector:
     def healthy(self) -> bool:
         return bool(self._api_key)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {
             "x-apikey": self._api_key,
             "Accept": "application/json",
@@ -79,20 +79,21 @@ class VirusTotalConnector:
     # HTTP with rate-limit handling
     # ------------------------------------------------------------------
 
-    def _get(self, path: str) -> Optional[Dict[str, Any]]:
+    def _get(self, path: str) -> dict[str, Any] | None:
         if not self.healthy:
             return None
 
         url = f"{self._base_url}{path}"
         for attempt in range(1, self._max_retries + 1):
             try:
-                resp = self._session.get(
-                    url, headers=self._headers(), timeout=self._timeout
-                )
+                resp = self._session.get(url, headers=self._headers(), timeout=self._timeout)
             except requests.RequestException as exc:
                 logger.warning(
                     "VirusTotal request error (attempt %d/%d) for %s: %s",
-                    attempt, self._max_retries, path, exc,
+                    attempt,
+                    self._max_retries,
+                    path,
+                    exc,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -101,7 +102,9 @@ class VirusTotalConnector:
             if resp.status_code == 429:
                 logger.warning(
                     "VirusTotal rate limited (attempt %d/%d) for %s",
-                    attempt, self._max_retries, path,
+                    attempt,
+                    self._max_retries,
+                    path,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
@@ -114,16 +117,17 @@ class VirusTotalConnector:
             if resp.status_code >= 500:
                 logger.warning(
                     "VirusTotal %s for %s (attempt %d/%d)",
-                    resp.status_code, path, attempt, self._max_retries,
+                    resp.status_code,
+                    path,
+                    attempt,
+                    self._max_retries,
                 )
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * attempt)
                 continue
 
             if resp.status_code >= 400:
-                logger.warning(
-                    "VirusTotal client error %s for %s", resp.status_code, path
-                )
+                logger.warning("VirusTotal client error %s for %s", resp.status_code, path)
                 return None
 
             try:
@@ -138,29 +142,25 @@ class VirusTotalConnector:
     # Per-kind lookups
     # ------------------------------------------------------------------
 
-    def fetch_file(self, sha256: str) -> Optional[Dict[str, Any]]:
+    def fetch_file(self, sha256: str) -> dict[str, Any] | None:
         if not sha256:
             return None
         body = self._get(f"/files/{sha256}")
         return self._normalize(body, indicator_kind="sha256", value=sha256) if body else None
 
-    def fetch_url(self, url: str) -> Optional[Dict[str, Any]]:
+    def fetch_url(self, url: str) -> dict[str, Any] | None:
         if not url:
             return None
         body = self._get(f"/urls/{_vt_url_id(url)}")
         return self._normalize(body, indicator_kind="url", value=url) if body else None
 
-    def fetch_domain(self, domain: str) -> Optional[Dict[str, Any]]:
+    def fetch_domain(self, domain: str) -> dict[str, Any] | None:
         if not domain:
             return None
         body = self._get(f"/domains/{domain}")
-        return (
-            self._normalize(body, indicator_kind="domain", value=domain)
-            if body
-            else None
-        )
+        return self._normalize(body, indicator_kind="domain", value=domain) if body else None
 
-    def fetch_ip(self, ip: str) -> Optional[Dict[str, Any]]:
+    def fetch_ip(self, ip: str) -> dict[str, Any] | None:
         if not ip:
             return None
         body = self._get(f"/ip_addresses/{ip}")
@@ -170,7 +170,7 @@ class VirusTotalConnector:
     # Generic fan-out
     # ------------------------------------------------------------------
 
-    def fetch(self, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def fetch(self, scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Fetch a list of IOC records, one per input ``{kind, value}`` pair.
 
         ``scope`` shape: ``{"iocs": [{"kind": "sha256", "value": "..."}, ...]}``
@@ -181,7 +181,7 @@ class VirusTotalConnector:
 
         scope = scope or {}
         iocs = scope.get("iocs") or []
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         for ioc in iocs:
             if not isinstance(ioc, dict):
@@ -190,7 +190,7 @@ class VirusTotalConnector:
             value = ioc.get("value")
             if not value:
                 continue
-            record: Optional[Dict[str, Any]] = None
+            record: dict[str, Any] | None = None
             if kind in ("sha256", "file", "hash"):
                 record = self.fetch_file(value)
             elif kind == "url":
@@ -213,13 +213,13 @@ class VirusTotalConnector:
 
     @staticmethod
     def _normalize(
-        body: Dict[str, Any],
+        body: dict[str, Any],
         *,
         indicator_kind: str,
         value: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         data = body.get("data") if isinstance(body, dict) else None
-        attrs: Dict[str, Any] = {}
+        attrs: dict[str, Any] = {}
         if isinstance(data, dict):
             attrs = data.get("attributes") or {}
 

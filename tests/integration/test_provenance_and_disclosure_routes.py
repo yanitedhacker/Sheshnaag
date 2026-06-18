@@ -73,7 +73,9 @@ def seed_database():
                 environment="production",
                 criticality="high",
                 business_criticality="high",
-                installed_software=[{"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}],
+                installed_software=[
+                    {"vendor": "acme", "product": "acme-api-gateway", "version": "7.4.2"}
+                ],
             )
         )
         session.commit()
@@ -86,15 +88,25 @@ def seed_database():
             name="Routes recipe",
             objective="Exercise artifact and disclosure routes.",
             created_by="Routes Owner",
-            content={"command": ["bash", "-lc", "echo routes"], "network_policy": {"allow_egress_hosts": []}},
+            content={
+                "command": ["bash", "-lc", "echo routes"],
+                "network_policy": {"allow_egress_hosts": []},
+            },
         )
-        service.approve_recipe_revision(tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer")
+        service.approve_recipe_revision(
+            tenant, recipe_id=recipe["id"], revision_number=1, reviewer="Lead Reviewer"
+        )
         run = service.launch_run(
             tenant,
             recipe_id=recipe["id"],
             revision_number=1,
             analyst_name="Routes Owner",
-            workstation={"hostname": "routes-host", "os_family": "macOS", "architecture": "arm64", "fingerprint": "routes-fp"},
+            workstation={
+                "hostname": "routes-host",
+                "os_family": "macOS",
+                "architecture": "arm64",
+                "fingerprint": "routes-fp",
+            },
             launch_mode="simulated",
             acknowledge_sensitive=False,
         )
@@ -109,8 +121,12 @@ def seed_database():
 def test_artifact_review_and_feedback_routes():
     session = TestingSession()
     try:
-        tenant = AuthService(session).resolve_private_tenant(token_data=None, tenant_slug="integration-routes-private")
-        artifacts = SheshnaagService(session).list_artifacts(tenant, run_id=globals()["SEEDED_RUN_ID"])
+        tenant = AuthService(session).resolve_private_tenant(
+            token_data=None, tenant_slug="integration-routes-private"
+        )
+        artifacts = SheshnaagService(session).list_artifacts(
+            tenant, run_id=globals()["SEEDED_RUN_ID"]
+        )
         detection_id = artifacts["detections"][0]["id"]
     finally:
         session.close()

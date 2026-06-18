@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import Mapping, Optional
+from collections.abc import Mapping
 
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,6 @@ from app.services.integrations._common import (
     perform_transition,
     upsert_link,
 )
-
 
 _DEFAULT_SIG_HEADER = "x-hub-signature-256"
 
@@ -37,14 +36,12 @@ def verify_signature(
         signature = signature[len("sha256=") :]
     if not signature or not secret:
         return False
-    expected = hmac.new(
-        secret.encode("utf-8"), body, hashlib.sha256
-    ).hexdigest()
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 
 
 def handle_event(
-    session: Session, event: dict, *, default_actor_roles: Optional[list[str]] = None
+    session: Session, event: dict, *, default_actor_roles: list[str] | None = None
 ) -> dict:
     actor_roles = default_actor_roles or []
 

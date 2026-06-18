@@ -1,7 +1,5 @@
 """V3 sandbox profile APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -14,8 +12,8 @@ router = APIRouter(prefix="/api/sandbox-profiles", tags=["Sheshnaag V3 Sandbox P
 
 
 class SandboxProfileCreateRequest(BaseModel):
-    tenant_id: Optional[int] = None
-    tenant_slug: Optional[str] = None
+    tenant_id: int | None = None
+    tenant_slug: str | None = None
     name: str
     profile_type: str
     provider_hint: str
@@ -26,17 +24,23 @@ class SandboxProfileCreateRequest(BaseModel):
 
 @router.get("")
 def list_sandbox_profiles(
-    tenant_slug: Optional[str] = Query(None),
-    tenant_id: Optional[int] = Query(None),
+    tenant_slug: str | None = Query(None),
+    tenant_id: int | None = Query(None),
     session: Session = Depends(get_sync_session),
 ):
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     return MalwareLabService(session).list_sandbox_profiles(tenant)
 
 
 @router.post("")
-def create_sandbox_profile(request: SandboxProfileCreateRequest, session: Session = Depends(get_sync_session)):
-    tenant = require_writable_tenant(session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug)
+def create_sandbox_profile(
+    request: SandboxProfileCreateRequest, session: Session = Depends(get_sync_session)
+):
+    tenant = require_writable_tenant(
+        session, tenant_id=request.tenant_id, tenant_slug=request.tenant_slug
+    )
     return MalwareLabService(session).create_sandbox_profile(
         tenant,
         name=request.name,

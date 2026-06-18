@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from app.patch_optimizer.time_models import time_pressure_multiplier
 
@@ -17,7 +16,7 @@ def _clamp01(v: float) -> float:
     return v
 
 
-def criticality_score(criticality: Optional[str]) -> float:
+def criticality_score(criticality: str | None) -> float:
     """
     Map asset criticality string to normalized score in [0,1].
 
@@ -35,7 +34,7 @@ def criticality_score(criticality: Optional[str]) -> float:
     return 0.5
 
 
-def environment_score(environment: Optional[str]) -> float:
+def environment_score(environment: str | None) -> float:
     """
     Map environment to normalized exposure/importance score.
     """
@@ -49,11 +48,11 @@ def environment_score(environment: Optional[str]) -> float:
     return 0.7
 
 
-def exploit_likelihood_score(exploit_probability: Optional[float]) -> float:
+def exploit_likelihood_score(exploit_probability: float | None) -> float:
     return _clamp01(float(exploit_probability or 0.0))
 
 
-def impact_score_from_cvss(cvss_v3_score: Optional[float]) -> float:
+def impact_score_from_cvss(cvss_v3_score: float | None) -> float:
     """
     Normalize CVSS (0-10) into [0,1].
     """
@@ -84,21 +83,16 @@ def patch_cost_score(
     change_risk = _clamp01(float(change_risk_score or 0.0))
 
     pcs = (
-        0.25
-        + 0.25 * reboot
-        + 0.25 * downtime
-        + 0.15 * rollback
-        + 0.07 * fail
-        + 0.03 * change_risk
+        0.25 + 0.25 * reboot + 0.25 * downtime + 0.15 * rollback + 0.07 * fail + 0.03 * change_risk
     )
     return _clamp01(pcs)
 
 
 def time_pressure_score(
     *,
-    cve_published_at: Optional[datetime],
-    patch_released_at: Optional[datetime],
-    as_of: Optional[datetime] = None,
+    cve_published_at: datetime | None,
+    patch_released_at: datetime | None,
+    as_of: datetime | None = None,
     delay_days: float = 0.0,
 ) -> float:
     """
@@ -106,14 +100,14 @@ def time_pressure_score(
 
     We prefer CVE published date if available; otherwise patch released date.
     """
-    now = as_of or datetime.now(timezone.utc)
+    now = as_of or datetime.now(UTC)
     base = cve_published_at or patch_released_at
     if not base:
         return 0.0
     if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
+        base = base.replace(tzinfo=UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     days = (now - base).total_seconds() / 86400.0 + max(0.0, float(delay_days))
     return time_pressure_multiplier(days)
 

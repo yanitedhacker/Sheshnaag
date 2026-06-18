@@ -17,9 +17,9 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any, Dict, List
+from typing import Any
 
-from app.lab.launchers.base import Launcher, LauncherResult
+from app.lab.launchers.base import LauncherResult
 
 _ELF_KINDS = frozenset({"file/elf", "file/script", "file"})
 _ELF_MIMES = frozenset(
@@ -49,7 +49,7 @@ class ElfLauncher:
     def _has_binary(self, name: str) -> bool:
         return shutil.which(name) is not None
 
-    def _exec(self, argv: List[str], *, timeout: int) -> subprocess.CompletedProcess:
+    def _exec(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess:
         return subprocess.run(
             argv,
             check=False,
@@ -70,9 +70,9 @@ class ElfLauncher:
         snapshot_snap: Any,
     ) -> LauncherResult:
         start = time.monotonic()
-        logs: List[str] = []
-        artifacts: List[str] = []
-        metadata: Dict[str, Any] = {"launcher": "elf"}
+        logs: list[str] = []
+        artifacts: list[str] = []
+        metadata: dict[str, Any] = {"launcher": "elf"}
 
         profile_cfg = getattr(profile, "config", {}) or {}
         timeout = int(profile_cfg.get("detonation_timeout_s", 60))

@@ -6,9 +6,9 @@ from sqlalchemy import JSON, create_engine
 from sqlalchemy.dialects import postgresql, sqlite
 
 from app.models.embeddings import (
+    VECTOR_DIM,
     KnowledgeChunkEmbedding,
     SpecimenBehaviorEmbedding,
-    VECTOR_DIM,
     VectorOrJSON,
 )
 
@@ -31,8 +31,8 @@ def test_vector_column_type_dialect_aware():
 
 def test_vector_column_roundtrips_list_on_sqlite():
     engine = create_engine("sqlite://")
-    from app.core.database import Base
     import app.models  # noqa: F401  -- register all tables
+    from app.core.database import Base
 
     Base.metadata.create_all(engine)
     try:
@@ -70,6 +70,4 @@ def test_vector_column_roundtrips_list_on_sqlite():
 def test_specimen_behavior_embedding_schema():
     # The mapper must have the expected column set.
     cols = {c.name for c in SpecimenBehaviorEmbedding.__table__.columns}
-    assert {"specimen_id", "feature_digest", "embedding", "created_at"}.issubset(
-        cols
-    )
+    assert {"specimen_id", "feature_digest", "embedding", "created_at"}.issubset(cols)

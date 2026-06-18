@@ -31,9 +31,10 @@ import logging
 import os
 import secrets
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional, Protocol
+from datetime import UTC, datetime, timedelta
+from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -74,7 +75,7 @@ class Capability:
     review_kind: str  # "single" | "dual" | "dual_plus_admin"
     max_ttl: timedelta
     requires_engagement_doc: bool = False
-    requester_roles: Optional[frozenset[str]] = None
+    requester_roles: frozenset[str] | None = None
 
 
 # V5 role-tier shortcuts. lab_lead is implicit in both tiers as the
@@ -91,7 +92,7 @@ def _cap(
     max_ttl: timedelta,
     *,
     requires_engagement_doc: bool = False,
-    requester_roles: Optional[frozenset[str]] = None,
+    requester_roles: frozenset[str] | None = None,
 ) -> tuple[str, Capability]:
     return name, Capability(
         name=name,
@@ -230,7 +231,7 @@ class Decision:
 
     permitted: bool
     reason: str
-    artifact_id: Optional[str] = None
+    artifact_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -239,7 +240,7 @@ class Reviewer:
 
     reviewer: str
     decision: str  # "approve" | "reject"
-    signed_at: Optional[datetime] = None
+    signed_at: datetime | None = None
 
 
 @dataclass
@@ -250,8 +251,8 @@ class IssuanceRequest:
     scope: dict
     requester: str
     reason: str
-    requested_ttl: Optional[timedelta] = None
-    engagement_ref: Optional[str] = None  # sha256 or URL for the engagement doc
+    requested_ttl: timedelta | None = None
+    engagement_ref: str | None = None  # sha256 or URL for the engagement doc
     is_admin_approved: bool = False  # set to True when an admin co-signs
     extra: dict = field(default_factory=dict)
 
@@ -262,7 +263,7 @@ class VerificationResult:
 
     ok: bool
     last_verified_idx: int
-    first_bad_idx: Optional[int]
+    first_bad_idx: int | None
     reason: str
 
 
@@ -274,8 +275,8 @@ class VerificationResult:
 def _default_json(value: Any) -> Any:
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
     if isinstance(value, (bytes, bytearray)):
         return base64.b64encode(bytes(value)).decode("ascii")
     if isinstance(value, timedelta):
@@ -307,8 +308,8 @@ def _sha256(data: bytes) -> bytes:
 
 def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +340,7 @@ class HmacDevSigner:
     name = "hmac-sha256"
     _WARNED = False
 
-    def __init__(self, key: Optional[bytes] = None) -> None:
+    def __init__(self, key: bytes | None = None) -> None:
         if key is None:
             raw = os.getenv("AUDIT_SIGNING_KEY", "")
             if raw:
@@ -394,6 +395,7 @@ class CosignSigner:
     def __init__(self) -> None:
         try:
             import sigstore  # noqa: F401  # keep optional
+
             self._impl: Any = _SigstoreImpl()
         except Exception as exc:  # pragma: no cover — optional dep missing in dev
             logger.warning(
@@ -437,8 +439,8 @@ class _SigstoreImpl:  # pragma: no cover — exercised in production; mocked in 
         from sigstore.sign import SigningContext
 
         self._ctx = SigningContext.production()
-        self._last_rekor_log_index: Optional[int] = None
-        self._last_rekor_log_id: Optional[str] = None
+        self._last_rekor_log_index: int | None = None
+        self._last_rekor_log_id: str | None = None
 
     def sign(self, body: bytes) -> tuple[bytes, bytes]:
         import io
@@ -447,10 +449,9 @@ class _SigstoreImpl:  # pragma: no cover — exercised in production; mocked in 
             bundle = signer.sign_artifact(io.BytesIO(body))
         sig = bundle.signature
         cert = bundle.signing_certificate.public_bytes(
-            encoding=getattr(
-                __import__("cryptography.hazmat.primitives.serialization", fromlist=["Encoding"]),
-                "Encoding",
-            ).PEM
+            encoding=__import__(
+                "cryptography.hazmat.primitives.serialization", fromlist=["Encoding"]
+            ).Encoding.PEM
         )
         # Persist the most recent Rekor coordinates so callers can stash
         # them onto the audit-row payload without re-issuing a network call.
@@ -495,16 +496,14 @@ def build_signer() -> Signer:
 class CapabilityPolicy:
     """Evaluate, issue, and revoke capability authorizations."""
 
-    def __init__(self, session: Session, *, signer: Optional[Signer] = None) -> None:
+    def __init__(self, session: Session, *, signer: Signer | None = None) -> None:
         self._session = session
         self._signer: Signer = signer or build_signer()
 
     # ---- public API -------------------------------------------------------
 
     @staticmethod
-    def permitted_requester_for(
-        capability: str, roles: Iterable[str]
-    ) -> bool:
+    def permitted_requester_for(capability: str, roles: Iterable[str]) -> bool:
         """Return True if any of ``roles`` may originate an issuance request.
 
         V5 W0c data hook. Used by V6 AuthorizationCenter to gate the
@@ -603,9 +602,7 @@ class CapabilityPolicy:
 
         required = 1 if cap.review_kind == "single" else 2
         if len(approving) < required:
-            raise ValueError(
-                f"need_{required}_approvals_got_{len(approving)}"
-            )
+            raise ValueError(f"need_{required}_approvals_got_{len(approving)}")
 
         if cap.review_kind == "dual_plus_admin" and not request.is_admin_approved:
             raise ValueError("need_admin_approval")
@@ -631,9 +628,9 @@ class CapabilityPolicy:
             {
                 "reviewer": r.reviewer,
                 "decision": r.decision,
-                "signed_at": _ensure_aware(r.signed_at or issued_at).isoformat().replace(
-                    "+00:00", "Z"
-                ),
+                "signed_at": _ensure_aware(r.signed_at or issued_at)
+                .isoformat()
+                .replace("+00:00", "Z"),
             }
             for r in approving
         ]
@@ -731,9 +728,11 @@ class CapabilityPolicy:
         )
 
     def latest_root(self) -> dict:
-        row = self._session.execute(
-            select(AuditLogEntry).order_by(AuditLogEntry.idx.desc()).limit(1)
-        ).scalars().first()
+        row = (
+            self._session.execute(select(AuditLogEntry).order_by(AuditLogEntry.idx.desc()).limit(1))
+            .scalars()
+            .first()
+        )
         if row is None:
             return {"idx": -1, "entry_hash": base64.b64encode(GENESIS_HASH).decode("ascii")}
         return {
@@ -741,7 +740,7 @@ class CapabilityPolicy:
             "entry_hash": base64.b64encode(bytes(row.entry_hash)).decode("ascii"),
         }
 
-    def verify_chain(self, since: Optional[int] = None) -> VerificationResult:
+    def verify_chain(self, since: int | None = None) -> VerificationResult:
         query = select(AuditLogEntry).order_by(AuditLogEntry.idx.asc())
         if since is not None:
             query = query.where(AuditLogEntry.idx >= since)
@@ -750,12 +749,16 @@ class CapabilityPolicy:
         last_verified_idx = -1
 
         if since is not None and since > 0:
-            prior = self._session.execute(
-                select(AuditLogEntry)
-                .where(AuditLogEntry.idx < since)
-                .order_by(AuditLogEntry.idx.desc())
-                .limit(1)
-            ).scalars().first()
+            prior = (
+                self._session.execute(
+                    select(AuditLogEntry)
+                    .where(AuditLogEntry.idx < since)
+                    .order_by(AuditLogEntry.idx.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
             if prior is not None:
                 previous_hash = bytes(prior.entry_hash)
                 last_verified_idx = int(prior.idx)
@@ -807,9 +810,11 @@ class CapabilityPolicy:
         return "auth_" + uuid.uuid4().hex[:24]
 
     def _latest_entry_hash(self) -> bytes:
-        row = self._session.execute(
-            select(AuditLogEntry).order_by(AuditLogEntry.idx.desc()).limit(1)
-        ).scalars().first()
+        row = (
+            self._session.execute(select(AuditLogEntry).order_by(AuditLogEntry.idx.desc()).limit(1))
+            .scalars()
+            .first()
+        )
         if row is None:
             return GENESIS_HASH
         return bytes(row.entry_hash)
@@ -830,9 +835,7 @@ class CapabilityPolicy:
             "artifact_id": row.artifact_id,
             "scope": row.scope or {},
             "payload": row.payload or {},
-            "signed_at": _ensure_aware(row.signed_at)
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "signed_at": _ensure_aware(row.signed_at).isoformat().replace("+00:00", "Z"),
         }
 
     def _append_audit_entry(
@@ -841,11 +844,11 @@ class CapabilityPolicy:
         action: str,
         actor: str,
         capability: str,
-        artifact_id: Optional[str],
+        artifact_id: str | None,
         scope: dict,
         payload: dict,
-        signer_cert: Optional[bytes] = None,
-        signature: Optional[bytes] = None,
+        signer_cert: bytes | None = None,
+        signature: bytes | None = None,
     ) -> AuditLogEntry:
         previous_hash = self._latest_entry_hash()
         signed_at = utc_now()
@@ -910,11 +913,15 @@ class CapabilityPolicy:
         # may already carry uncommitted artifact / audit rows.
         try:
             with self._session.begin_nested():
-                policy = self._session.execute(
-                    select(ScopePolicy)
-                    .where(ScopePolicy.tenant_id == tenant_id)
-                    .where(ScopePolicy.status == "active")
-                ).scalars().first()
+                policy = (
+                    self._session.execute(
+                        select(ScopePolicy)
+                        .where(ScopePolicy.tenant_id == tenant_id)
+                        .where(ScopePolicy.status == "active")
+                    )
+                    .scalars()
+                    .first()
+                )
         except Exception:
             return False
         if policy is None:
@@ -923,17 +930,19 @@ class CapabilityPolicy:
         defaults = doc.get("tenant_default_capabilities") or []
         return capability in set(defaults)
 
-    def _find_active_artifact(
-        self, capability: str, scope: dict
-    ) -> Optional[AuthorizationArtifact]:
+    def _find_active_artifact(self, capability: str, scope: dict) -> AuthorizationArtifact | None:
         now = utc_now()
-        rows = self._session.execute(
-            select(AuthorizationArtifact)
-            .where(AuthorizationArtifact.capability == capability)
-            .where(AuthorizationArtifact.revoked_at.is_(None))
-            .where(AuthorizationArtifact.expires_at > now)
-            .order_by(AuthorizationArtifact.issued_at.desc())
-        ).scalars().all()
+        rows = (
+            self._session.execute(
+                select(AuthorizationArtifact)
+                .where(AuthorizationArtifact.capability == capability)
+                .where(AuthorizationArtifact.revoked_at.is_(None))
+                .where(AuthorizationArtifact.expires_at > now)
+                .order_by(AuthorizationArtifact.issued_at.desc())
+            )
+            .scalars()
+            .all()
+        )
         for row in rows:
             if self._scope_matches(row.scope or {}, scope or {}):
                 return row

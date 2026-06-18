@@ -1,7 +1,5 @@
 """Supply-chain overview APIs."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -14,12 +12,14 @@ router = APIRouter(prefix="/api/supply-chain", tags=["Supply Chain"])
 
 @router.get("/overview")
 def get_supply_chain_overview(
-    tenant_slug: Optional[str] = None,
-    tenant_id: Optional[int] = None,
+    tenant_slug: str | None = None,
+    tenant_id: int | None = None,
     session: Session = Depends(get_sync_session),
 ):
     """Return supply-chain attack analysis and source-breadth metadata."""
-    tenant = resolve_tenant(session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True)
+    tenant = resolve_tenant(
+        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=True
+    )
     service = SupplyChainService(session)
     return {
         "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},

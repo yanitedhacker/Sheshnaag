@@ -8,20 +8,19 @@ import os
 import time
 import uuid
 import zipfile
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from app.core.time import utc_now
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
-from app.core.tenancy import resolve_tenant
-from app.ingestion.connector import get_registered_connectors
-from app.models.ops import FeedSyncRun, FeedSyncState
-from app.lab.artifact_generator import DefensiveArtifactGenerator
 from app.core.config import settings
+from app.core.time import utc_now
+from app.ingestion.connector import get_registered_connectors
+from app.lab.artifact_generator import DefensiveArtifactGenerator
 from app.lab.attestation import Ed25519AttestationSigner, HashAttestationSigner
 from app.lab.collector_contract import (
     DEFAULT_RECIPE_COLLECTORS,
@@ -30,16 +29,26 @@ from app.lab.collector_contract import (
 )
 from app.lab.collectors import instantiate_collectors
 from app.lab.collectors.common import collector_error_evidence
-from app.lab.docker_kali_provider import DEFAULT_KALI_IMAGE, DEFAULT_OSQUERY_IMAGE, DEFAULT_TRACEE_IMAGE
+from app.lab.docker_kali_provider import (
+    DEFAULT_KALI_IMAGE,
+    DEFAULT_OSQUERY_IMAGE,
+)
 from app.lab.image_catalog import list_image_catalog, resolve_catalog_entry
-from app.lab.interfaces import HealthStatus, ProviderResult, RunState, normalize_launch_mode, validate_transition
+from app.lab.interfaces import (
+    HealthStatus,
+    ProviderResult,
+    RunState,
+    normalize_launch_mode,
+    validate_transition,
+)
 from app.lab.provider_registry import SUPPORTED_PROVIDER_NAMES, build_default_provider_registry
-from app.models.asset import Asset, AssetVulnerability
-from app.models.cve import AffectedProduct, CVE
+from app.models.asset import Asset
+from app.models.cve import CVE, AffectedProduct
+from app.models.ops import FeedSyncRun, FeedSyncState
 from app.models.risk_score import RiskScore
 from app.models.sheshnaag import (
-    AdvisoryRecord,
     AdvisoryPackageLink,
+    AdvisoryRecord,
     AnalystIdentity,
     AttestationRecord,
     CandidateScoreRecalculationRun,
@@ -47,7 +56,6 @@ from app.models.sheshnaag import (
     DetectionArtifact,
     DisclosureBundle,
     EvidenceArtifact,
-    ExploitSignal,
     LabRecipe,
     LabRun,
     LabTemplate,
@@ -64,10 +72,16 @@ from app.models.sheshnaag import (
     VersionRange,
     WorkstationFingerprint,
 )
-from app.models.v2 import AssetSoftware, EPSSSnapshot, KEVEntry, KnowledgeDocument, SoftwareComponent, Tenant, VexStatement
+from app.models.v2 import (
+    EPSSSnapshot,
+    KEVEntry,
+    KnowledgeDocument,
+    SoftwareComponent,
+    Tenant,
+    VexStatement,
+)
 from app.services.advisory_normalization import summarize_advisory_records
 from app.services.candidate_scoring import (
-    CANDIDATE_SCORING_WEIGHTS,
     CandidateScoringContext,
     compute_candidate_explainability,
 )
@@ -83,7 +97,7 @@ VALID_CANDIDATE_STATUSES = {
     "archived",
 }
 
-CANDIDATE_STATUS_TRANSITIONS: Dict[str, set] = {
+CANDIDATE_STATUS_TRANSITIONS: dict[str, set] = {
     "queued": {"in_review", "deferred", "rejected", "duplicate", "archived"},
     "deferred": {"queued", "in_review", "rejected", "archived"},
     "in_review": {"queued", "deferred", "rejected", "duplicate", "archived"},
@@ -91,14 +105,16 @@ CANDIDATE_STATUS_TRANSITIONS: Dict[str, set] = {
     "duplicate": set(),
     "archived": {"queued"},
 }
+
+
 @dataclass
 class RunArtifacts:
     """In-memory run outputs before persistence."""
 
-    evidence: List[Dict[str, Any]]
-    detections: List[Dict[str, Any]]
-    mitigations: List[Dict[str, Any]]
-    attestation: Dict[str, str]
+    evidence: list[dict[str, Any]]
+    detections: list[dict[str, Any]]
+    mitigations: list[dict[str, Any]]
+    attestation: dict[str, str]
 
 
 class SheshnaagService:
@@ -109,7 +125,9 @@ class SheshnaagService:
         self.intel = ThreatIntelService(session)
         self.knowledge = KnowledgeRetrievalService(session)
         self.provider_registry = build_default_provider_registry()
-        self.providers = {name: self.provider_registry.create(name) for name in self.provider_registry.supported()}
+        self.providers = {
+            name: self.provider_registry.create(name) for name in self.provider_registry.supported()
+        }
         self.provider = self.providers["docker_kali"]
         self.artifact_generator = DefensiveArtifactGenerator()
         self.default_attestation_signer = HashAttestationSigner()
@@ -126,7 +144,9 @@ class SheshnaagService:
         safe_slug = (tenant.slug or f"tenant-{tenant.id}").replace("/", "-")
         return str(Path(settings.signing_key_dir) / f"{safe_slug}-{key_name}.ed25519")
 
-    def _ensure_tenant_signing_key(self, tenant: Tenant, *, key_name: str = "default") -> TenantSigningKey:
+    def _ensure_tenant_signing_key(
+        self, tenant: Tenant, *, key_name: str = "default"
+    ) -> TenantSigningKey:
         record = (
             self.session.query(TenantSigningKey)
             .filter(TenantSigningKey.tenant_id == tenant.id, TenantSigningKey.key_name == key_name)
@@ -164,17 +184,21 @@ class SheshnaagService:
         )
 
     def _assert_transition(self, run: LabRun, target: RunState) -> None:
-        current = RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
+        current = (
+            RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
+        )
         if not validate_transition(current, target):
             raise ValueError(
                 f"Invalid run state transition from '{current.value}' to '{target.value}'."
             )
 
-    def _provider_for_name(self, provider_name: Optional[str]) -> Any:
+    def _provider_for_name(self, provider_name: str | None) -> Any:
         normalized = (provider_name or "docker_kali").strip().lower()
         provider = self.providers.get(normalized)
         if provider is None:
-            raise ValueError(f"Unsupported provider '{provider_name}'. Expected one of {sorted(self.providers)}.")
+            raise ValueError(
+                f"Unsupported provider '{provider_name}'. Expected one of {sorted(self.providers)}."
+            )
         return provider
 
     def _provider_for_revision(self, recipe: LabRecipe, revision: RecipeRevision) -> Any:
@@ -208,7 +232,7 @@ class SheshnaagService:
         event_type: str,
         result: ProviderResult,
         level: str = "info",
-        message: Optional[str] = None,
+        message: str | None = None,
     ) -> None:
         self.session.add(
             RunEvent(
@@ -227,7 +251,7 @@ class SheshnaagService:
         *,
         severity: str = "info",
         source: str = "api",
-        payload: Optional[Dict[str, Any]] = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         from app.core.event_bus import EventBus, run_event_stream
 
@@ -244,7 +268,7 @@ class SheshnaagService:
         )
 
     def _enqueue_sandbox_work(self, *, run: LabRun, tenant: Tenant, actor: str) -> str:
-        from app.core.event_bus import EventBus, SANDBOX_WORK_STREAM
+        from app.core.event_bus import SANDBOX_WORK_STREAM, EventBus
 
         return EventBus().publish(
             SANDBOX_WORK_STREAM,
@@ -273,8 +297,8 @@ class SheshnaagService:
         run: LabRun,
         *,
         analyst_name: str,
-        candidate: Optional[ResearchCandidate],
-    ) -> Dict[str, Any]:
+        candidate: ResearchCandidate | None,
+    ) -> dict[str, Any]:
         return {
             "run_id": run.id,
             "tenant_slug": tenant.slug,
@@ -293,13 +317,13 @@ class SheshnaagService:
         *,
         provider_name: str,
         launch_mode: str,
-        analysis_mode: Optional[str],
-        sandbox_profile_id: Optional[int],
-        specimen_ids: Optional[List[int]],
-        egress_mode: Optional[str],
+        analysis_mode: str | None,
+        sandbox_profile_id: int | None,
+        specimen_ids: list[int] | None,
+        egress_mode: str | None,
         ai_assist_enabled: bool,
-        ai_provider_hint: Optional[str],
-    ) -> Dict[str, Any]:
+        ai_provider_hint: str | None,
+    ) -> dict[str, Any]:
         from app.services.malware_lab_service import MalwareLabService
 
         resolved = MalwareLabService(self.session).resolve_run_contract(
@@ -313,11 +337,15 @@ class SheshnaagService:
             ai_provider_hint=ai_provider_hint,
         )
         risky_modes = {"malware_detonation", "url_analysis", "email_analysis"}
-        if resolved["analysis_mode"] in risky_modes and resolved["resolved_provider_name"] != "lima" and launch_mode in {"simulated", "execute"}:
+        if (
+            resolved["analysis_mode"] in risky_modes
+            and resolved["resolved_provider_name"] != "lima"
+            and launch_mode in {"simulated", "execute"}
+        ):
             raise ValueError("Risky malware analysis modes require the Lima provider.")
         return resolved
 
-    def _persist_v3_run_context(self, run: LabRun, *, v3_context: Dict[str, Any]) -> None:
+    def _persist_v3_run_context(self, run: LabRun, *, v3_context: dict[str, Any]) -> None:
         manifest = dict(run.manifest or {})
         manifest["analysis_mode"] = v3_context["analysis_mode"]
         manifest["sandbox_profile_id"] = v3_context["sandbox_profile_id"]
@@ -353,7 +381,9 @@ class SheshnaagService:
         if v3_context.get("resolved_provider_name"):
             run.provider = v3_context["resolved_provider_name"]
 
-    def _revision_content_for_provider(self, content: Dict[str, Any], provider_name: str) -> Dict[str, Any]:
+    def _revision_content_for_provider(
+        self, content: dict[str, Any], provider_name: str
+    ) -> dict[str, Any]:
         """Adapt trusted recipe defaults when policy resolves to a different provider."""
         resolved = dict(content or {})
         original_provider = str(resolved.get("provider") or "docker_kali")
@@ -369,16 +399,15 @@ class SheshnaagService:
             resolved["execution_policy"] = execution_policy
         return resolved
 
-    def get_intel_overview(self, tenant: Tenant) -> Dict[str, Any]:
+    def get_intel_overview(self, tenant: Tenant) -> dict[str, Any]:
         """Return source and candidate freshness data."""
         self._ensure_source_feeds()
         self.sync_candidates(tenant)
 
         feeds = self.session.query(SourceFeed).order_by(SourceFeed.display_name.asc()).all()
 
-        sync_states: Dict[str, FeedSyncState] = {
-            s.source.lower(): s
-            for s in self.session.query(FeedSyncState).all()
+        sync_states: dict[str, FeedSyncState] = {
+            s.source.lower(): s for s in self.session.query(FeedSyncState).all()
         }
 
         latest_run_subq = (
@@ -389,7 +418,7 @@ class SheshnaagService:
             .group_by(FeedSyncRun.source)
             .subquery()
         )
-        latest_runs: Dict[str, FeedSyncRun] = {
+        latest_runs: dict[str, FeedSyncRun] = {
             r.source.lower(): r
             for r in self.session.query(FeedSyncRun)
             .join(latest_run_subq, FeedSyncRun.id == latest_run_subq.c.max_id)
@@ -397,40 +426,56 @@ class SheshnaagService:
         }
 
         now = utc_now()
-        sources: List[Dict[str, Any]] = []
+        sources: list[dict[str, Any]] = []
         for feed in feeds:
             threshold = feed.freshness_seconds or 21600
             is_stale = True
-            stale_since: Optional[str] = None
+            stale_since: str | None = None
             if feed.last_synced_at:
-                synced = feed.last_synced_at.replace(tzinfo=None) if feed.last_synced_at.tzinfo else feed.last_synced_at
+                synced = (
+                    feed.last_synced_at.replace(tzinfo=None)
+                    if feed.last_synced_at.tzinfo
+                    else feed.last_synced_at
+                )
                 age = (now.replace(tzinfo=None) - synced).total_seconds()
                 is_stale = age > threshold
                 if is_stale:
                     from datetime import timedelta
+
                     stale_since = (synced + timedelta(seconds=threshold)).isoformat()
 
             state = sync_states.get(feed.feed_key)
             last_run = latest_runs.get(feed.feed_key)
 
-            sources.append({
-                "feed_key": feed.feed_key,
-                "display_name": feed.display_name,
-                "category": feed.category,
-                "status": feed.status,
-                "source_url": feed.source_url,
-                "last_synced_at": feed.last_synced_at.isoformat() if feed.last_synced_at else None,
-                "freshness_seconds": feed.freshness_seconds,
-                "is_stale": is_stale,
-                "stale_since": stale_since,
-                "last_error": state.last_error if state else None,
-                "recent_item_count_delta": last_run.items_new if last_run else 0,
-            })
+            sources.append(
+                {
+                    "feed_key": feed.feed_key,
+                    "display_name": feed.display_name,
+                    "category": feed.category,
+                    "status": feed.status,
+                    "source_url": feed.source_url,
+                    "last_synced_at": feed.last_synced_at.isoformat()
+                    if feed.last_synced_at
+                    else None,
+                    "freshness_seconds": feed.freshness_seconds,
+                    "is_stale": is_stale,
+                    "stale_since": stale_since,
+                    "last_error": state.last_error if state else None,
+                    "recent_item_count_delta": last_run.items_new if last_run else 0,
+                }
+            )
 
-        candidate_count = self.session.query(ResearchCandidate).filter(ResearchCandidate.tenant_id == tenant.id).count()
+        candidate_count = (
+            self.session.query(ResearchCandidate)
+            .filter(ResearchCandidate.tenant_id == tenant.id)
+            .count()
+        )
         active_states = [
-            RunState.PLANNED.value, RunState.BOOTING.value, RunState.READY.value,
-            RunState.RUNNING.value, RunState.STOPPING.value,
+            RunState.PLANNED.value,
+            RunState.BOOTING.value,
+            RunState.READY.value,
+            RunState.RUNNING.value,
+            RunState.STOPPING.value,
         ]
         active_runs = (
             self.session.query(LabRun)
@@ -451,7 +496,9 @@ class SheshnaagService:
             "summary": {
                 "candidate_count": candidate_count,
                 "active_runs": active_runs,
-                "disclosure_bundles": self.session.query(DisclosureBundle).filter(DisclosureBundle.tenant_id == tenant.id).count(),
+                "disclosure_bundles": self.session.query(DisclosureBundle)
+                .filter(DisclosureBundle.tenant_id == tenant.id)
+                .count(),
             },
         }
 
@@ -475,10 +522,14 @@ class SheshnaagService:
         for cve in cves:
             candidate = (
                 self.session.query(ResearchCandidate)
-                .filter(ResearchCandidate.tenant_id == tenant.id, ResearchCandidate.cve_id == cve.id)
+                .filter(
+                    ResearchCandidate.tenant_id == tenant.id, ResearchCandidate.cve_id == cve.id
+                )
                 .first()
             )
-            affected = self.session.query(AffectedProduct).filter(AffectedProduct.cve_id == cve.id).first()
+            affected = (
+                self.session.query(AffectedProduct).filter(AffectedProduct.cve_id == cve.id).first()
+            )
             product = self._ensure_product_record(affected)
             package = self._ensure_package_record(affected)
             explainability = self._build_candidate_explainability(
@@ -502,16 +553,22 @@ class SheshnaagService:
                     summary=cve.description,
                     package_name=(affected.product if affected else None),
                     product_name=(affected.product if affected else None),
-                    patch_available=bool(self.session.query(VexStatement).filter(VexStatement.cve_id == cve.cve_id.upper()).count()),
+                    patch_available=bool(
+                        self.session.query(VexStatement)
+                        .filter(VexStatement.cve_id == cve.cve_id.upper())
+                        .count()
+                    ),
                 )
                 self.session.add(candidate)
 
             candidate.candidate_score = score
             candidate.status = status
-            candidate.package_name = (affected.product if affected else candidate.package_name)
-            candidate.product_name = (affected.product if affected else candidate.product_name)
+            candidate.package_name = affected.product if affected else candidate.package_name
+            candidate.product_name = affected.product if affected else candidate.product_name
             candidate.environment_fit = "local-docker-kali"
-            candidate.linux_reproducibility_confidence = explainability["linux_reproducibility_confidence"]
+            candidate.linux_reproducibility_confidence = explainability[
+                "linux_reproducibility_confidence"
+            ]
             candidate.observability_score = explainability["observability_score"]
             candidate.patch_available = explainability["patch_available"]
             candidate.explainability = explainability
@@ -536,13 +593,15 @@ class SheshnaagService:
             return True
         if not latest_candidate_ts:
             return True
-        age_seconds = (utc_now().replace(tzinfo=None) - latest_candidate_ts.replace(tzinfo=None)).total_seconds()
+        age_seconds = (
+            utc_now().replace(tzinfo=None) - latest_candidate_ts.replace(tzinfo=None)
+        ).total_seconds()
         return age_seconds > settings.candidate_sync_stale_seconds
 
-    def _candidate_sync_cves(self) -> List[CVE]:
+    def _candidate_sync_cves(self) -> list[CVE]:
         lookback_start = utc_now() - timedelta(days=settings.candidate_sync_lookback_days)
         limit = settings.candidate_sync_limit
-        selected: Dict[int, CVE] = {}
+        selected: dict[int, CVE] = {}
 
         recent_rows = (
             self.session.query(CVE)
@@ -559,7 +618,9 @@ class SheshnaagService:
             for row in self.session.query(CVE).filter(CVE.cve_id.in_(kev_ids)).all():
                 selected[row.id] = row
 
-        for row in self.session.query(CVE).filter(CVE.exploit_available.is_(True)).limit(limit).all():
+        for row in (
+            self.session.query(CVE).filter(CVE.exploit_available.is_(True)).limit(limit).all()
+        ):
             selected[row.id] = row
 
         advisory_rows = (
@@ -591,27 +652,29 @@ class SheshnaagService:
         *,
         limit: int = 20,
         offset: int = 0,
-        status: Optional[str] = None,
-        package_name: Optional[str] = None,
-        product_name: Optional[str] = None,
-        distro_hint: Optional[str] = None,
-        kev_only: Optional[bool] = None,
-        epss_min: Optional[float] = None,
-        epss_max: Optional[float] = None,
-        patch_available: Optional[bool] = None,
-        exploit_available: Optional[bool] = None,
-        min_observability: Optional[float] = None,
-        max_observability: Optional[float] = None,
-        assigned_to: Optional[str] = None,
-        assignment_state: Optional[str] = None,
-        min_score: Optional[float] = None,
-        max_score: Optional[float] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = "desc",
-    ) -> Dict[str, Any]:
+        status: str | None = None,
+        package_name: str | None = None,
+        product_name: str | None = None,
+        distro_hint: str | None = None,
+        kev_only: bool | None = None,
+        epss_min: float | None = None,
+        epss_max: float | None = None,
+        patch_available: bool | None = None,
+        exploit_available: bool | None = None,
+        min_observability: float | None = None,
+        max_observability: float | None = None,
+        assigned_to: str | None = None,
+        assignment_state: str | None = None,
+        min_score: float | None = None,
+        max_score: float | None = None,
+        sort_by: str | None = None,
+        sort_order: str | None = "desc",
+    ) -> dict[str, Any]:
         """List scored candidates with filtering, sorting, and pagination."""
         self.sync_candidates(tenant)
-        query = self.session.query(ResearchCandidate).filter(ResearchCandidate.tenant_id == tenant.id)
+        query = self.session.query(ResearchCandidate).filter(
+            ResearchCandidate.tenant_id == tenant.id
+        )
 
         if exploit_available is not None:
             query = query.join(CVE, ResearchCandidate.cve_id == CVE.id).filter(
@@ -682,7 +745,7 @@ class SheshnaagService:
             "items": [self._candidate_payload(item) for item in rows],
         }
 
-    def get_workload_summary(self, tenant: Tenant) -> Dict[str, Any]:
+    def get_workload_summary(self, tenant: Tenant) -> dict[str, Any]:
         """Return per-analyst queue counts and unassigned totals."""
         base = self.session.query(ResearchCandidate).filter(
             ResearchCandidate.tenant_id == tenant.id,
@@ -704,9 +767,7 @@ class SheshnaagService:
             .group_by(ResearchCandidate.assigned_to)
             .all()
         )
-        by_analyst = [
-            {"analyst": name, "count": count} for name, count in analyst_rows if name
-        ]
+        by_analyst = [{"analyst": name, "count": count} for name, count in analyst_rows if name]
 
         status_rows = (
             self.session.query(
@@ -733,14 +794,16 @@ class SheshnaagService:
         *,
         requested_by: str,
         dry_run: bool = True,
-        reason: Optional[str] = None,
-        candidate_ids: Optional[List[int]] = None,
-        package_name: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        reason: str | None = None,
+        candidate_ids: list[int] | None = None,
+        package_name: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Recompute candidate scores/explainability and persist a recalculation summary."""
         self.sync_candidates(tenant)
-        query = self.session.query(ResearchCandidate).filter(ResearchCandidate.tenant_id == tenant.id)
+        query = self.session.query(ResearchCandidate).filter(
+            ResearchCandidate.tenant_id == tenant.id
+        )
         if candidate_ids:
             query = query.filter(ResearchCandidate.id.in_(candidate_ids))
         if package_name:
@@ -750,18 +813,24 @@ class SheshnaagService:
             query = query.limit(limit)
         rows = query.all()
 
-        epss_map = self.intel.get_latest_epss_map([row.cve.cve_id for row in rows if row.cve and row.cve.cve_id])
-        kev_map = self.intel.get_kev_map([row.cve.cve_id for row in rows if row.cve and row.cve.cve_id])
+        epss_map = self.intel.get_latest_epss_map(
+            [row.cve.cve_id for row in rows if row.cve and row.cve.cve_id]
+        )
+        kev_map = self.intel.get_kev_map(
+            [row.cve.cve_id for row in rows if row.cve and row.cve.cve_id]
+        )
         latest_risk = self._latest_risk_by_cve_id([row.cve_id for row in rows if row.cve_id])
 
         changed_count = 0
         total_delta = 0.0
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for candidate in rows:
             cve = candidate.cve
             if cve is None:
                 continue
-            affected = self.session.query(AffectedProduct).filter(AffectedProduct.cve_id == cve.id).first()
+            affected = (
+                self.session.query(AffectedProduct).filter(AffectedProduct.cve_id == cve.id).first()
+            )
             product = self._ensure_product_record(affected)
             package = self._ensure_package_record(affected)
             explainability = self._build_candidate_explainability(
@@ -806,7 +875,9 @@ class SheshnaagService:
             candidate.package_name = affected.product if affected else candidate.package_name
             candidate.product_name = affected.product if affected else candidate.product_name
             candidate.patch_available = explainability["patch_available"]
-            candidate.linux_reproducibility_confidence = explainability["linux_reproducibility_confidence"]
+            candidate.linux_reproducibility_confidence = explainability[
+                "linux_reproducibility_confidence"
+            ]
             candidate.observability_score = explainability["observability_score"]
 
         summary = {
@@ -817,7 +888,9 @@ class SheshnaagService:
             "total_candidates": len(items),
             "changed_count": changed_count,
             "unchanged_count": max(0, len(items) - changed_count),
-            "average_score_delta": round((total_delta / changed_count), 2) if changed_count else 0.0,
+            "average_score_delta": round((total_delta / changed_count), 2)
+            if changed_count
+            else 0.0,
             "items": items[:200],
         }
         record = CandidateScoreRecalculationRun(
@@ -853,11 +926,16 @@ class SheshnaagService:
             self.session.flush()
         return summary
 
-    def list_candidate_recalculation_runs(self, tenant: Tenant, *, limit: int = 20) -> Dict[str, Any]:
+    def list_candidate_recalculation_runs(
+        self, tenant: Tenant, *, limit: int = 20
+    ) -> dict[str, Any]:
         rows = (
             self.session.query(CandidateScoreRecalculationRun)
             .filter(CandidateScoreRecalculationRun.tenant_id == tenant.id)
-            .order_by(desc(CandidateScoreRecalculationRun.created_at), desc(CandidateScoreRecalculationRun.id))
+            .order_by(
+                desc(CandidateScoreRecalculationRun.created_at),
+                desc(CandidateScoreRecalculationRun.id),
+            )
             .limit(limit)
             .all()
         )
@@ -879,7 +957,14 @@ class SheshnaagService:
             ],
         }
 
-    def assign_candidate(self, tenant: Tenant, *, candidate_id: int, analyst_name: str, assigned_by: Optional[str] = None) -> Dict[str, Any]:
+    def assign_candidate(
+        self,
+        tenant: Tenant,
+        *,
+        candidate_id: int,
+        analyst_name: str,
+        assigned_by: str | None = None,
+    ) -> dict[str, Any]:
         """Assign candidate to an analyst."""
         candidate = self._get_candidate(tenant, candidate_id)
         candidate.assigned_to = analyst_name
@@ -896,12 +981,14 @@ class SheshnaagService:
         *,
         candidate_id: int,
         new_status: str,
-        reason: Optional[str] = None,
-        changed_by: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        reason: str | None = None,
+        changed_by: str | None = None,
+    ) -> dict[str, Any]:
         """Transition candidate to a new status with validation."""
         if new_status not in VALID_CANDIDATE_STATUSES:
-            raise ValueError(f"Invalid status '{new_status}'. Valid: {sorted(VALID_CANDIDATE_STATUSES)}")
+            raise ValueError(
+                f"Invalid status '{new_status}'. Valid: {sorted(VALID_CANDIDATE_STATUSES)}"
+            )
 
         candidate = self._get_candidate(tenant, candidate_id)
         allowed = CANDIDATE_STATUS_TRANSITIONS.get(candidate.status, set())
@@ -924,8 +1011,8 @@ class SheshnaagService:
         *,
         candidate_id: int,
         merge_into_id: int,
-        merged_by: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        merged_by: str | None = None,
+    ) -> dict[str, Any]:
         """Mark candidate as a duplicate of another and transfer context."""
         if candidate_id == merge_into_id:
             raise ValueError("A candidate cannot be merged into itself.")
@@ -955,8 +1042,8 @@ class SheshnaagService:
         name: str,
         objective: str,
         created_by: str,
-        content: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        content: dict[str, Any],
+    ) -> dict[str, Any]:
         """Create recipe root plus first revision."""
         candidate = self._get_candidate(tenant, candidate_id)
         normalized_content = self._prepare_recipe_content(content, None)
@@ -983,12 +1070,22 @@ class SheshnaagService:
             revision_number=1,
             approval_state="draft",
             risk_level=normalized_content.get("risk_level", "standard"),
-            requires_acknowledgement=bool(normalized_content.get("requires_acknowledgement", False)),
+            requires_acknowledgement=bool(
+                normalized_content.get("requires_acknowledgement", False)
+            ),
             signed_digest=signer.sign(payload=normalized_content, signer=created_by)["sha256"],
             content=normalized_content,
         )
         self.session.add(revision)
-        self._ledger(tenant.id, None, "recipe_created", "recipe", str(recipe.id), 4.0, {"candidate_id": candidate.id})
+        self._ledger(
+            tenant.id,
+            None,
+            "recipe_created",
+            "recipe",
+            str(recipe.id),
+            4.0,
+            {"candidate_id": candidate.id},
+        )
         self.session.flush()
         return self.get_recipe(tenant, recipe.id)
 
@@ -998,8 +1095,8 @@ class SheshnaagService:
         *,
         recipe_id: int,
         updated_by: str,
-        content: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        content: dict[str, Any],
+    ) -> dict[str, Any]:
         """Create a new immutable revision."""
         recipe = self._get_recipe(tenant, recipe_id)
         next_revision = (recipe.current_revision_number or 0) + 1
@@ -1010,18 +1107,24 @@ class SheshnaagService:
             revision_number=next_revision,
             approval_state="draft",
             risk_level=normalized_content.get("risk_level", "standard"),
-            requires_acknowledgement=bool(normalized_content.get("requires_acknowledgement", False)),
+            requires_acknowledgement=bool(
+                normalized_content.get("requires_acknowledgement", False)
+            ),
             signed_digest=signer.sign(payload=normalized_content, signer=updated_by)["sha256"],
             content=normalized_content,
         )
-        recipe.provider = str(normalized_content.get("provider") or recipe.provider or "docker_kali")
+        recipe.provider = str(
+            normalized_content.get("provider") or recipe.provider or "docker_kali"
+        )
         recipe.current_revision_number = next_revision
         recipe.status = "draft"
         self.session.add(revision)
         self.session.flush()
         return self.get_recipe(tenant, recipe.id)
 
-    def approve_recipe_revision(self, tenant: Tenant, *, recipe_id: int, revision_number: int, reviewer: str) -> Dict[str, Any]:
+    def approve_recipe_revision(
+        self, tenant: Tenant, *, recipe_id: int, revision_number: int, reviewer: str
+    ) -> dict[str, Any]:
         """Approve a recipe revision for launch."""
         recipe = self._get_recipe(tenant, recipe_id)
         revision = self._get_recipe_revision(recipe.id, revision_number)
@@ -1048,16 +1151,29 @@ class SheshnaagService:
                 },
             )
         )
-        self._ledger(tenant.id, None, "recipe_approved", "recipe_revision", str(revision.id), 2.0, {"reviewer": reviewer})
+        self._ledger(
+            tenant.id,
+            None,
+            "recipe_approved",
+            "recipe_revision",
+            str(revision.id),
+            2.0,
+            {"reviewer": reviewer},
+        )
         self.session.flush()
         return self.get_recipe(tenant, recipe.id)
 
-    def list_recipes(self, tenant: Tenant) -> Dict[str, Any]:
+    def list_recipes(self, tenant: Tenant) -> dict[str, Any]:
         """List recipes for a tenant."""
-        rows = self.session.query(LabRecipe).filter(LabRecipe.tenant_id == tenant.id).order_by(desc(LabRecipe.updated_at)).all()
+        rows = (
+            self.session.query(LabRecipe)
+            .filter(LabRecipe.tenant_id == tenant.id)
+            .order_by(desc(LabRecipe.updated_at))
+            .all()
+        )
         return {"items": [self._recipe_summary(item) for item in rows], "count": len(rows)}
 
-    def get_recipe(self, tenant: Tenant, recipe_id: int) -> Dict[str, Any]:
+    def get_recipe(self, tenant: Tenant, recipe_id: int) -> dict[str, Any]:
         """Get recipe details with revisions."""
         recipe = self._get_recipe(tenant, recipe_id)
         revisions = (
@@ -1088,27 +1204,33 @@ class SheshnaagService:
         tenant: Tenant,
         *,
         recipe_id: int,
-        revision_number: Optional[int],
+        revision_number: int | None,
         analyst_name: str,
-        workstation: Dict[str, Any],
+        workstation: dict[str, Any],
         launch_mode: str = "simulated",
         acknowledge_sensitive: bool = False,
         analysis_mode: str = "cve_validation",
-        sandbox_profile_id: Optional[int] = None,
-        specimen_ids: Optional[List[int]] = None,
-        egress_mode: Optional[str] = None,
+        sandbox_profile_id: int | None = None,
+        specimen_ids: list[int] | None = None,
+        egress_mode: str | None = None,
         ai_assist_enabled: bool = False,
-        ai_provider_hint: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        ai_provider_hint: str | None = None,
+    ) -> dict[str, Any]:
         """Launch or simulate a validation run."""
         launch_mode = normalize_launch_mode(launch_mode)
         recipe = self._get_recipe(tenant, recipe_id)
-        revision = self._get_recipe_revision(recipe.id, revision_number or recipe.current_revision_number)
+        revision = self._get_recipe_revision(
+            recipe.id, revision_number or recipe.current_revision_number
+        )
         if revision.approval_state != "approved":
             raise ValueError("Recipe revision must be approved before launch.")
         if revision.requires_acknowledgement and not acknowledge_sensitive:
-            raise ValueError("Sensitive recipe revisions require analyst acknowledgement before launch.")
-        provider_name = self._enforce_execution_policy(recipe=recipe, revision=revision, launch_mode=launch_mode)
+            raise ValueError(
+                "Sensitive recipe revisions require analyst acknowledgement before launch."
+            )
+        provider_name = self._enforce_execution_policy(
+            recipe=recipe, revision=revision, launch_mode=launch_mode
+        )
         v3_context = self._resolve_v3_run_context(
             tenant,
             provider_name=provider_name,
@@ -1125,7 +1247,9 @@ class SheshnaagService:
 
         analyst = self._ensure_analyst_identity(tenant, analyst_name)
         workstation_record = self._ensure_workstation(tenant, workstation)
-        candidate = self._get_candidate(tenant, recipe.candidate_id) if recipe.candidate_id else None
+        candidate = (
+            self._get_candidate(tenant, recipe.candidate_id) if recipe.candidate_id else None
+        )
 
         run = LabRun(
             tenant_id=tenant.id,
@@ -1147,9 +1271,13 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=analyst_name, candidate=candidate
         )
-        provider_revision_content = self._revision_content_for_provider(revision.content or {}, provider_name)
+        provider_revision_content = self._revision_content_for_provider(
+            revision.content or {}, provider_name
+        )
         if launch_mode == "execute":
-            built_plan = provider.build_plan(revision_content=provider_revision_content, run_context=run_context)
+            built_plan = provider.build_plan(
+                revision_content=provider_revision_content, run_context=run_context
+            )
             queued_result = ProviderResult(
                 state=RunState.PLANNED,
                 provider_run_ref="",
@@ -1185,7 +1313,9 @@ class SheshnaagService:
                         "blockers": [item for item in str(exc).split(";") if item],
                     },
                 }
-                self._add_run_event(run, "run_blocked", queued_result, level="error", message=str(exc))
+                self._add_run_event(
+                    run, "run_blocked", queued_result, level="error", message=str(exc)
+                )
                 self.session.flush()
                 raise
             self._persist_run_acknowledgement(
@@ -1196,14 +1326,21 @@ class SheshnaagService:
                 acknowledged=acknowledge_sensitive,
             )
             queue_entry_id = self._enqueue_sandbox_work(run=run, tenant=tenant, actor=analyst_name)
-            queued_payload = {"queue_entry_id": queue_entry_id, "message": "Run queued for sandbox worker execution."}
+            queued_payload = {
+                "queue_entry_id": queue_entry_id,
+                "message": "Run queued for sandbox worker execution.",
+            }
             self._add_run_event(run, "run_queued", queued_result, message=queued_payload["message"])
             self._publish_live_run_event(run, "run_queued", payload=queued_payload)
-            self._ledger(tenant.id, analyst.id, "run_queued", "run", str(run.id), 2.0, {"state": run.state})
+            self._ledger(
+                tenant.id, analyst.id, "run_queued", "run", str(run.id), 2.0, {"state": run.state}
+            )
             self.session.flush()
             return self.get_run(tenant, run.id)
 
-        provider_result = provider.launch(revision_content=provider_revision_content, run_context=run_context)
+        provider_result = provider.launch(
+            revision_content=provider_revision_content, run_context=run_context
+        )
         self._apply_provider_result(run, provider_result)
         self._annotate_run_manifest(
             run=run,
@@ -1222,19 +1359,28 @@ class SheshnaagService:
         if launch_mode != "execute":
             self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
         run.started_at = utc_now()
-        terminal_states = {RunState.COMPLETED.value, RunState.BLOCKED.value, RunState.PLANNED.value, RunState.ERRORED.value}
+        terminal_states = {
+            RunState.COMPLETED.value,
+            RunState.BLOCKED.value,
+            RunState.PLANNED.value,
+            RunState.ERRORED.value,
+        }
         if run.state in terminal_states:
             run.ended_at = utc_now()
 
         self._add_run_event(run, "provider_launch", provider_result)
 
         if self._should_collect_after_provider_launch(run):
-            artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
+            artifacts = self._collect_and_generate(
+                run=run, candidate=candidate, analyst_name=analyst_name
+            )
             self._persist_run_artifacts(run=run, artifacts=artifacts)
             from app.services.malware_lab_service import MalwareLabService
 
             MalwareLabService(self.session).materialize_run_outputs(tenant, run=run)
-        self._ledger(tenant.id, analyst.id, "run_launched", "run", str(run.id), 5.0, {"state": run.state})
+        self._ledger(
+            tenant.id, analyst.id, "run_launched", "run", str(run.id), 5.0, {"state": run.state}
+        )
         self.session.flush()
         return self.get_run(tenant, run.id)
 
@@ -1243,27 +1389,33 @@ class SheshnaagService:
         tenant: Tenant,
         *,
         recipe_id: int,
-        revision_number: Optional[int],
+        revision_number: int | None,
         analyst_name: str,
-        workstation: Dict[str, Any],
+        workstation: dict[str, Any],
         launch_mode: str = "dry_run",
         acknowledge_sensitive: bool = False,
         analysis_mode: str = "cve_validation",
-        sandbox_profile_id: Optional[int] = None,
-        specimen_ids: Optional[List[int]] = None,
-        egress_mode: Optional[str] = None,
+        sandbox_profile_id: int | None = None,
+        specimen_ids: list[int] | None = None,
+        egress_mode: str | None = None,
         ai_assist_enabled: bool = False,
-        ai_provider_hint: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        ai_provider_hint: str | None = None,
+    ) -> dict[str, Any]:
         """Persist a planned run using provider.build_plan (staged lifecycle, WS4-T3)."""
         launch_mode = normalize_launch_mode(launch_mode)
         recipe = self._get_recipe(tenant, recipe_id)
-        revision = self._get_recipe_revision(recipe.id, revision_number or recipe.current_revision_number)
+        revision = self._get_recipe_revision(
+            recipe.id, revision_number or recipe.current_revision_number
+        )
         if revision.approval_state != "approved":
             raise ValueError("Recipe revision must be approved before plan.")
         if revision.requires_acknowledgement and not acknowledge_sensitive:
-            raise ValueError("Sensitive recipe revisions require analyst acknowledgement before plan.")
-        provider_name = self._enforce_execution_policy(recipe=recipe, revision=revision, launch_mode=launch_mode)
+            raise ValueError(
+                "Sensitive recipe revisions require analyst acknowledgement before plan."
+            )
+        provider_name = self._enforce_execution_policy(
+            recipe=recipe, revision=revision, launch_mode=launch_mode
+        )
         v3_context = self._resolve_v3_run_context(
             tenant,
             provider_name=provider_name,
@@ -1279,7 +1431,9 @@ class SheshnaagService:
 
         analyst = self._ensure_analyst_identity(tenant, analyst_name)
         workstation_record = self._ensure_workstation(tenant, workstation)
-        candidate = self._get_candidate(tenant, recipe.candidate_id) if recipe.candidate_id else None
+        candidate = (
+            self._get_candidate(tenant, recipe.candidate_id) if recipe.candidate_id else None
+        )
 
         run = LabRun(
             tenant_id=tenant.id,
@@ -1301,8 +1455,12 @@ class SheshnaagService:
         run_context = self._run_context_for_provider(
             tenant, run, analyst_name=analyst_name, candidate=candidate
         )
-        provider_revision_content = self._revision_content_for_provider(revision.content or {}, provider_name)
-        built_plan = self._provider_for_name(provider_name).build_plan(revision_content=provider_revision_content, run_context=run_context)
+        provider_revision_content = self._revision_content_for_provider(
+            revision.content or {}, provider_name
+        )
+        built_plan = self._provider_for_name(provider_name).build_plan(
+            revision_content=provider_revision_content, run_context=run_context
+        )
         placeholder = ProviderResult(
             state=RunState.PLANNED,
             provider_run_ref="",
@@ -1327,15 +1485,19 @@ class SheshnaagService:
         )
 
         self._add_run_event(run, "run_planned", placeholder)
-        self._ledger(tenant.id, analyst.id, "run_planned", "run", str(run.id), 1.0, {"state": run.state})
+        self._ledger(
+            tenant.id, analyst.id, "run_planned", "run", str(run.id), 1.0, {"state": run.state}
+        )
         self.session.flush()
         return self.get_run(tenant, run.id)
 
-    def allocate_run_resources(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+    def allocate_run_resources(self, tenant: Tenant, *, run_id: int) -> dict[str, Any]:
         """Allocate provider workspace/resources for a planned run."""
         run = self._get_run(tenant, run_id)
         if run.state != RunState.PLANNED.value:
-            raise ValueError(f"Run must be in planned state to allocate resources; current={run.state}.")
+            raise ValueError(
+                f"Run must be in planned state to allocate resources; current={run.state}."
+            )
         if run.provider_run_ref:
             raise ValueError("Run resources already allocated.")
         if not run.manifest:
@@ -1362,16 +1524,26 @@ class SheshnaagService:
             )
             self._transfer_artifact_inputs(run=run, recipe_content=dict(revision.content or {}))
         self._add_run_event(run, "run_allocated", result)
-        self._ledger(tenant.id, run.analyst_id, "run_allocated", "run", str(run.id), 2.0, {"state": run.state})
+        self._ledger(
+            tenant.id,
+            run.analyst_id,
+            "run_allocated",
+            "run",
+            str(run.id),
+            2.0,
+            {"state": run.state},
+        )
         self.session.flush()
         return self.get_run(tenant, run.id)
 
-    def boot_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+    def boot_run(self, tenant: Tenant, *, run_id: int) -> dict[str, Any]:
         """Boot the guest for a run after allocate_run_resources."""
         run = self._get_run(tenant, run_id)
         if not run.provider_run_ref:
             raise ValueError("Run has no provider reference; allocate resources first.")
-        current = RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
+        current = (
+            RunState(run.state) if run.state in {s.value for s in RunState} else RunState.ERRORED
+        )
         if current != RunState.PLANNED:
             raise ValueError(f"Boot requires planned state after allocation; current={run.state}.")
 
@@ -1380,30 +1552,60 @@ class SheshnaagService:
         self._apply_provider_result(run, result)
         self._add_run_event(run, "run_booted", result)
         run.started_at = run.started_at or utc_now()
-        terminal_states = {RunState.COMPLETED.value, RunState.BLOCKED.value, RunState.PLANNED.value, RunState.ERRORED.value}
+        terminal_states = {
+            RunState.COMPLETED.value,
+            RunState.BLOCKED.value,
+            RunState.PLANNED.value,
+            RunState.ERRORED.value,
+        }
         if run.state in terminal_states:
             run.ended_at = run.ended_at or utc_now()
 
         candidate = self._get_candidate(tenant, run.candidate_id) if run.candidate_id else None
         analyst_name = self._analyst_display_name(run)
-        if self._should_collect_after_provider_launch(run) and not self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run.id).count():
-            artifacts = self._collect_and_generate(run=run, candidate=candidate, analyst_name=analyst_name)
+        if (
+            self._should_collect_after_provider_launch(run)
+            and not self.session.query(EvidenceArtifact)
+            .filter(EvidenceArtifact.run_id == run.id)
+            .count()
+        ):
+            artifacts = self._collect_and_generate(
+                run=run, candidate=candidate, analyst_name=analyst_name
+            )
             self._persist_run_artifacts(run=run, artifacts=artifacts)
 
         if run.analyst_id:
-            self._ledger(tenant.id, run.analyst_id, "run_booted", "run", str(run.id), 4.0, {"state": run.state})
+            self._ledger(
+                tenant.id,
+                run.analyst_id,
+                "run_booted",
+                "run",
+                str(run.id),
+                4.0,
+                {"state": run.state},
+            )
         self.session.flush()
         return self.get_run(tenant, run.id)
 
-    def list_runs(self, tenant: Tenant) -> Dict[str, Any]:
+    def list_runs(self, tenant: Tenant) -> dict[str, Any]:
         """List validation runs."""
-        rows = self.session.query(LabRun).filter(LabRun.tenant_id == tenant.id).order_by(desc(LabRun.created_at)).all()
+        rows = (
+            self.session.query(LabRun)
+            .filter(LabRun.tenant_id == tenant.id)
+            .order_by(desc(LabRun.created_at))
+            .all()
+        )
         return {"count": len(rows), "items": [self._run_summary(item) for item in rows]}
 
-    def get_run(self, tenant: Tenant, run_id: int) -> Dict[str, Any]:
+    def get_run(self, tenant: Tenant, run_id: int) -> dict[str, Any]:
         """Get run details."""
         run = self._get_run(tenant, run_id)
-        events = self.session.query(RunEvent).filter(RunEvent.run_id == run.id).order_by(RunEvent.created_at.asc()).all()
+        events = (
+            self.session.query(RunEvent)
+            .filter(RunEvent.run_id == run.id)
+            .order_by(RunEvent.created_at.asc())
+            .all()
+        )
         return {
             **self._run_summary(run),
             "timeline": [
@@ -1425,29 +1627,40 @@ class SheshnaagService:
         self,
         tenant: Tenant,
         *,
-        entity_type: Optional[str] = None,
-        status: Optional[str] = None,
-        run_id: Optional[int] = None,
-        reviewer: Optional[str] = None,
-        needs_attention: Optional[bool] = None,
-    ) -> Dict[str, Any]:
+        entity_type: str | None = None,
+        status: str | None = None,
+        run_id: int | None = None,
+        reviewer: str | None = None,
+        needs_attention: bool | None = None,
+    ) -> dict[str, Any]:
         """Aggregate reviewable runs, evidence, artifacts, and bundles into one operator queue."""
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         if entity_type in (None, "run"):
             for run in self.session.query(LabRun).filter(LabRun.tenant_id == tenant.id).all():
                 manifest = run.manifest or {}
-                blocking_reasons: List[str] = []
+                blocking_reasons: list[str] = []
                 readiness = manifest.get("provider_readiness") or {}
                 if readiness.get("status") in {"degraded", "unavailable"}:
                     blocking_reasons.append(f"provider_readiness:{readiness.get('status')}")
-                if (manifest.get("artifact_transfer") or {}).get("status") == "completed_with_errors":
+                if (manifest.get("artifact_transfer") or {}).get(
+                    "status"
+                ) == "completed_with_errors":
                     blocking_reasons.append("artifact_transfer_warnings")
                 for capability in manifest.get("collector_capabilities") or []:
-                    if capability.get("selected") and capability.get("status") in {"degraded", "unavailable"}:
-                        blocking_reasons.append(f"collector:{capability.get('collector_name')}:{capability.get('status')}")
+                    if capability.get("selected") and capability.get("status") in {
+                        "degraded",
+                        "unavailable",
+                    }:
+                        blocking_reasons.append(
+                            f"collector:{capability.get('collector_name')}:{capability.get('status')}"
+                        )
                 secure_audit = manifest.get("secure_mode_audit") or {}
                 execute_result = secure_audit.get("execute_result") or {}
-                if manifest.get("provider") == "lima" and run.launch_mode == "execute" and not execute_result:
+                if (
+                    manifest.get("provider") == "lima"
+                    and run.launch_mode == "execute"
+                    and not execute_result
+                ):
                     blocking_reasons.append("secure_execute_audit_missing")
                 latest_review = self._latest_review_entry("run", run.id)
                 items.append(
@@ -1465,7 +1678,7 @@ class SheshnaagService:
                         blocking_reasons=blocking_reasons,
                         last_review=latest_review,
                         updated_at=run.updated_at or run.created_at,
-                        route=f"/runs",
+                        route="/runs",
                         extra={
                             "provider": run.provider,
                             "launch_mode": run.launch_mode,
@@ -1474,7 +1687,11 @@ class SheshnaagService:
                     )
                 )
         if entity_type in (None, "evidence"):
-            evidence_query = self.session.query(EvidenceArtifact).join(LabRun, LabRun.id == EvidenceArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
+            evidence_query = (
+                self.session.query(EvidenceArtifact)
+                .join(LabRun, LabRun.id == EvidenceArtifact.run_id)
+                .filter(LabRun.tenant_id == tenant.id)
+            )
             if run_id is not None:
                 evidence_query = evidence_query.filter(EvidenceArtifact.run_id == run_id)
             for row in evidence_query.all():
@@ -1503,20 +1720,34 @@ class SheshnaagService:
                         updated_at=row.updated_at or row.created_at,
                         route="/evidence",
                         extra={
-                            "bundle_export_gating": bool((payload.get("review_sensitivity") or {}).get("external_export_requires_confirmation")),
+                            "bundle_export_gating": bool(
+                                (payload.get("review_sensitivity") or {}).get(
+                                    "external_export_requires_confirmation"
+                                )
+                            ),
                         },
                     )
                 )
         if entity_type in (None, "artifact"):
             artifacts = [
-                *self.session.query(DetectionArtifact).join(LabRun, LabRun.id == DetectionArtifact.run_id).filter(LabRun.tenant_id == tenant.id).all(),
-                *self.session.query(MitigationArtifact).join(LabRun, LabRun.id == MitigationArtifact.run_id).filter(LabRun.tenant_id == tenant.id).all(),
+                *self.session.query(DetectionArtifact)
+                .join(LabRun, LabRun.id == DetectionArtifact.run_id)
+                .filter(LabRun.tenant_id == tenant.id)
+                .all(),
+                *self.session.query(MitigationArtifact)
+                .join(LabRun, LabRun.id == MitigationArtifact.run_id)
+                .filter(LabRun.tenant_id == tenant.id)
+                .all(),
             ]
             for row in artifacts:
                 row_run_id = row.run_id
                 if run_id is not None and row_run_id != run_id:
                     continue
-                family = "detection_artifact" if isinstance(row, DetectionArtifact) else "mitigation_artifact"
+                family = (
+                    "detection_artifact"
+                    if isinstance(row, DetectionArtifact)
+                    else "mitigation_artifact"
+                )
                 latest_review = self._latest_review_entry(family, row.id)
                 blocking_reasons = []
                 if row.status in {"draft", "under_review", "changes_requested"}:
@@ -1526,7 +1757,9 @@ class SheshnaagService:
                         entity_type="artifact",
                         entity_id=row.id,
                         run_id=row_run_id,
-                        title=getattr(row, "name", None) or getattr(row, "title", None) or f"Artifact {row.id}",
+                        title=getattr(row, "name", None)
+                        or getattr(row, "title", None)
+                        or f"Artifact {row.id}",
                         status=row.status,
                         review_state=row.status,
                         sensitivity={"artifact_type": row.artifact_type},
@@ -1535,18 +1768,24 @@ class SheshnaagService:
                         updated_at=row.updated_at or row.created_at,
                         route="/artifacts",
                         extra={
-                            "artifact_family": "detection" if isinstance(row, DetectionArtifact) else "mitigation",
+                            "artifact_family": "detection"
+                            if isinstance(row, DetectionArtifact)
+                            else "mitigation",
                             "bundle_export_gating": None,
                         },
                     )
                 )
         if entity_type in (None, "bundle"):
-            bundle_query = self.session.query(DisclosureBundle).filter(DisclosureBundle.tenant_id == tenant.id)
+            bundle_query = self.session.query(DisclosureBundle).filter(
+                DisclosureBundle.tenant_id == tenant.id
+            )
             if run_id is not None:
                 bundle_query = bundle_query.filter(DisclosureBundle.run_id == run_id)
             for bundle in bundle_query.all():
                 manifest = bundle.manifest or {}
-                gating = (manifest.get("safety_checklist") or {}).get("requires_external_confirmation") or False
+                gating = (manifest.get("safety_checklist") or {}).get(
+                    "requires_external_confirmation"
+                ) or False
                 blocking_reasons = []
                 if gating and bundle.status not in {"approved", "exported"}:
                     blocking_reasons.append("external_export_confirmation_required")
@@ -1561,7 +1800,10 @@ class SheshnaagService:
                         title=bundle.title,
                         status=bundle.status,
                         review_state=bundle.status,
-                        sensitivity={"bundle_type": bundle.bundle_type, "contains_sensitive_evidence": gating},
+                        sensitivity={
+                            "bundle_type": bundle.bundle_type,
+                            "contains_sensitive_evidence": gating,
+                        },
                         blocking_reasons=blocking_reasons,
                         last_review=latest_review,
                         updated_at=bundle.created_at,
@@ -1583,15 +1825,19 @@ class SheshnaagService:
         if run_id is not None:
             items = [item for item in items if item["run_id"] == run_id]
         if status:
-            items = [item for item in items if item["status"] == status or item["review_state"] == status]
+            items = [
+                item for item in items if item["status"] == status or item["review_state"] == status
+            ]
         if reviewer:
             items = [item for item in items if item.get("last_reviewer") == reviewer]
         if needs_attention is not None:
             items = [item for item in items if bool(item["needs_attention_now"]) is needs_attention]
-        items.sort(key=lambda item: (item["needs_attention_now"], item["updated_at"] or ""), reverse=True)
+        items.sort(
+            key=lambda item: (item["needs_attention_now"], item["updated_at"] or ""), reverse=True
+        )
         return {"count": len(items), "items": items}
 
-    def stop_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+    def stop_run(self, tenant: Tenant, *, run_id: int) -> dict[str, Any]:
         """Stop a running validation run."""
         run = self._get_run(tenant, run_id)
         self._assert_transition(run, RunState.STOPPING)
@@ -1602,7 +1848,7 @@ class SheshnaagService:
         self.session.flush()
         return self.get_run(tenant, run.id)
 
-    def teardown_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+    def teardown_run(self, tenant: Tenant, *, run_id: int) -> dict[str, Any]:
         """Teardown a stopped or completed run, releasing execution resources."""
         run = self._get_run(tenant, run_id)
         self._assert_transition(run, RunState.TEARING_DOWN)
@@ -1616,10 +1862,12 @@ class SheshnaagService:
         self.session.flush()
         return self.get_run(tenant, run.id)
 
-    def destroy_run(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+    def destroy_run(self, tenant: Tenant, *, run_id: int) -> dict[str, Any]:
         """Destroy all resources for a run including workspace data."""
         run = self._get_run(tenant, run_id)
-        current = RunState(run.state) if run.state in [s.value for s in RunState] else RunState.ERRORED
+        current = (
+            RunState(run.state) if run.state in [s.value for s in RunState] else RunState.ERRORED
+        )
         if current not in (RunState.DESTROYED,):
             provider = self._provider_for_name(run.provider)
             result = provider.destroy(provider_run_ref=run.provider_run_ref)
@@ -1629,7 +1877,7 @@ class SheshnaagService:
         self.session.flush()
         return self.get_run(tenant, run.id)
 
-    def run_health(self, tenant: Tenant, *, run_id: int) -> Dict[str, Any]:
+    def run_health(self, tenant: Tenant, *, run_id: int) -> dict[str, Any]:
         """Check the health of a running validation run."""
         run = self._get_run(tenant, run_id)
         provider = self._provider_for_name(run.provider)
@@ -1637,14 +1885,27 @@ class SheshnaagService:
         prev_state = run.state
         if result.state.value != prev_state:
             self._apply_provider_result(run, result)
-            self._add_run_event(run, "health_check", result, level="warning" if result.health == HealthStatus.UNHEALTHY else "info")
+            self._add_run_event(
+                run,
+                "health_check",
+                result,
+                level="warning" if result.health == HealthStatus.UNHEALTHY else "info",
+            )
             if result.health in (HealthStatus.UNHEALTHY, HealthStatus.ERRORED):
                 self._add_run_event(
-                    run, "unhealthy_detected", result, level="error",
+                    run,
+                    "unhealthy_detected",
+                    result,
+                    level="error",
                     message=f"Guest entered {result.health.value} state.",
                 )
         self.session.flush()
-        events = self.session.query(RunEvent).filter(RunEvent.run_id == run.id).order_by(RunEvent.created_at.asc()).all()
+        events = (
+            self.session.query(RunEvent)
+            .filter(RunEvent.run_id == run.id)
+            .order_by(RunEvent.created_at.asc())
+            .all()
+        )
         return {
             **self._run_summary(run),
             "health": result.health.value,
@@ -1661,14 +1922,14 @@ class SheshnaagService:
             "evidence_summary": self._evidence_summary(run.id),
         }
 
-    def _runtime_findings_summary(self, run_id: int) -> Dict[str, Any]:
+    def _runtime_findings_summary(self, run_id: int) -> dict[str, Any]:
         """Aggregate ``findings`` from telemetry collector payloads (WS7-T5 operator view)."""
         rows = self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run_id).all()
-        items: List[Dict[str, Any]] = []
-        per_tool_counts: Dict[str, int] = {}
-        per_severity_counts: Dict[str, int] = {}
-        collector_overhead: List[Dict[str, Any]] = []
-        telemetry_slices: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
+        per_tool_counts: dict[str, int] = {}
+        per_severity_counts: dict[str, int] = {}
+        collector_overhead: list[dict[str, Any]] = []
+        telemetry_slices: list[dict[str, Any]] = []
         for row in rows:
             pl = row.payload or {}
             if not isinstance(pl, dict):
@@ -1678,7 +1939,9 @@ class SheshnaagService:
                 for tool, count in (summary.get("source_tools") or {}).items():
                     per_tool_counts[str(tool)] = per_tool_counts.get(str(tool), 0) + int(count)
                 for sev, count in (summary.get("severity_counts") or {}).items():
-                    per_severity_counts[str(sev)] = per_severity_counts.get(str(sev), 0) + int(count)
+                    per_severity_counts[str(sev)] = per_severity_counts.get(str(sev), 0) + int(
+                        count
+                    )
             if isinstance(pl.get("collector_overhead"), dict):
                 collector_overhead.append(
                     {
@@ -1711,7 +1974,15 @@ class SheshnaagService:
                     )
         top_findings = sorted(
             items,
-            key=lambda finding: {"critical": 4, "high": 3, "medium": 2, "warning": 2, "notice": 1, "low": 1, "info": 0}.get(
+            key=lambda finding: {
+                "critical": 4,
+                "high": 3,
+                "medium": 2,
+                "warning": 2,
+                "notice": 1,
+                "low": 1,
+                "info": 0,
+            }.get(
                 str(finding.get("severity") or "info").lower(),
                 0,
             ),
@@ -1727,10 +1998,10 @@ class SheshnaagService:
             "telemetry_slices": telemetry_slices[:50],
         }
 
-    def _evidence_summary(self, run_id: int) -> Dict[str, Any]:
+    def _evidence_summary(self, run_id: int) -> dict[str, Any]:
         rows = self.session.query(EvidenceArtifact).filter(EvidenceArtifact.run_id == run_id).all()
-        by_kind: Dict[str, int] = {}
-        by_collector: Dict[str, Dict[str, Any]] = {}
+        by_kind: dict[str, int] = {}
+        by_collector: dict[str, dict[str, Any]] = {}
         for row in rows:
             by_kind[row.artifact_kind] = by_kind.get(row.artifact_kind, 0) + 1
             collector_key = row.collector_name or row.artifact_kind
@@ -1756,19 +2027,20 @@ class SheshnaagService:
             "collectors": list(by_collector.values()),
         }
 
-    def _evidence_timeline_payload(self, run_id: int) -> Dict[str, Any]:
+    def _evidence_timeline_payload(self, run_id: int) -> dict[str, Any]:
         rows = (
             self.session.query(EvidenceArtifact)
             .filter(EvidenceArtifact.run_id == run_id)
             .order_by(EvidenceArtifact.created_at.asc())
             .all()
         )
+
         def _ev_ts(row: EvidenceArtifact) -> float:
             t = row.capture_started_at or row.created_at
             return t.timestamp() if t else 0.0
 
         rows.sort(key=lambda r: (_ev_ts(r), r.id))
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for row in rows:
             ts = row.capture_started_at or row.created_at
             items.append(
@@ -1785,9 +2057,13 @@ class SheshnaagService:
             )
         return {"items": items, "ordered_by": "capture_started_at_then_created_at"}
 
-    def list_evidence(self, tenant: Tenant, *, run_id: Optional[int] = None) -> Dict[str, Any]:
+    def list_evidence(self, tenant: Tenant, *, run_id: int | None = None) -> dict[str, Any]:
         """List evidence artifacts."""
-        query = self.session.query(EvidenceArtifact).join(LabRun, LabRun.id == EvidenceArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
+        query = (
+            self.session.query(EvidenceArtifact)
+            .join(LabRun, LabRun.id == EvidenceArtifact.run_id)
+            .filter(LabRun.tenant_id == tenant.id)
+        )
         if run_id is not None:
             query = query.filter(EvidenceArtifact.run_id == run_id)
         rows = query.order_by(desc(EvidenceArtifact.created_at)).all()
@@ -1805,8 +2081,12 @@ class SheshnaagService:
                     "storage_path": item.storage_path,
                     "content_type": item.content_type,
                     "byte_size": item.byte_size,
-                    "capture_started_at": item.capture_started_at.isoformat() if item.capture_started_at else None,
-                    "capture_ended_at": item.capture_ended_at.isoformat() if item.capture_ended_at else None,
+                    "capture_started_at": item.capture_started_at.isoformat()
+                    if item.capture_started_at
+                    else None,
+                    "capture_ended_at": item.capture_ended_at.isoformat()
+                    if item.capture_ended_at
+                    else None,
                     "collector_name": item.collector_name,
                     "collector_version": item.collector_version,
                     "truncated": item.truncated,
@@ -1822,12 +2102,20 @@ class SheshnaagService:
             ],
         }
 
-    def list_artifacts(self, tenant: Tenant, *, run_id: Optional[int] = None) -> Dict[str, Any]:
+    def list_artifacts(self, tenant: Tenant, *, run_id: int | None = None) -> dict[str, Any]:
         """List generated defensive artifacts."""
         from app.services.malware_lab_service import MalwareLabService
 
-        detection_query = self.session.query(DetectionArtifact).join(LabRun, LabRun.id == DetectionArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
-        mitigation_query = self.session.query(MitigationArtifact).join(LabRun, LabRun.id == MitigationArtifact.run_id).filter(LabRun.tenant_id == tenant.id)
+        detection_query = (
+            self.session.query(DetectionArtifact)
+            .join(LabRun, LabRun.id == DetectionArtifact.run_id)
+            .filter(LabRun.tenant_id == tenant.id)
+        )
+        mitigation_query = (
+            self.session.query(MitigationArtifact)
+            .join(LabRun, LabRun.id == MitigationArtifact.run_id)
+            .filter(LabRun.tenant_id == tenant.id)
+        )
         if run_id is not None:
             detection_query = detection_query.filter(DetectionArtifact.run_id == run_id)
             mitigation_query = mitigation_query.filter(MitigationArtifact.run_id == run_id)
@@ -1849,8 +2137,12 @@ class SheshnaagService:
                 "indicator_count": len(indicators),
                 "prevention_count": len(prevention),
                 "defang_count": len(defang),
-                "approved_count": sum(1 for item in [*detections, *mitigations] if item.status == "approved"),
-                "under_review_count": sum(1 for item in [*detections, *mitigations] if item.status == "under_review"),
+                "approved_count": sum(
+                    1 for item in [*detections, *mitigations] if item.status == "approved"
+                ),
+                "under_review_count": sum(
+                    1 for item in [*detections, *mitigations] if item.status == "under_review"
+                ),
             },
         }
 
@@ -1862,13 +2154,21 @@ class SheshnaagService:
         artifact_id: int,
         decision: str,
         reviewer: str,
-        rationale: Optional[str] = None,
-        correction_note: Optional[str] = None,
-        supersedes_artifact_id: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        rationale: str | None = None,
+        correction_note: str | None = None,
+        supersedes_artifact_id: int | None = None,
+    ) -> dict[str, Any]:
         """Advance an artifact through the review state machine."""
         artifact = self._get_artifact_entity(tenant, artifact_family, artifact_id)
-        valid_states = {"draft", "under_review", "changes_requested", "approved", "rejected", "superseded", "deprecated"}
+        valid_states = {
+            "draft",
+            "under_review",
+            "changes_requested",
+            "approved",
+            "rejected",
+            "superseded",
+            "deprecated",
+        }
         if decision not in valid_states:
             raise ValueError(f"Invalid artifact review state '{decision}'.")
         artifact.status = decision
@@ -1913,8 +2213,8 @@ class SheshnaagService:
         artifact_id: int,
         reviewer: str,
         feedback_type: str,
-        note: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        note: str | None = None,
+    ) -> dict[str, Any]:
         """Persist explicit artifact feedback for future review and tuning."""
         artifact = self._get_artifact_entity(tenant, artifact_family, artifact_id)
         self.session.add(
@@ -1939,9 +2239,11 @@ class SheshnaagService:
             else self._mitigation_artifact_payload(artifact)
         )
 
-    def get_provenance(self, tenant: Tenant, *, run_id: Optional[int] = None) -> Dict[str, Any]:
+    def get_provenance(self, tenant: Tenant, *, run_id: int | None = None) -> dict[str, Any]:
         """Return run- and bundle-linked attestation data."""
-        query = self.session.query(AttestationRecord).filter(AttestationRecord.tenant_id == tenant.id)
+        query = self.session.query(AttestationRecord).filter(
+            AttestationRecord.tenant_id == tenant.id
+        )
         if run_id is not None:
             query = query.filter(AttestationRecord.run_id == run_id)
         rows = query.order_by(desc(AttestationRecord.created_at)).all()
@@ -1958,7 +2260,9 @@ class SheshnaagService:
                     "signature": row.signature,
                     "signer": row.signer,
                     "payload": row.payload,
-                    "signing": (row.payload or {}).get("signing") if isinstance(row.payload, dict) else {},
+                    "signing": (row.payload or {}).get("signing")
+                    if isinstance(row.payload, dict)
+                    else {},
                     "created_at": row.created_at.isoformat() if row.created_at else None,
                 }
                 for row in rows
@@ -1972,20 +2276,40 @@ class SheshnaagService:
                 .order_by(EvidenceArtifact.created_at.asc())
                 .all()
             )
-            detection_rows = self.session.query(DetectionArtifact).filter(DetectionArtifact.run_id == run_id).all()
-            mitigation_rows = self.session.query(MitigationArtifact).filter(MitigationArtifact.run_id == run_id).all()
-            bundle_rows = self.session.query(DisclosureBundle).filter(DisclosureBundle.run_id == run_id).all()
+            detection_rows = (
+                self.session.query(DetectionArtifact)
+                .filter(DetectionArtifact.run_id == run_id)
+                .all()
+            )
+            mitigation_rows = (
+                self.session.query(MitigationArtifact)
+                .filter(MitigationArtifact.run_id == run_id)
+                .all()
+            )
+            bundle_rows = (
+                self.session.query(DisclosureBundle).filter(DisclosureBundle.run_id == run_id).all()
+            )
             review_rows = (
                 self.session.query(ReviewDecision)
                 .filter(ReviewDecision.tenant_id == tenant.id)
                 .order_by(ReviewDecision.created_at.desc())
                 .all()
             )
-            revision = self.session.query(RecipeRevision).filter(RecipeRevision.id == run.recipe_revision_id).first()
-            analyst = self.session.query(AnalystIdentity).filter(AnalystIdentity.id == run.analyst_id).first()
-            workstation = self.session.query(WorkstationFingerprint).filter(
-                WorkstationFingerprint.id == run.workstation_fingerprint_id
-            ).first()
+            revision = (
+                self.session.query(RecipeRevision)
+                .filter(RecipeRevision.id == run.recipe_revision_id)
+                .first()
+            )
+            analyst = (
+                self.session.query(AnalystIdentity)
+                .filter(AnalystIdentity.id == run.analyst_id)
+                .first()
+            )
+            workstation = (
+                self.session.query(WorkstationFingerprint)
+                .filter(WorkstationFingerprint.id == run.workstation_fingerprint_id)
+                .first()
+            )
             response.update(
                 {
                     "run": self.get_run(tenant, run_id),
@@ -2022,13 +2346,19 @@ class SheshnaagService:
                             "sha256": row.sha256,
                             "collector_name": row.collector_name,
                             "storage_path": row.storage_path,
-                            "capture_started_at": row.capture_started_at.isoformat() if row.capture_started_at else None,
+                            "capture_started_at": row.capture_started_at.isoformat()
+                            if row.capture_started_at
+                            else None,
                         }
                         for row in evidence_rows
                     ],
                     "artifact_linkage": {
-                        "detections": [self._detection_artifact_payload(row) for row in detection_rows],
-                        "mitigations": [self._mitigation_artifact_payload(row) for row in mitigation_rows],
+                        "detections": [
+                            self._detection_artifact_payload(row) for row in detection_rows
+                        ],
+                        "mitigations": [
+                            self._mitigation_artifact_payload(row) for row in mitigation_rows
+                        ],
                     },
                     "review_history": [
                         {
@@ -2049,15 +2379,26 @@ class SheshnaagService:
             )
         return response
 
-    def get_ledger(self, tenant: Tenant) -> Dict[str, Any]:
+    def get_ledger(self, tenant: Tenant) -> dict[str, Any]:
         """Return analyst contribution ledger."""
-        rows = self.session.query(ContributionLedgerEntry).filter(ContributionLedgerEntry.tenant_id == tenant.id).order_by(desc(ContributionLedgerEntry.created_at)).all()
+        rows = (
+            self.session.query(ContributionLedgerEntry)
+            .filter(ContributionLedgerEntry.tenant_id == tenant.id)
+            .order_by(desc(ContributionLedgerEntry.created_at))
+            .all()
+        )
         analyst_ids = {row.analyst_id for row in rows if row.analyst_id}
-        analysts = {
-            row.id: row.name
-            for row in self.session.query(AnalystIdentity).filter(AnalystIdentity.id.in_(analyst_ids)).all()
-        } if analyst_ids else {}
-        by_analyst: Dict[str, float] = {}
+        analysts = (
+            {
+                row.id: row.name
+                for row in self.session.query(AnalystIdentity)
+                .filter(AnalystIdentity.id.in_(analyst_ids))
+                .all()
+            }
+            if analyst_ids
+            else {}
+        )
+        by_analyst: dict[str, float] = {}
         for row in rows:
             name = analysts.get(row.analyst_id, "system")
             by_analyst[name] = by_analyst.get(name, 0.0) + float(row.score or 0.0)
@@ -2080,7 +2421,10 @@ class SheshnaagService:
             ],
             "summary": {
                 "total_score": round(sum(float(row.score or 0.0) for row in rows), 2),
-                "by_analyst": [{"name": name, "score": round(score, 2)} for name, score in sorted(by_analyst.items())],
+                "by_analyst": [
+                    {"name": name, "score": round(score, 2)}
+                    for name, score in sorted(by_analyst.items())
+                ],
             },
         }
 
@@ -2092,14 +2436,14 @@ class SheshnaagService:
         bundle_type: str,
         title: str,
         signed_by: str,
-        evidence_ids: Optional[List[int]] = None,
-        redaction_notes: Optional[List[Dict[str, Any]]] = None,
-        attachment_policy: Optional[Dict[str, Any]] = None,
-        review_checklist: Optional[Dict[str, Any]] = None,
-        reviewer_name: Optional[str] = None,
-        reviewer_role: Optional[str] = None,
+        evidence_ids: list[int] | None = None,
+        redaction_notes: list[dict[str, Any]] | None = None,
+        attachment_policy: dict[str, Any] | None = None,
+        review_checklist: dict[str, Any] | None = None,
+        reviewer_name: str | None = None,
+        reviewer_role: str | None = None,
         confirm_external_export: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a disclosure/export bundle from a run."""
         run = self._get_run(tenant, run_id)
         evidence_rows = (
@@ -2110,18 +2454,30 @@ class SheshnaagService:
         )
         if evidence_ids:
             evidence_rows = [row for row in evidence_rows if row.id in set(evidence_ids)]
-        detection_rows = self.session.query(DetectionArtifact).filter(DetectionArtifact.run_id == run.id).all()
-        mitigation_rows = self.session.query(MitigationArtifact).filter(MitigationArtifact.run_id == run.id).all()
-        approved_artifacts = [row for row in [*detection_rows, *mitigation_rows] if row.status == "approved"]
+        detection_rows = (
+            self.session.query(DetectionArtifact).filter(DetectionArtifact.run_id == run.id).all()
+        )
+        mitigation_rows = (
+            self.session.query(MitigationArtifact).filter(MitigationArtifact.run_id == run.id).all()
+        )
+        approved_artifacts = [
+            row for row in [*detection_rows, *mitigation_rows] if row.status == "approved"
+        ]
         selected_artifacts = approved_artifacts or [*detection_rows, *mitigation_rows]
 
-        warnings: List[str] = []
+        warnings: list[str] = []
         if any(row.artifact_kind == "pcap" for row in evidence_rows):
-            warnings.append("Bundle includes PCAP-derived evidence; review raw packet data before external sharing.")
+            warnings.append(
+                "Bundle includes PCAP-derived evidence; review raw packet data before external sharing."
+            )
         if any(row.artifact_kind == "service_logs" for row in evidence_rows):
-            warnings.append("Bundle includes service log excerpts; verify secrets and tenant identifiers are redacted.")
+            warnings.append(
+                "Bundle includes service log excerpts; verify secrets and tenant identifiers are redacted."
+            )
         if warnings and not confirm_external_export:
-            raise ValueError("Bundle requires explicit external export confirmation for sensitive evidence.")
+            raise ValueError(
+                "Bundle requires explicit external export confirmation for sensitive evidence."
+            )
 
         manifest = self._build_bundle_manifest(
             run=run,
@@ -2138,8 +2494,12 @@ class SheshnaagService:
         archive = self._write_bundle_archive(
             manifest=manifest,
             evidence_rows=evidence_rows,
-            detection_rows=[row for row in selected_artifacts if isinstance(row, DetectionArtifact)],
-            mitigation_rows=[row for row in selected_artifacts if isinstance(row, MitigationArtifact)],
+            detection_rows=[
+                row for row in selected_artifacts if isinstance(row, DetectionArtifact)
+            ],
+            mitigation_rows=[
+                row for row in selected_artifacts if isinstance(row, MitigationArtifact)
+            ],
         )
         manifest["archive"] = archive
         signer = self._attestation_signer_for_tenant(tenant)
@@ -2171,7 +2531,9 @@ class SheshnaagService:
                 target_type="disclosure_bundle",
                 target_id=str(bundle.id),
                 decision="approved" if confirm_external_export else "under_review",
-                rationale="Bundle exported with explicit external confirmation." if confirm_external_export else "Bundle assembled and awaiting operator confirmation.",
+                rationale="Bundle exported with explicit external confirmation."
+                if confirm_external_export
+                else "Bundle assembled and awaiting operator confirmation.",
                 payload={
                     "run_id": run.id,
                     "bundle_id": bundle.id,
@@ -2229,11 +2591,19 @@ class SheshnaagService:
         reviewer_name: str,
         reviewer_role: str,
         decision: str,
-        rationale: Optional[str] = None,
-        checklist: Optional[Dict[str, Any]] = None,
-        export_gating: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        valid_states = {"draft", "under_review", "changes_requested", "approved", "rejected", "superseded", "exported"}
+        rationale: str | None = None,
+        checklist: dict[str, Any] | None = None,
+        export_gating: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        valid_states = {
+            "draft",
+            "under_review",
+            "changes_requested",
+            "approved",
+            "rejected",
+            "superseded",
+            "exported",
+        }
         if decision not in valid_states:
             raise ValueError(f"Invalid disclosure bundle decision '{decision}'.")
         bundle = (
@@ -2273,15 +2643,20 @@ class SheshnaagService:
         self.session.flush()
         return self._disclosure_bundle_payload(bundle)
 
-    def list_disclosure_bundles(self, tenant: Tenant) -> Dict[str, Any]:
+    def list_disclosure_bundles(self, tenant: Tenant) -> dict[str, Any]:
         """List disclosure bundles."""
-        rows = self.session.query(DisclosureBundle).filter(DisclosureBundle.tenant_id == tenant.id).order_by(desc(DisclosureBundle.created_at)).all()
+        rows = (
+            self.session.query(DisclosureBundle)
+            .filter(DisclosureBundle.tenant_id == tenant.id)
+            .order_by(desc(DisclosureBundle.created_at))
+            .all()
+        )
         return {
             "count": len(rows),
             "items": [self._disclosure_bundle_payload(row) for row in rows],
         }
 
-    def get_disclosure_bundle_archive(self, tenant: Tenant, *, bundle_id: int) -> Dict[str, str]:
+    def get_disclosure_bundle_archive(self, tenant: Tenant, *, bundle_id: int) -> dict[str, str]:
         """Return archive location details for a previously exported bundle.
 
         Path-containment hardening: the manifest stores the on-disk archive
@@ -2323,24 +2698,45 @@ class SheshnaagService:
         *,
         cve: CVE,
         tenant: Tenant,
-        risk: Optional[RiskScore],
-        kev: Optional[KEVEntry],
-        epss: Optional[EPSSSnapshot],
-        affected: Optional[AffectedProduct],
-    ) -> Dict[str, Any]:
-        applicability = self._compute_environment_applicability(cve=cve, tenant=tenant, affected=affected)
-        advisory_rows = self.session.query(AdvisoryRecord).filter(AdvisoryRecord.cve_id == cve.id).all()
+        risk: RiskScore | None,
+        kev: KEVEntry | None,
+        epss: EPSSSnapshot | None,
+        affected: AffectedProduct | None,
+    ) -> dict[str, Any]:
+        applicability = self._compute_environment_applicability(
+            cve=cve, tenant=tenant, affected=affected
+        )
+        advisory_rows = (
+            self.session.query(AdvisoryRecord).filter(AdvisoryRecord.cve_id == cve.id).all()
+        )
         advisory_summary = summarize_advisory_records(advisory_rows)
         patch_available = bool(applicability.get("patch_available") or cve.exploit_available)
-        asset_matches = int(applicability["asset_match_count"]) + int(applicability["sbom_match_count"])
-        risk_val = float(risk.overall_score / 100.0) if risk and risk.overall_score is not None else 0.35
+        asset_matches = int(applicability["asset_match_count"]) + int(
+            applicability["sbom_match_count"]
+        )
+        risk_val = (
+            float(risk.overall_score / 100.0) if risk and risk.overall_score is not None else 0.35
+        )
         epss_val = float(epss.score) if epss else 0.0
         kev_val = bool(kev)
-        attack_surface = 0.9 if cve.attack_vector == "NETWORK" else (0.7 if cve.attack_vector == "ADJACENT" else 0.4)
-        observability = 0.9 if asset_matches > 0 and cve.attack_vector == "NETWORK" else (0.72 if asset_matches > 0 else 0.55)
+        attack_surface = (
+            0.9
+            if cve.attack_vector == "NETWORK"
+            else (0.7 if cve.attack_vector == "ADJACENT" else 0.4)
+        )
+        observability = (
+            0.9
+            if asset_matches > 0 and cve.attack_vector == "NETWORK"
+            else (0.72 if asset_matches > 0 else 0.55)
+        )
         reproducibility = max(0.35, float(applicability.get("confidence") or 0.1))
         patch_factor = 0.35 if patch_available else 0.85
-        exploit_maturity = min(1.0, (0.45 if kev_val else 0.0) + (epss_val * 0.45) + (0.1 if cve.exploit_available else 0.0))
+        exploit_maturity = min(
+            1.0,
+            (0.45 if kev_val else 0.0)
+            + (epss_val * 0.45)
+            + (0.1 if cve.exploit_available else 0.0),
+        )
         vendor_context_quality = min(
             1.0,
             (
@@ -2349,24 +2745,32 @@ class SheshnaagService:
                 + (0.2 if advisory_summary.get("advisories_by_type", {}).get("vendor") else 0.0)
             ),
         )
-        citations = self._build_citations(cve=cve, tenant=tenant, kev=kev, epss=epss, affected=affected)
+        citations = self._build_citations(
+            cve=cve, tenant=tenant, kev=kev, epss=epss, affected=affected
+        )
         return compute_candidate_explainability(
             CandidateScoringContext(
                 risk_val=risk_val,
                 epss_val=epss_val,
                 kev=kev_val,
                 package_match_confidence=min(1.0, asset_matches / 3.0),
-                affected_version_confidence=float(applicability.get("version_match_confidence") or 0.25),
+                affected_version_confidence=float(
+                    applicability.get("version_match_confidence") or 0.25
+                ),
                 sbom_vex_applicability=float(applicability.get("sbom_vex_applicability") or 0.2),
                 attack_surface=attack_surface,
                 observability=observability,
                 linux_reproducibility=reproducibility,
                 patch_availability_factor=patch_factor,
                 exploit_maturity=exploit_maturity,
-                advisory_normalization_confidence=float(advisory_summary.get("normalization_confidence") or 0.5),
+                advisory_normalization_confidence=float(
+                    advisory_summary.get("normalization_confidence") or 0.5
+                ),
                 source_agreement=float(advisory_summary.get("source_agreement") or 0.6),
                 vendor_context_quality=vendor_context_quality,
-                source_freshness=self._source_freshness_score(["nvd", "kev", "epss", "osv", "ghsa", "vendor_advisory", "patch_notes"]),
+                source_freshness=self._source_freshness_score(
+                    ["nvd", "kev", "epss", "osv", "ghsa", "vendor_advisory", "patch_notes"]
+                ),
                 evidence_readiness=self._evidence_readiness_score(),
                 applicability={
                     **applicability,
@@ -2377,7 +2781,7 @@ class SheshnaagService:
             )
         )
 
-    def _source_freshness_score(self, feed_keys: List[str]) -> float:
+    def _source_freshness_score(self, feed_keys: list[str]) -> float:
         now = utc_now().replace(tzinfo=None)
         relevant = self.session.query(SourceFeed).filter(SourceFeed.feed_key.in_(feed_keys)).all()
         if not relevant:
@@ -2387,14 +2791,21 @@ class SheshnaagService:
             threshold = int(feed.freshness_seconds or 21600)
             if feed.last_synced_at is None:
                 continue
-            synced = feed.last_synced_at.replace(tzinfo=None) if feed.last_synced_at.tzinfo else feed.last_synced_at
+            synced = (
+                feed.last_synced_at.replace(tzinfo=None)
+                if feed.last_synced_at.tzinfo
+                else feed.last_synced_at
+            )
             if (now - synced).total_seconds() <= threshold:
                 fresh += 1
         return round(fresh / max(1, len(relevant)), 3)
 
     def _evidence_readiness_score(self) -> float:
         plan = self.provider.build_plan(
-            revision_content={"base_image": DEFAULT_KALI_IMAGE, "collectors": list(DEFAULT_RECIPE_COLLECTORS)},
+            revision_content={
+                "base_image": DEFAULT_KALI_IMAGE,
+                "collectors": list(DEFAULT_RECIPE_COLLECTORS),
+            },
             run_context={"tenant_slug": "workspace", "analyst_name": "system", "run_id": 0},
         )
         status = ((plan.get("provider_readiness") or {}).get("status") or "degraded").lower()
@@ -2405,17 +2816,33 @@ class SheshnaagService:
         *,
         cve: CVE,
         tenant: Tenant,
-        kev: Optional[KEVEntry],
-        epss: Optional[EPSSSnapshot],
-        affected: Optional[AffectedProduct],
-    ) -> List[Dict[str, Any]]:
+        kev: KEVEntry | None,
+        epss: EPSSSnapshot | None,
+        affected: AffectedProduct | None,
+    ) -> list[dict[str, Any]]:
         """Build a normalized list of explainability citations from all available sources."""
-        citations: List[Dict[str, Any]] = []
+        citations: list[dict[str, Any]] = []
 
         if kev and kev.source_url:
-            citations.append({"type": "kev", "label": "CISA KEV", "url": kev.source_url, "detail": kev.short_description if hasattr(kev, "short_description") else None})
+            citations.append(
+                {
+                    "type": "kev",
+                    "label": "CISA KEV",
+                    "url": kev.source_url,
+                    "detail": kev.short_description if hasattr(kev, "short_description") else None,
+                }
+            )
         if epss and epss.source_url:
-            citations.append({"type": "epss", "label": "FIRST EPSS", "url": epss.source_url, "detail": f"Score {epss.score:.3f}, percentile {epss.percentile:.3f}" if epss.percentile else None})
+            citations.append(
+                {
+                    "type": "epss",
+                    "label": "FIRST EPSS",
+                    "url": epss.source_url,
+                    "detail": f"Score {epss.score:.3f}, percentile {epss.percentile:.3f}"
+                    if epss.percentile
+                    else None,
+                }
+            )
 
         # Advisory citations from AdvisoryRecord
         advisories = (
@@ -2445,12 +2872,16 @@ class SheshnaagService:
             .all()
         )
         for doc in knowledge_docs:
-            citations.append({
-                "type": f"knowledge_{doc.document_type}",
-                "label": doc.title,
-                "url": doc.source_url,
-                "detail": (doc.content[:200] + "...") if doc.content and len(doc.content) > 200 else doc.content,
-            })
+            citations.append(
+                {
+                    "type": f"knowledge_{doc.document_type}",
+                    "label": doc.title,
+                    "url": doc.source_url,
+                    "detail": (doc.content[:200] + "...")
+                    if doc.content and len(doc.content) > 200
+                    else doc.content,
+                }
+            )
 
         raw_sources = (
             self.session.query(RawKnowledgeSource)
@@ -2477,21 +2908,25 @@ class SheshnaagService:
             .all()
         )
         for stmt in vex_stmts:
-            citations.append({
-                "type": "vex",
-                "label": f"VEX: {stmt.status}",
-                "url": stmt.source_url,
-                "detail": stmt.justification,
-            })
+            citations.append(
+                {
+                    "type": "vex",
+                    "label": f"VEX: {stmt.status}",
+                    "url": stmt.source_url,
+                    "detail": stmt.justification,
+                }
+            )
 
         # Package / affected product citation
         if affected:
-            citations.append({
-                "type": "affected_product",
-                "label": f"Affected: {affected.vendor or 'unknown'}/{affected.product}",
-                "url": None,
-                "detail": f"Version range from NVD affected product data",
-            })
+            citations.append(
+                {
+                    "type": "affected_product",
+                    "label": f"Affected: {affected.vendor or 'unknown'}/{affected.product}",
+                    "url": None,
+                    "detail": "Version range from NVD affected product data",
+                }
+            )
 
         package_links = (
             self.session.query(AdvisoryPackageLink, PackageRecord)
@@ -2515,20 +2950,22 @@ class SheshnaagService:
         # Asset match rationale
         asset_count = self._asset_match_count(tenant, affected)
         if asset_count > 0:
-            citations.append({
-                "type": "asset_match",
-                "label": f"{asset_count} tenant asset(s) match",
-                "url": None,
-                "detail": f"Matched via installed_software on {asset_count} asset record(s)",
-            })
+            citations.append(
+                {
+                    "type": "asset_match",
+                    "label": f"{asset_count} tenant asset(s) match",
+                    "url": None,
+                    "detail": f"Matched via installed_software on {asset_count} asset record(s)",
+                }
+            )
 
         return citations
 
-    def _artifact_inputs(self, recipe_content: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _artifact_inputs(self, recipe_content: dict[str, Any]) -> list[dict[str, Any]]:
         raw = recipe_content.get("artifact_inputs", recipe_content.get("input_artifacts")) or []
         if not isinstance(raw, list):
             return []
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for artifact in raw:
             if not isinstance(artifact, dict):
                 continue
@@ -2550,7 +2987,7 @@ class SheshnaagService:
         revision: RecipeRevision,
         analyst_name: str,
         include_actor: bool,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         if not revision.requires_acknowledgement:
             return None
 
@@ -2563,7 +3000,7 @@ class SheshnaagService:
         )
         acknowledgement_text = requirement.acknowledgement_text
         text_sha256 = hashlib.sha256(acknowledgement_text.encode("utf-8")).hexdigest()
-        details: Dict[str, Any] = {
+        details: dict[str, Any] = {
             "risk_level": revision.risk_level,
             "required": True,
             "required_approvals": requirement.required_approvals,
@@ -2681,14 +3118,18 @@ class SheshnaagService:
         self,
         *,
         run: LabRun,
-        recipe_content: Dict[str, Any],
+        recipe_content: dict[str, Any],
     ) -> None:
         artifact_inputs = self._artifact_inputs(recipe_content)
         if not artifact_inputs:
             return
 
         manifest = dict(run.manifest or {})
-        transfer_state = manifest.get("artifact_transfer") if isinstance(manifest.get("artifact_transfer"), dict) else {}
+        transfer_state = (
+            manifest.get("artifact_transfer")
+            if isinstance(manifest.get("artifact_transfer"), dict)
+            else {}
+        )
         if transfer_state.get("status") == "completed":
             return
 
@@ -2711,7 +3152,9 @@ class SheshnaagService:
             workspace_path=workspace_path,
         )
         transfers = transfer_result.get("transfers", [])
-        has_errors = any(item.get("status") != "transferred" for item in transfers if isinstance(item, dict))
+        has_errors = any(
+            item.get("status") != "transferred" for item in transfers if isinstance(item, dict)
+        )
         transfer_state = {
             "status": "completed" if not has_errors else "completed_with_errors",
             "requested_count": len(artifact_inputs),
@@ -2724,7 +3167,9 @@ class SheshnaagService:
             run,
             "artifact_transfer",
             ProviderResult(
-                state=RunState(run.state) if run.state in {item.value for item in RunState} else RunState.ERRORED,
+                state=RunState(run.state)
+                if run.state in {item.value for item in RunState}
+                else RunState.ERRORED,
                 provider_run_ref=run.provider_run_ref or f"run-{run.id}",
                 plan=manifest,
                 transcript=(
@@ -2736,15 +3181,19 @@ class SheshnaagService:
             level="warning" if has_errors else "info",
         )
 
-    def _collect_and_generate(self, *, run: LabRun, candidate: Optional[ResearchCandidate], analyst_name: str) -> RunArtifacts:
+    def _collect_and_generate(
+        self, *, run: LabRun, candidate: ResearchCandidate | None, analyst_name: str
+    ) -> RunArtifacts:
         revision = (
-            self.session.query(RecipeRevision).filter(RecipeRevision.id == run.recipe_revision_id).first()
+            self.session.query(RecipeRevision)
+            .filter(RecipeRevision.id == run.recipe_revision_id)
+            .first()
         )
         recipe_content = dict(revision.content or {}) if revision else {}
         names = recipe_collector_names(recipe_content)
         collectors = instantiate_collectors(names)
 
-        run_context: Dict[str, Any] = {
+        run_context: dict[str, Any] = {
             "run_id": run.id,
             "candidate": self._candidate_payload(candidate) if candidate else {},
             "cve_id": candidate.cve.cve_id if candidate and candidate.cve else None,
@@ -2757,7 +3206,7 @@ class SheshnaagService:
             state=run.state,
             container_id=(run.manifest or {}).get("container_id"),
         )
-        evidence: List[Dict[str, Any]] = []
+        evidence: list[dict[str, Any]] = []
         for collector in collectors:
             try:
                 collector.pre_run(run_context=run_context, provider_result=provider_result)
@@ -2813,7 +3262,11 @@ class SheshnaagService:
                 )
         generated = self.artifact_generator.generate(run_context=run_context, evidence=evidence)
         tenant = self.session.query(Tenant).filter(Tenant.id == run.tenant_id).first()
-        signer = self._attestation_signer_for_tenant(tenant) if tenant else self.default_attestation_signer
+        signer = (
+            self._attestation_signer_for_tenant(tenant)
+            if tenant
+            else self.default_attestation_signer
+        )
         attestation = signer.sign(payload=run.manifest or {}, signer=analyst_name)
         return RunArtifacts(
             evidence=evidence,
@@ -2822,7 +3275,7 @@ class SheshnaagService:
             attestation=attestation,
         )
 
-    def _parse_iso_datetime(self, value: Optional[str]) -> Optional[datetime]:
+    def _parse_iso_datetime(self, value: str | None) -> datetime | None:
         if not value or not isinstance(value, str):
             return None
         try:
@@ -2831,7 +3284,7 @@ class SheshnaagService:
             return None
 
     def _persist_run_artifacts(self, *, run: LabRun, artifacts: RunArtifacts) -> None:
-        evidence_records: List[EvidenceArtifact] = []
+        evidence_records: list[EvidenceArtifact] = []
         for item in artifacts.evidence:
             record = EvidenceArtifact(
                 run_id=run.id,
@@ -2855,7 +3308,7 @@ class SheshnaagService:
         self.session.flush()
 
         first_evidence_id = evidence_records[0].id if evidence_records else None
-        detection_records: List[DetectionArtifact] = []
+        detection_records: list[DetectionArtifact] = []
         for item in artifacts.detections:
             record = DetectionArtifact(
                 run_id=run.id,
@@ -2868,7 +3321,7 @@ class SheshnaagService:
             )
             self.session.add(record)
             detection_records.append(record)
-        mitigation_records: List[MitigationArtifact] = []
+        mitigation_records: list[MitigationArtifact] = []
         for item in artifacts.mitigations:
             record = MitigationArtifact(
                 run_id=run.id,
@@ -2888,7 +3341,11 @@ class SheshnaagService:
             mitigation_records=mitigation_records,
         )
         tenant = self.session.query(Tenant).filter(Tenant.id == run.tenant_id).first()
-        signer = self._attestation_signer_for_tenant(tenant) if tenant else self.default_attestation_signer
+        signer = (
+            self._attestation_signer_for_tenant(tenant)
+            if tenant
+            else self.default_attestation_signer
+        )
         signed = signer.sign(payload=attestation_payload, signer=artifacts.attestation["signer"])
         self.session.add(
             AttestationRecord(
@@ -2912,7 +3369,7 @@ class SheshnaagService:
             )
         )
 
-    def _candidate_payload(self, candidate: Optional[ResearchCandidate]) -> Dict[str, Any]:
+    def _candidate_payload(self, candidate: ResearchCandidate | None) -> dict[str, Any]:
         if candidate is None:
             return {}
         return {
@@ -2923,7 +3380,9 @@ class SheshnaagService:
             "candidate_score": candidate.candidate_score,
             "status": candidate.status,
             "status_reason": candidate.status_reason,
-            "status_changed_at": candidate.status_changed_at.isoformat() if candidate.status_changed_at else None,
+            "status_changed_at": candidate.status_changed_at.isoformat()
+            if candidate.status_changed_at
+            else None,
             "status_changed_by": candidate.status_changed_by,
             "merged_into_id": candidate.merged_into_id,
             "assignment_state": candidate.assignment_state,
@@ -2940,7 +3399,7 @@ class SheshnaagService:
             "explainability": candidate.explainability,
         }
 
-    def _recipe_summary(self, recipe: LabRecipe) -> Dict[str, Any]:
+    def _recipe_summary(self, recipe: LabRecipe) -> dict[str, Any]:
         return {
             "id": recipe.id,
             "candidate_id": recipe.candidate_id,
@@ -2954,7 +3413,7 @@ class SheshnaagService:
             "updated_at": recipe.updated_at.isoformat() if recipe.updated_at else None,
         }
 
-    def _run_summary(self, run: LabRun) -> Dict[str, Any]:
+    def _run_summary(self, run: LabRun) -> dict[str, Any]:
         manifest = run.manifest or {}
         return {
             "id": run.id,
@@ -3015,7 +3474,9 @@ class SheshnaagService:
             return False
         if manifest.get("container_id"):
             return True
-        if run.provider == "lima" and (manifest.get("instance_name") or (manifest.get("snapshot_refs") or {}).get("booted")):
+        if run.provider == "lima" and (
+            manifest.get("instance_name") or (manifest.get("snapshot_refs") or {}).get("booted")
+        ):
             return True
         return False
 
@@ -3039,10 +3500,13 @@ class SheshnaagService:
             raise ValueError("Recipe not found.")
         return recipe
 
-    def _get_recipe_revision(self, recipe_id: int, revision_number: Optional[int]) -> RecipeRevision:
+    def _get_recipe_revision(self, recipe_id: int, revision_number: int | None) -> RecipeRevision:
         revision = (
             self.session.query(RecipeRevision)
-            .filter(RecipeRevision.recipe_id == recipe_id, RecipeRevision.revision_number == revision_number)
+            .filter(
+                RecipeRevision.recipe_id == recipe_id,
+                RecipeRevision.revision_number == revision_number,
+            )
             .first()
         )
         if revision is None:
@@ -3050,43 +3514,62 @@ class SheshnaagService:
         return revision
 
     def _get_run(self, tenant: Tenant, run_id: int) -> LabRun:
-        run = self.session.query(LabRun).filter(LabRun.tenant_id == tenant.id, LabRun.id == run_id).first()
+        run = (
+            self.session.query(LabRun)
+            .filter(LabRun.tenant_id == tenant.id, LabRun.id == run_id)
+            .first()
+        )
         if run is None:
             raise ValueError("Run not found.")
         return run
 
-    def _prepare_recipe_content(self, content: Dict[str, Any], image: Optional[str]) -> Dict[str, Any]:
+    def _prepare_recipe_content(self, content: dict[str, Any], image: str | None) -> dict[str, Any]:
         normalized = self._normalize_recipe_content(content, image)
         validation = self.validate_recipe_content(normalized)
         if not validation["valid"]:
             raise ValueError("; ".join(validation["errors"]))
         return normalized
 
-    def validate_recipe_content(self, content: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_recipe_content(self, content: dict[str, Any]) -> dict[str, Any]:
         """Validate recipe content against schema rules."""
         from app.lab.recipe_schema import RecipeSchemaValidator
+
         result = RecipeSchemaValidator().validate(content)
         return {"valid": result.valid, "errors": result.errors, "warnings": result.warnings}
 
-    def lint_recipe_content(self, content: Dict[str, Any], expected_distro: Optional[str] = None) -> Dict[str, Any]:
+    def lint_recipe_content(
+        self, content: dict[str, Any], expected_distro: str | None = None
+    ) -> dict[str, Any]:
         """Lint recipe content for risky configurations."""
         from app.lab.recipe_schema import RecipeLinter
-        result = RecipeLinter(expected_distro=expected_distro).lint(content)
-        return {"errors": result.errors, "warnings": result.warnings, "has_blocking_errors": result.has_blocking_errors}
 
-    def diff_recipe_revisions(self, tenant: Tenant, *, recipe_id: int, old_revision: int, new_revision: int) -> Dict[str, Any]:
+        result = RecipeLinter(expected_distro=expected_distro).lint(content)
+        return {
+            "errors": result.errors,
+            "warnings": result.warnings,
+            "has_blocking_errors": result.has_blocking_errors,
+        }
+
+    def diff_recipe_revisions(
+        self, tenant: Tenant, *, recipe_id: int, old_revision: int, new_revision: int
+    ) -> dict[str, Any]:
         """Diff two recipe revisions."""
         from app.lab.recipe_schema import RecipeDiffEngine
+
         recipe = self._get_recipe(tenant, recipe_id)
         old_rev = self._get_recipe_revision(recipe.id, old_revision)
         new_rev = self._get_recipe_revision(recipe.id, new_revision)
         result = RecipeDiffEngine().diff(old_rev.content or {}, new_rev.content or {})
         return result.to_dict()
 
-    def list_templates(self, tenant: Tenant) -> Dict[str, Any]:
+    def list_templates(self, tenant: Tenant) -> dict[str, Any]:
         """List available lab templates."""
         self._ensure_template_catalog()
-        rows = self.session.query(LabTemplate).order_by(LabTemplate.distro.asc(), LabTemplate.name.asc()).all()
+        rows = (
+            self.session.query(LabTemplate)
+            .order_by(LabTemplate.distro.asc(), LabTemplate.name.asc())
+            .all()
+        )
         return {
             "items": [
                 {
@@ -3105,7 +3588,9 @@ class SheshnaagService:
             "count": len(rows),
         }
 
-    def _normalize_recipe_content(self, content: Dict[str, Any], image: Optional[str]) -> Dict[str, Any]:
+    def _normalize_recipe_content(
+        self, content: dict[str, Any], image: str | None
+    ) -> dict[str, Any]:
         normalized = dict(content)
         if "artifact_inputs" not in normalized and "input_artifacts" in normalized:
             normalized["artifact_inputs"] = normalized["input_artifacts"]
@@ -3113,7 +3598,9 @@ class SheshnaagService:
         normalized.setdefault("command", ["sleep", "1"])
         normalized.setdefault("network_policy", {"allow_egress_hosts": []})
         normalized.setdefault("collectors", list(DEFAULT_RECIPE_COLLECTORS))
-        normalized.setdefault("teardown_policy", {"mode": "destroy_immediately", "ephemeral_workspace": True})
+        normalized.setdefault(
+            "teardown_policy", {"mode": "destroy_immediately", "ephemeral_workspace": True}
+        )
         normalized.setdefault("risk_level", "standard")
         normalized.setdefault("workspace_retention", "destroy_immediately")
         execution_policy = dict(normalized.get("execution_policy") or {})
@@ -3137,10 +3624,22 @@ class SheshnaagService:
     def _ensure_source_feeds(self) -> None:
         defaults = [
             ("nvd", "NVD", "intel", "active", "https://nvd.nist.gov/"),
-            ("kev", "CISA KEV", "exploitability", "active", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"),
+            (
+                "kev",
+                "CISA KEV",
+                "exploitability",
+                "active",
+                "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+            ),
             ("epss", "FIRST EPSS", "exploitability", "active", "https://www.first.org/epss/"),
             ("osv", "OSV", "package", "planned", "https://osv.dev/"),
-            ("ghsa", "GitHub Advisory Database", "package", "planned", "https://github.com/advisories"),
+            (
+                "ghsa",
+                "GitHub Advisory Database",
+                "package",
+                "planned",
+                "https://github.com/advisories",
+            ),
         ]
         seen_keys: set = set()
 
@@ -3156,7 +3655,9 @@ class SheshnaagService:
                         category=getattr(connector_cls, "category", "intel"),
                         status="active",
                         source_url=getattr(connector_cls, "source_url", ""),
-                        freshness_seconds=getattr(connector_cls, "default_freshness_seconds", 21600),
+                        freshness_seconds=getattr(
+                            connector_cls, "default_freshness_seconds", 21600
+                        ),
                         last_synced_at=utc_now(),
                     )
                 )
@@ -3179,7 +3680,9 @@ class SheshnaagService:
                 )
         self.session.flush()
 
-    def _ensure_lab_template(self, *, provider_name: str = "docker_kali", image_profile: str = "baseline") -> LabTemplate:
+    def _ensure_lab_template(
+        self, *, provider_name: str = "docker_kali", image_profile: str = "baseline"
+    ) -> LabTemplate:
         self._ensure_template_catalog()
         entry = resolve_catalog_entry(provider=provider_name, image_profile=image_profile)
         template = (
@@ -3207,7 +3710,9 @@ class SheshnaagService:
         for entry in list_image_catalog():
             existing = (
                 self.session.query(LabTemplate)
-                .filter(LabTemplate.provider == entry.provider, LabTemplate.base_image == entry.image)
+                .filter(
+                    LabTemplate.provider == entry.provider, LabTemplate.base_image == entry.image
+                )
                 .first()
             )
             if existing is None:
@@ -3303,7 +3808,9 @@ class SheshnaagService:
         for entry in catalog:
             existing = (
                 self.session.query(LabTemplate)
-                .filter(LabTemplate.provider == entry["provider"], LabTemplate.name == entry["name"])
+                .filter(
+                    LabTemplate.provider == entry["provider"], LabTemplate.name == entry["name"]
+                )
                 .first()
             )
             if existing is None:
@@ -3323,18 +3830,24 @@ class SheshnaagService:
                 )
         self.session.flush()
 
-    def _artifact_review_entries(self, target_type: str, target_id: int) -> List[ReviewDecision]:
+    def _artifact_review_entries(self, target_type: str, target_id: int) -> list[ReviewDecision]:
         return (
             self.session.query(ReviewDecision)
-            .filter(ReviewDecision.target_type == target_type, ReviewDecision.target_id == str(target_id))
+            .filter(
+                ReviewDecision.target_type == target_type,
+                ReviewDecision.target_id == str(target_id),
+            )
             .order_by(ReviewDecision.created_at.desc())
             .all()
         )
 
-    def _latest_review_entry(self, target_type: str, target_id: int) -> Optional[ReviewDecision]:
+    def _latest_review_entry(self, target_type: str, target_id: int) -> ReviewDecision | None:
         return (
             self.session.query(ReviewDecision)
-            .filter(ReviewDecision.target_type == target_type, ReviewDecision.target_id == str(target_id))
+            .filter(
+                ReviewDecision.target_type == target_type,
+                ReviewDecision.target_id == str(target_id),
+            )
             .order_by(ReviewDecision.created_at.desc())
             .first()
         )
@@ -3344,17 +3857,17 @@ class SheshnaagService:
         *,
         entity_type: str,
         entity_id: int,
-        run_id: Optional[int],
+        run_id: int | None,
         title: str,
         status: str,
         review_state: str,
-        sensitivity: Dict[str, Any],
-        blocking_reasons: List[str],
-        last_review: Optional[ReviewDecision],
-        updated_at: Optional[datetime],
+        sensitivity: dict[str, Any],
+        blocking_reasons: list[str],
+        last_review: ReviewDecision | None,
+        updated_at: datetime | None,
         route: str,
-        extra: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         payload = {
             "entity_type": entity_type,
             "entity_id": entity_id,
@@ -3364,10 +3877,21 @@ class SheshnaagService:
             "review_state": review_state,
             "sensitivity": sensitivity,
             "blocking_reasons": blocking_reasons,
-            "needs_attention_now": bool(blocking_reasons) or review_state in {"captured", "draft", "under_review", "changes_requested", "blocked", "needs_attention"},
+            "needs_attention_now": bool(blocking_reasons)
+            or review_state
+            in {
+                "captured",
+                "draft",
+                "under_review",
+                "changes_requested",
+                "blocked",
+                "needs_attention",
+            },
             "last_reviewer": last_review.reviewer_name if last_review else None,
             "last_decision": last_review.decision if last_review else None,
-            "last_decision_at": last_review.created_at.isoformat() if last_review and last_review.created_at else None,
+            "last_decision_at": last_review.created_at.isoformat()
+            if last_review and last_review.created_at
+            else None,
             "updated_at": updated_at.isoformat() if updated_at else None,
             "route": route,
         }
@@ -3375,7 +3899,7 @@ class SheshnaagService:
             payload.update(extra)
         return payload
 
-    def _detection_artifact_payload(self, item: DetectionArtifact) -> Dict[str, Any]:
+    def _detection_artifact_payload(self, item: DetectionArtifact) -> dict[str, Any]:
         reviews = self._artifact_review_entries("detection_artifact", item.id)
         latest_review = reviews[0] if reviews else None
         return {
@@ -3388,10 +3912,18 @@ class SheshnaagService:
             "evidence_artifact_id": item.evidence_artifact_id,
             "rule_body": item.rule_body,
             "lineage": {
-                "supersedes_artifact_id": (latest_review.payload or {}).get("supersedes_artifact_id") if latest_review else None,
-                "correction_note": (latest_review.payload or {}).get("correction_note") if latest_review else None,
+                "supersedes_artifact_id": (latest_review.payload or {}).get(
+                    "supersedes_artifact_id"
+                )
+                if latest_review
+                else None,
+                "correction_note": (latest_review.payload or {}).get("correction_note")
+                if latest_review
+                else None,
                 "latest_decision": latest_review.decision if latest_review else item.status,
-                "latest_reviewed_at": latest_review.created_at.isoformat() if latest_review and latest_review.created_at else None,
+                "latest_reviewed_at": latest_review.created_at.isoformat()
+                if latest_review and latest_review.created_at
+                else None,
             },
             "review_history": [
                 {
@@ -3415,7 +3947,7 @@ class SheshnaagService:
             ],
         }
 
-    def _mitigation_artifact_payload(self, item: MitigationArtifact) -> Dict[str, Any]:
+    def _mitigation_artifact_payload(self, item: MitigationArtifact) -> dict[str, Any]:
         reviews = self._artifact_review_entries("mitigation_artifact", item.id)
         latest_review = reviews[0] if reviews else None
         return {
@@ -3426,10 +3958,18 @@ class SheshnaagService:
             "status": item.status,
             "body": item.body,
             "lineage": {
-                "supersedes_artifact_id": (latest_review.payload or {}).get("supersedes_artifact_id") if latest_review else None,
-                "correction_note": (latest_review.payload or {}).get("correction_note") if latest_review else None,
+                "supersedes_artifact_id": (latest_review.payload or {}).get(
+                    "supersedes_artifact_id"
+                )
+                if latest_review
+                else None,
+                "correction_note": (latest_review.payload or {}).get("correction_note")
+                if latest_review
+                else None,
                 "latest_decision": latest_review.decision if latest_review else item.status,
-                "latest_reviewed_at": latest_review.created_at.isoformat() if latest_review and latest_review.created_at else None,
+                "latest_reviewed_at": latest_review.created_at.isoformat()
+                if latest_review and latest_review.created_at
+                else None,
             },
             "review_history": [
                 {
@@ -3474,7 +4014,7 @@ class SheshnaagService:
             raise ValueError("Artifact not found.")
         return row
 
-    def _run_analyst_id(self, run_id: int) -> Optional[int]:
+    def _run_analyst_id(self, run_id: int) -> int | None:
         row = self.session.query(LabRun).filter(LabRun.id == run_id).first()
         return row.analyst_id if row else None
 
@@ -3483,15 +4023,23 @@ class SheshnaagService:
         *,
         run: LabRun,
         signer: str,
-        evidence_records: List[EvidenceArtifact],
-        detection_records: List[DetectionArtifact],
-        mitigation_records: List[MitigationArtifact],
-    ) -> Dict[str, Any]:
-        revision = self.session.query(RecipeRevision).filter(RecipeRevision.id == run.recipe_revision_id).first()
-        analyst = self.session.query(AnalystIdentity).filter(AnalystIdentity.id == run.analyst_id).first()
-        workstation = self.session.query(WorkstationFingerprint).filter(
-            WorkstationFingerprint.id == run.workstation_fingerprint_id
-        ).first()
+        evidence_records: list[EvidenceArtifact],
+        detection_records: list[DetectionArtifact],
+        mitigation_records: list[MitigationArtifact],
+    ) -> dict[str, Any]:
+        revision = (
+            self.session.query(RecipeRevision)
+            .filter(RecipeRevision.id == run.recipe_revision_id)
+            .first()
+        )
+        analyst = (
+            self.session.query(AnalystIdentity).filter(AnalystIdentity.id == run.analyst_id).first()
+        )
+        workstation = (
+            self.session.query(WorkstationFingerprint)
+            .filter(WorkstationFingerprint.id == run.workstation_fingerprint_id)
+            .first()
+        )
         payload = {
             "subject": {"type": "run_manifest", "id": str(run.id)},
             "run_id": run.id,
@@ -3526,7 +4074,11 @@ class SheshnaagService:
             },
         }
         tenant = self.session.query(Tenant).filter(Tenant.id == run.tenant_id).first()
-        attestation_signer = self._attestation_signer_for_tenant(tenant) if tenant else self.default_attestation_signer
+        attestation_signer = (
+            self._attestation_signer_for_tenant(tenant)
+            if tenant
+            else self.default_attestation_signer
+        )
         signed = attestation_signer.sign(payload=payload, signer=signer)
         payload["signing"] = {
             "backend": signed.get("backend"),
@@ -3537,7 +4089,9 @@ class SheshnaagService:
         }
         return payload
 
-    def _build_reproduction_steps(self, *, run: LabRun, evidence_rows: List[EvidenceArtifact]) -> List[str]:
+    def _build_reproduction_steps(
+        self, *, run: LabRun, evidence_rows: list[EvidenceArtifact]
+    ) -> list[str]:
         command = (run.manifest or {}).get("command") or ["sleep", "1"]
         if isinstance(command, list):
             command_text = " ".join(str(part) for part in command)
@@ -3557,10 +4111,10 @@ class SheshnaagService:
         bundle_type: str,
         title: str,
         run: LabRun,
-        evidence_rows: List[EvidenceArtifact],
-        artifacts: List[Any],
-        warnings: List[str],
-        reproduction_steps: List[str],
+        evidence_rows: list[EvidenceArtifact],
+        artifacts: list[Any],
+        warnings: list[str],
+        reproduction_steps: list[str],
     ) -> str:
         bundle_labels = {
             "vendor_disclosure": "Vendor disclosure",
@@ -3577,9 +4131,13 @@ class SheshnaagService:
         artifact_lines = []
         for row in artifacts:
             if isinstance(row, DetectionArtifact):
-                artifact_lines.append(f"- Detection `{row.artifact_type}`: {row.name} [{row.status}]")
+                artifact_lines.append(
+                    f"- Detection `{row.artifact_type}`: {row.name} [{row.status}]"
+                )
             else:
-                artifact_lines.append(f"- Mitigation `{row.artifact_type}`: {row.title} [{row.status}]")
+                artifact_lines.append(
+                    f"- Mitigation `{row.artifact_type}`: {row.title} [{row.status}]"
+                )
         warning_lines = [f"- {item}" for item in warnings] or ["- No export warnings were raised."]
         evidence_lines = [f"- `{row.artifact_kind}`: {row.title}" for row in evidence_rows]
         return "\n".join(
@@ -3608,7 +4166,12 @@ class SheshnaagService:
                 *(evidence_lines or ["- No evidence selected."]),
                 "",
                 "## Artifacts",
-                *(artifact_lines or ["- No reviewed artifacts were available; draft artifacts were exported for internal review only."]),
+                *(
+                    artifact_lines
+                    or [
+                        "- No reviewed artifacts were available; draft artifacts were exported for internal review only."
+                    ]
+                ),
                 "",
                 "## Reproduction steps",
                 *[f"{idx}. {step}" for idx, step in enumerate(reproduction_steps, start=1)],
@@ -3622,19 +4185,35 @@ class SheshnaagService:
         bundle_type: str,
         title: str,
         signed_by: str,
-        evidence_rows: List[EvidenceArtifact],
-        artifacts: List[Any],
-        redaction_notes: List[Dict[str, Any]],
-        attachment_policy: List[Dict[str, Any]] | Dict[str, Any],
-        warnings: List[str],
-        review_checklist: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        evidence_rows: list[EvidenceArtifact],
+        artifacts: list[Any],
+        redaction_notes: list[dict[str, Any]],
+        attachment_policy: list[dict[str, Any]] | dict[str, Any],
+        warnings: list[str],
+        review_checklist: dict[str, Any],
+    ) -> dict[str, Any]:
         reproduction_steps = self._build_reproduction_steps(run=run, evidence_rows=evidence_rows)
         attachment_defaults = {
-            "vendor_disclosure": {"include_raw_logs": False, "include_pcap": False, "include_screenshots": False},
-            "bug_bounty": {"include_raw_logs": False, "include_pcap": False, "include_screenshots": True},
-            "research_submission": {"include_raw_logs": True, "include_pcap": False, "include_screenshots": True},
-            "internal_remediation": {"include_raw_logs": True, "include_pcap": False, "include_screenshots": True},
+            "vendor_disclosure": {
+                "include_raw_logs": False,
+                "include_pcap": False,
+                "include_screenshots": False,
+            },
+            "bug_bounty": {
+                "include_raw_logs": False,
+                "include_pcap": False,
+                "include_screenshots": True,
+            },
+            "research_submission": {
+                "include_raw_logs": True,
+                "include_pcap": False,
+                "include_screenshots": True,
+            },
+            "internal_remediation": {
+                "include_raw_logs": True,
+                "include_pcap": False,
+                "include_screenshots": True,
+            },
         }
         effective_attachment_policy = {
             **attachment_defaults.get(bundle_type, attachment_defaults["vendor_disclosure"]),
@@ -3655,12 +4234,14 @@ class SheshnaagService:
                 "kind": row.artifact_kind,
                 "title": row.title,
                 "include": effective_attachment_policy.get(
-                    "include_raw_logs" if row.artifact_kind == "service_logs" else (
-                        "include_pcap" if row.artifact_kind == "pcap" else "include_screenshots"
-                    ),
+                    "include_raw_logs"
+                    if row.artifact_kind == "service_logs"
+                    else ("include_pcap" if row.artifact_kind == "pcap" else "include_screenshots"),
                     True,
                 ),
-                "reason": "Included by attachment policy." if effective_attachment_policy else "Included by default.",
+                "reason": "Included by attachment policy."
+                if effective_attachment_policy
+                else "Included by default.",
             }
             for row in evidence_rows
         ]
@@ -3676,8 +4257,12 @@ class SheshnaagService:
             "safety_checklist": {
                 "requires_external_confirmation": bool(warnings),
                 "contains_raw_pcap": any(row.artifact_kind == "pcap" for row in evidence_rows),
-                "contains_service_logs": any(row.artifact_kind == "service_logs" for row in evidence_rows),
-                "approved_artifact_count": sum(1 for row in artifacts if getattr(row, "status", None) == "approved"),
+                "contains_service_logs": any(
+                    row.artifact_kind == "service_logs" for row in evidence_rows
+                ),
+                "approved_artifact_count": sum(
+                    1 for row in artifacts if getattr(row, "status", None) == "approved"
+                ),
             },
             "review_state": "approved" if not warnings else "under_review",
             "review_checklist": review_checklist,
@@ -3721,7 +4306,9 @@ class SheshnaagService:
                 for row in evidence_rows
             ],
             "artifacts": [
-                self._detection_artifact_payload(row) if isinstance(row, DetectionArtifact) else self._mitigation_artifact_payload(row)
+                self._detection_artifact_payload(row)
+                if isinstance(row, DetectionArtifact)
+                else self._mitigation_artifact_payload(row)
                 for row in artifacts
             ],
             "report_markdown": self._render_bundle_report(
@@ -3738,23 +4325,59 @@ class SheshnaagService:
     def _write_bundle_archive(
         self,
         *,
-        manifest: Dict[str, Any],
-        evidence_rows: List[EvidenceArtifact],
-        detection_rows: List[DetectionArtifact],
-        mitigation_rows: List[MitigationArtifact],
-    ) -> Dict[str, Any]:
+        manifest: dict[str, Any],
+        evidence_rows: list[EvidenceArtifact],
+        detection_rows: list[DetectionArtifact],
+        mitigation_rows: list[MitigationArtifact],
+    ) -> dict[str, Any]:
         self.export_root.mkdir(parents=True, exist_ok=True)
         timestamp = utc_now().strftime("%Y%m%dT%H%M%SZ")
         filename = f"sheshnaag-bundle-run-{manifest['run']['id']}-{timestamp}.zip"
         path = self.export_root / filename
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("manifest.json", json.dumps({k: v for k, v in manifest.items() if k != "report_markdown"}, indent=2, sort_keys=True, default=str))
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    {k: v for k, v in manifest.items() if k != "report_markdown"},
+                    indent=2,
+                    sort_keys=True,
+                    default=str,
+                ),
+            )
             archive.writestr("report.md", manifest["report_markdown"])
-            archive.writestr("review-history.json", json.dumps(manifest.get("review_history") or [], indent=2, sort_keys=True, default=str))
-            archive.writestr("redaction-log.json", json.dumps(manifest.get("redaction_log") or {}, indent=2, sort_keys=True, default=str))
-            archive.writestr("impact-summary.json", json.dumps(manifest.get("impact_summary") or {}, indent=2, sort_keys=True, default=str))
-            archive.writestr("provenance-summary.json", json.dumps(manifest.get("provenance_summary") or {}, indent=2, sort_keys=True, default=str))
-            archive.writestr("attachment-inventory.json", json.dumps(manifest.get("attachment_inventory") or [], indent=2, sort_keys=True, default=str))
+            archive.writestr(
+                "review-history.json",
+                json.dumps(
+                    manifest.get("review_history") or [], indent=2, sort_keys=True, default=str
+                ),
+            )
+            archive.writestr(
+                "redaction-log.json",
+                json.dumps(
+                    manifest.get("redaction_log") or {}, indent=2, sort_keys=True, default=str
+                ),
+            )
+            archive.writestr(
+                "impact-summary.json",
+                json.dumps(
+                    manifest.get("impact_summary") or {}, indent=2, sort_keys=True, default=str
+                ),
+            )
+            archive.writestr(
+                "provenance-summary.json",
+                json.dumps(
+                    manifest.get("provenance_summary") or {}, indent=2, sort_keys=True, default=str
+                ),
+            )
+            archive.writestr(
+                "attachment-inventory.json",
+                json.dumps(
+                    manifest.get("attachment_inventory") or [],
+                    indent=2,
+                    sort_keys=True,
+                    default=str,
+                ),
+            )
             for row in evidence_rows:
                 archive.writestr(
                     f"evidence/evidence-{row.id}.json",
@@ -3773,7 +4396,9 @@ class SheshnaagService:
                     ),
                 )
             for row in detection_rows:
-                archive.writestr(f"artifacts/detection-{row.id}-{row.artifact_type}.txt", row.rule_body)
+                archive.writestr(
+                    f"artifacts/detection-{row.id}-{row.artifact_type}.txt", row.rule_body
+                )
             for row in mitigation_rows:
                 archive.writestr(f"artifacts/mitigation-{row.id}-{row.artifact_type}.md", row.body)
         archive_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -3784,7 +4409,7 @@ class SheshnaagService:
             "size": path.stat().st_size,
         }
 
-    def _disclosure_bundle_payload(self, row: DisclosureBundle) -> Dict[str, Any]:
+    def _disclosure_bundle_payload(self, row: DisclosureBundle) -> dict[str, Any]:
         archive = (row.manifest or {}).get("archive") or {}
         tenant = self.session.query(Tenant).filter(Tenant.id == row.tenant_id).first()
         tenant_slug = tenant.slug if tenant else "demo-public"
@@ -3798,7 +4423,10 @@ class SheshnaagService:
             }
             for item in (
                 self.session.query(ReviewDecision)
-                .filter(ReviewDecision.target_type == "disclosure_bundle", ReviewDecision.target_id == str(row.id))
+                .filter(
+                    ReviewDecision.target_type == "disclosure_bundle",
+                    ReviewDecision.target_id == str(row.id),
+                )
                 .order_by(ReviewDecision.created_at.desc())
                 .all()
             )
@@ -3821,7 +4449,9 @@ class SheshnaagService:
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }
 
-    def _ensure_analyst_identity(self, tenant: Tenant, analyst_name: Optional[str] = None) -> AnalystIdentity:
+    def _ensure_analyst_identity(
+        self, tenant: Tenant, analyst_name: str | None = None
+    ) -> AnalystIdentity:
         email = f"{(analyst_name or 'demo.analyst').lower().replace(' ', '.')}@sheshnaag.local"
         signing_key = self._ensure_tenant_signing_key(tenant)
         record = (
@@ -3844,11 +4474,16 @@ class SheshnaagService:
             record.public_key_fingerprint = signing_key.fingerprint
         return record
 
-    def _ensure_workstation(self, tenant: Tenant, workstation: Dict[str, Any]) -> WorkstationFingerprint:
+    def _ensure_workstation(
+        self, tenant: Tenant, workstation: dict[str, Any]
+    ) -> WorkstationFingerprint:
         fingerprint = workstation.get("fingerprint") or "local-workstation"
         record = (
             self.session.query(WorkstationFingerprint)
-            .filter(WorkstationFingerprint.tenant_id == tenant.id, WorkstationFingerprint.fingerprint == fingerprint)
+            .filter(
+                WorkstationFingerprint.tenant_id == tenant.id,
+                WorkstationFingerprint.fingerprint == fingerprint,
+            )
             .first()
         )
         if record is None:
@@ -3864,21 +4499,28 @@ class SheshnaagService:
             self.session.flush()
         return record
 
-    def _ensure_product_record(self, affected: Optional[AffectedProduct]) -> Optional[ProductRecord]:
+    def _ensure_product_record(self, affected: AffectedProduct | None) -> ProductRecord | None:
         if affected is None or not affected.product:
             return None
         record = (
             self.session.query(ProductRecord)
-            .filter(ProductRecord.vendor == (affected.vendor or "unknown"), ProductRecord.name == affected.product)
+            .filter(
+                ProductRecord.vendor == (affected.vendor or "unknown"),
+                ProductRecord.name == affected.product,
+            )
             .first()
         )
         if record is None:
-            record = ProductRecord(vendor=affected.vendor or "unknown", name=affected.product, description="Derived from affected product data.")
+            record = ProductRecord(
+                vendor=affected.vendor or "unknown",
+                name=affected.product,
+                description="Derived from affected product data.",
+            )
             self.session.add(record)
             self.session.flush()
         return record
 
-    def _ensure_package_record(self, affected: Optional[AffectedProduct]) -> Optional[PackageRecord]:
+    def _ensure_package_record(self, affected: AffectedProduct | None) -> PackageRecord | None:
         if affected is None or not affected.product:
             return None
         record = (
@@ -3897,23 +4539,28 @@ class SheshnaagService:
             self.session.flush()
         return record
 
-    def _asset_match_count(self, tenant: Tenant, affected: Optional[AffectedProduct]) -> int:
+    def _asset_match_count(self, tenant: Tenant, affected: AffectedProduct | None) -> int:
         if affected is None:
             return 0
         matches = 0
         assets = self.session.query(Asset).filter(Asset.tenant_id == tenant.id).all()
         for asset in assets:
             installed = asset.installed_software or []
-            if any((item.get("product") or item.get("name") or "").lower() == (affected.product or "").lower() for item in installed if isinstance(item, dict)):
+            if any(
+                (item.get("product") or item.get("name") or "").lower()
+                == (affected.product or "").lower()
+                for item in installed
+                if isinstance(item, dict)
+            ):
                 matches += 1
         return matches
 
     @staticmethod
-    def _version_token_tuple(value: Optional[str]) -> tuple:
+    def _version_token_tuple(value: str | None) -> tuple:
         raw = str(value or "").strip()
         if not raw:
             return tuple()
-        parts: List[Any] = []
+        parts: list[Any] = []
         for token in raw.replace("-", ".").split("."):
             if token.isdigit():
                 parts.append(int(token))
@@ -3921,7 +4568,7 @@ class SheshnaagService:
                 parts.append(token.lower())
         return tuple(parts)
 
-    def _version_in_range(self, version: Optional[str], row: VersionRange) -> bool:
+    def _version_in_range(self, version: str | None, row: VersionRange) -> bool:
         candidate = self._version_token_tuple(version)
         if not candidate:
             return False
@@ -3949,16 +4596,20 @@ class SheshnaagService:
         *,
         cve: CVE,
         tenant: Tenant,
-        affected: Optional[AffectedProduct],
-    ) -> Dict[str, Any]:
+        affected: AffectedProduct | None,
+    ) -> dict[str, Any]:
         """Compute rich applicability using SBOM components, VEX, and asset mappings."""
-        advisory_rows = self.session.query(AdvisoryRecord).filter(AdvisoryRecord.cve_id == cve.id).all()
+        advisory_rows = (
+            self.session.query(AdvisoryRecord).filter(AdvisoryRecord.cve_id == cve.id).all()
+        )
         advisory_summary = summarize_advisory_records(advisory_rows)
         normalized_packages = advisory_summary.get("normalized_packages") or []
-        package_names = {str(pkg.get("name") or "").lower() for pkg in normalized_packages if pkg.get("name")}
+        package_names = {
+            str(pkg.get("name") or "").lower() for pkg in normalized_packages if pkg.get("name")
+        }
         if affected and affected.product:
             package_names.add(str(affected.product).lower())
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "match_sources": [],
             "confidence": 0.0,
             "vex_status": None,
@@ -3980,7 +4631,7 @@ class SheshnaagService:
         assets = self.session.query(Asset).filter(Asset.tenant_id == tenant.id).all()
         asset_matches = 0
         version_match_count = 0
-        matched_versions: List[Dict[str, Any]] = []
+        matched_versions: list[dict[str, Any]] = []
         package_ranges = (
             self.session.query(VersionRange)
             .filter(VersionRange.cve_id == cve.id, VersionRange.package_record_id.isnot(None))
@@ -4021,9 +4672,13 @@ class SheshnaagService:
         result["version_match_count"] = version_match_count
         result["version_ranges"] = matched_versions
         if asset_matches > 0:
-            result["match_sources"].append({"source": "asset_installed_software", "count": asset_matches, "confidence": 0.6})
+            result["match_sources"].append(
+                {"source": "asset_installed_software", "count": asset_matches, "confidence": 0.6}
+            )
         if version_match_count > 0:
-            result["match_sources"].append({"source": "affected_version", "count": version_match_count, "confidence": 0.9})
+            result["match_sources"].append(
+                {"source": "affected_version", "count": version_match_count, "confidence": 0.9}
+            )
 
         # 2. SBOM component match via SoftwareComponent table
         sbom_matches = 0
@@ -4038,15 +4693,31 @@ class SheshnaagService:
             if name and name in package_names:
                 sbom_matches += 1
                 result["direct_product_match"] = True
-                result["sbom_matches"].append({"component_id": comp.id, "name": comp.name, "version": comp.version, "purl": comp.purl})
+                result["sbom_matches"].append(
+                    {
+                        "component_id": comp.id,
+                        "name": comp.name,
+                        "version": comp.version,
+                        "purl": comp.purl,
+                    }
+                )
             elif any(pkg_name and pkg_name in purl for pkg_name in package_names):
                 sbom_matches += 1
                 result["sbom_component_match"] = True
-                result["sbom_matches"].append({"component_id": comp.id, "name": comp.name, "version": comp.version, "purl": comp.purl})
+                result["sbom_matches"].append(
+                    {
+                        "component_id": comp.id,
+                        "name": comp.name,
+                        "version": comp.version,
+                        "purl": comp.purl,
+                    }
+                )
 
         result["sbom_match_count"] = sbom_matches
         if sbom_matches > 0:
-            result["match_sources"].append({"source": "sbom_component", "count": sbom_matches, "confidence": 0.85})
+            result["match_sources"].append(
+                {"source": "sbom_component", "count": sbom_matches, "confidence": 0.85}
+            )
 
         # 3. VEX status check
         vex_statements = (
@@ -4058,18 +4729,31 @@ class SheshnaagService:
             best = vex_statements[0]
             result["vex_status"] = best.status
             result["vex_justification"] = best.justification
-            vex_conf = {"not_affected": -0.5, "fixed": -0.3, "affected": 0.9, "under_investigation": 0.5}
-            result["match_sources"].append({
-                "source": "vex_statement",
-                "status": best.status,
-                "confidence": vex_conf.get(best.status, 0.5),
-            })
+            vex_conf = {
+                "not_affected": -0.5,
+                "fixed": -0.3,
+                "affected": 0.9,
+                "under_investigation": 0.5,
+            }
+            result["match_sources"].append(
+                {
+                    "source": "vex_statement",
+                    "status": best.status,
+                    "confidence": vex_conf.get(best.status, 0.5),
+                }
+            )
         result["patch_available"] = bool(
             result.get("vex_status") in ("fixed", "not_affected")
             or any(match.get("fixed_version") for match in matched_versions)
             or vex_statements
         )
-        result["version_match_confidence"] = min(1.0, 0.25 + (0.25 if matched_versions else 0.0) + (0.2 if asset_matches else 0.0) + (0.2 if sbom_matches else 0.0))
+        result["version_match_confidence"] = min(
+            1.0,
+            0.25
+            + (0.25 if matched_versions else 0.0)
+            + (0.2 if asset_matches else 0.0)
+            + (0.2 if sbom_matches else 0.0),
+        )
         result["sbom_vex_applicability"] = min(
             1.0,
             0.15
@@ -4087,26 +4771,30 @@ class SheshnaagService:
 
         return result
 
-    def _latest_risk_by_cve_id(self, cve_ids: Iterable[int]) -> Dict[int, RiskScore]:
+    def _latest_risk_by_cve_id(self, cve_ids: Iterable[int]) -> dict[int, RiskScore]:
         rows = (
             self.session.query(RiskScore)
             .filter(RiskScore.cve_id.in_(list(cve_ids)))
             .order_by(desc(RiskScore.created_at))
             .all()
         )
-        latest: Dict[int, RiskScore] = {}
+        latest: dict[int, RiskScore] = {}
         for row in rows:
             latest.setdefault(row.cve_id, row)
         return latest
 
-    def _epss_filter_cve_ids(self, epss_min: Optional[float], epss_max: Optional[float]) -> Optional[List[int]]:
+    def _epss_filter_cve_ids(
+        self, epss_min: float | None, epss_max: float | None
+    ) -> list[int] | None:
         """Return CVE DB IDs whose latest EPSS falls within [epss_min, epss_max]."""
         all_epss = self.session.query(EPSSSnapshot).all()
-        latest: Dict[str, EPSSSnapshot] = {}
+        latest: dict[str, EPSSSnapshot] = {}
         for row in all_epss:
             key = row.cve_id.upper()
             existing = latest.get(key)
-            if existing is None or (row.scored_at and existing.scored_at and row.scored_at > existing.scored_at):
+            if existing is None or (
+                row.scored_at and existing.scored_at and row.scored_at > existing.scored_at
+            ):
                 latest[key] = row
 
         matching_cve_ids = set()
@@ -4119,18 +4807,20 @@ class SheshnaagService:
 
         if not matching_cve_ids:
             return []
-        db_ids = [c.id for c in self.session.query(CVE).filter(CVE.cve_id.in_(matching_cve_ids)).all()]
+        db_ids = [
+            c.id for c in self.session.query(CVE).filter(CVE.cve_id.in_(matching_cve_ids)).all()
+        ]
         return db_ids
 
     def _ledger(
         self,
         tenant_id: int,
-        analyst_id: Optional[int],
+        analyst_id: int | None,
         entry_type: str,
         object_type: str,
         object_id: str,
         score: float,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
     ) -> None:
         self.session.add(
             ContributionLedgerEntry(

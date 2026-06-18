@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
-from app.lab.interfaces import Collector
+from typing import Any
 
 from app.lab.collectors.common import (
     build_evidence_dict,
@@ -14,7 +12,12 @@ from app.lab.collectors.common import (
     truncate_text,
     utc_iso,
 )
-from app.lab.collectors.runtime import is_executable_guest_context, resolve_container_id, run_in_container
+from app.lab.collectors.runtime import (
+    is_executable_guest_context,
+    resolve_container_id,
+    run_in_container,
+)
+from app.lab.interfaces import Collector
 
 MAX_OUTPUT_BYTES = 900_000
 
@@ -23,8 +26,12 @@ class PackageInventoryCollector(Collector):
     collector_name = "package_inventory"
     collector_version = "1.0.0"
 
-    def collect(self, *, run_context: Dict[str, Any], provider_result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        if not is_executable_guest_context(run_context=run_context, provider_result=provider_result):
+    def collect(
+        self, *, run_context: dict[str, Any], provider_result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        if not is_executable_guest_context(
+            run_context=run_context, provider_result=provider_result
+        ):
             return [
                 synthetic_from_plan(
                     collector_name=self.collector_name,
@@ -61,7 +68,7 @@ class PackageInventoryCollector(Collector):
                 )
             ]
         text, trunc = truncate_text(out, MAX_OUTPUT_BYTES)
-        packages: List[Dict[str, str]] = []
+        packages: list[dict[str, str]] = []
         for line in text.splitlines():
             if "\t" not in line:
                 continue
@@ -70,9 +77,9 @@ class PackageInventoryCollector(Collector):
         plan = provider_result.get("plan") or {}
         baseline_raw = plan.get("package_baseline")
         cur_map = {p["name"]: p["version"] for p in packages}
-        diff_block: Dict[str, Any]
+        diff_block: dict[str, Any]
         if isinstance(baseline_raw, list) and len(baseline_raw) > 0:
-            base_map: Dict[str, str] = {}
+            base_map: dict[str, str] = {}
             for row in baseline_raw:
                 if isinstance(row, dict) and row.get("name"):
                     base_map[str(row["name"]).strip()] = str(row.get("version") or "").strip()

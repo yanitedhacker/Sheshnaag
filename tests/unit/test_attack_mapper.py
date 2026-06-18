@@ -33,7 +33,10 @@ def test_attack_mapper_maps_ebpf_ptrace():
 
 def test_attack_mapper_maps_shell_execve():
     mapped = AttackMapper(None).map_finding(
-        _finding("ebpf:execve", {"source": "ebpf", "raw": {"syscall": "execve", "command": "/bin/bash -lc id"}})
+        _finding(
+            "ebpf:execve",
+            {"source": "ebpf", "raw": {"syscall": "execve", "command": "/bin/bash -lc id"}},
+        )
     )
     assert mapped[0]["technique_id"] == "T1059.004"
 
