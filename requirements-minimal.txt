@@ -1,5 +1,5 @@
 # Minimal requirements for local development (Python 3.14 compatible)
-fastapi>=0.115.0
+fastapi>=0.136.1
 uvicorn[standard]>=0.30.0
 sqlalchemy>=2.0.30
 pydantic>=2.8.0
