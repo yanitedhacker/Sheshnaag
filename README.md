@@ -81,7 +81,7 @@ app/
   lab/                 provider interfaces, docker_kali provider, collectors, artifact generation, attestation
   models/              foundational CVE/intel models plus Sheshnaag domain models
   services/            Sheshnaag application logic and retained supporting services
-frontend/              marketing website
+frontend/              React operator console
 tests/                 unit and integration coverage
 ```
 

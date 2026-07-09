@@ -72,14 +72,14 @@ python scripts/sheshnaag_maintainer.py export \
 The following local commands are the minimum non-Docker readiness check:
 
 ```bash
-.venv-v2/bin/python -m pytest -q tests/unit/test_maintainer_assessment.py
-.venv-v2/bin/python -m pytest -q tests/unit/test_sheshnaag_service.py tests/unit/test_security_hashing.py tests/unit/test_audit_chain.py
-.venv-v2/bin/python scripts/sheshnaag_api_smoke.py
-.venv-v2/bin/python scripts/sheshnaag_frontend_smoke.py
-.venv-v2/bin/python scripts/sheshnaag_migration_rehearsal.py
-.venv-v2/bin/python scripts/sheshnaag_release_metadata.py --include-checks
-.venv-v2/bin/python scripts/sheshnaag_maintainer_demo.py --allow-skip
-.venv-v2/bin/python -m pip_audit -r requirements.txt
+python -m pytest -q tests/unit/test_maintainer_assessment.py
+python -m pytest -q tests/unit/test_sheshnaag_service.py tests/unit/test_security_hashing.py tests/unit/test_audit_chain.py
+python scripts/sheshnaag_api_smoke.py
+python scripts/sheshnaag_frontend_smoke.py
+python scripts/sheshnaag_migration_rehearsal.py
+python scripts/sheshnaag_release_metadata.py --include-checks
+python scripts/sheshnaag_maintainer_demo.py --allow-skip
+python -m pip_audit -r requirements.txt
 npm --prefix frontend audit --audit-level=moderate
 npm --prefix frontend run build
 git diff --check

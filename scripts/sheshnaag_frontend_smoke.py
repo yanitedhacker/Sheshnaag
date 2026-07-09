@@ -10,21 +10,35 @@ APP_TSX = ROOT / "frontend" / "src" / "App.tsx"
 LAYOUT_TSX = ROOT / "frontend" / "src" / "components" / "Layout.tsx"
 
 EXPECTED_ROUTES = {
-    "/": "IntelDashboardPage",
-    "intel": "IntelDashboardPage",
-    "review": "ReviewQueuePage",
-    "candidates": "CandidateQueuePage",
-    "recipes": "RecipeBuilderPage",
-    "runs": "RunConsolePage",
-    "authorization": "AuthorizationCenterPage",
-    "attack-coverage": "AttackCoveragePage",
-    "case-graph": "CaseGraphPage",
-    "autonomous": "AutonomousAgentPage",
-    "evidence": "EvidenceExplorerPage",
-    "artifacts": "ArtifactForgePage",
-    "provenance": "ProvenanceCenterPage",
-    "ledger": "AnalystLedgerPage",
-    "disclosures": "DisclosureBundlesPage",
+    "/": ("intel", "IntelDashboardPage"),
+    "intel": ("intel", "IntelDashboardPage"),
+    "review": ("review", "ReviewQueuePage"),
+    "candidates": ("candidates", "CandidateQueuePage"),
+    "recipes": ("recipes", "RecipeBuilderPage"),
+    "runs": ("runs", "RunConsolePage"),
+    "authorization": ("authorization", "AuthorizationCenterPage"),
+    "attack-coverage": ("attack-coverage", "AttackCoveragePage"),
+    "case-graph": ("case-graph", "CaseGraphPage"),
+    "autonomous": ("autonomous", "AutonomousAgentPage"),
+    "evidence": ("evidence", "EvidenceExplorerPage"),
+    "artifacts": ("artifacts", "ArtifactForgePage"),
+    "provenance": ("provenance", "ProvenanceCenterPage"),
+    "ledger": ("ledger", "AnalystLedgerPage"),
+    "disclosures": ("disclosures", "DisclosureBundlesPage"),
+    "specimens": ("specimens", "SpecimenIntakePage"),
+    "analysis-cases": ("analysis-cases", "AnalysisCasesPage"),
+    "sandbox-profiles": ("sandbox-profiles", "SandboxProfilesPage"),
+    "findings": ("findings", "BehaviorFindingsPage"),
+    "indicators": ("indicators", "IndicatorForgeV3Page"),
+    "prevention-v3": ("prevention-v3", "PreventionForgeV3Page"),
+    "defang": ("defang", "DefangQueuePage"),
+    "reports": ("reports", "MalwareReportsPage"),
+    "ai-sessions": ("ai-sessions", "AISessionsPage"),
+    "policy": ("policy", "PolicyCenterPage"),
+    "workers": ("workers", "WorkerFleetPage"),
+    "analytics": ("analytics", "TeamAnalyticsPage"),
+    "purple-team": ("purple-team", "PurpleTeamPage"),
+    "research": ("research", "ResearchWorkbenchPage"),
 }
 
 EXPECTED_PAGE_FILES = {
@@ -42,6 +56,20 @@ EXPECTED_PAGE_FILES = {
     "ProvenanceCenterPage": ROOT / "frontend" / "src" / "pages" / "ProvenanceCenterPage.tsx",
     "AnalystLedgerPage": ROOT / "frontend" / "src" / "pages" / "AnalystLedgerPage.tsx",
     "DisclosureBundlesPage": ROOT / "frontend" / "src" / "pages" / "DisclosureBundlesPage.tsx",
+    "SpecimenIntakePage": ROOT / "frontend" / "src" / "pages" / "SpecimenIntakePage.tsx",
+    "AnalysisCasesPage": ROOT / "frontend" / "src" / "pages" / "AnalysisCasesPage.tsx",
+    "SandboxProfilesPage": ROOT / "frontend" / "src" / "pages" / "SandboxProfilesPage.tsx",
+    "BehaviorFindingsPage": ROOT / "frontend" / "src" / "pages" / "BehaviorFindingsPage.tsx",
+    "IndicatorForgeV3Page": ROOT / "frontend" / "src" / "pages" / "IndicatorForgeV3Page.tsx",
+    "PreventionForgeV3Page": ROOT / "frontend" / "src" / "pages" / "PreventionForgeV3Page.tsx",
+    "DefangQueuePage": ROOT / "frontend" / "src" / "pages" / "DefangQueuePage.tsx",
+    "MalwareReportsPage": ROOT / "frontend" / "src" / "pages" / "MalwareReportsPage.tsx",
+    "AISessionsPage": ROOT / "frontend" / "src" / "pages" / "AISessionsPage.tsx",
+    "PolicyCenterPage": ROOT / "frontend" / "src" / "pages" / "PolicyCenterPage.tsx",
+    "WorkerFleetPage": ROOT / "frontend" / "src" / "pages" / "WorkerFleetPage.tsx",
+    "TeamAnalyticsPage": ROOT / "frontend" / "src" / "pages" / "TeamAnalyticsPage.tsx",
+    "PurpleTeamPage": ROOT / "frontend" / "src" / "pages" / "PurpleTeamPage.tsx",
+    "ResearchWorkbenchPage": ROOT / "frontend" / "src" / "pages" / "ResearchWorkbenchPage.tsx",
 }
 
 
@@ -55,11 +83,11 @@ def main() -> int:
     layout_text = LAYOUT_TSX.read_text()
     report: list[str] = []
 
-    for route, component in EXPECTED_ROUTES.items():
+    for route, (permission_key, component) in EXPECTED_ROUTES.items():
         if route == "/":
-            needle = f"<Route index element={{<{component} />}} />"
+            needle = f'<Route index element={{gated("{permission_key}", <{component} />)}} />'
         else:
-            needle = f'<Route path="{route}" element={{<{component} />}} />'
+            needle = f'<Route path="{route}" element={{gated("{permission_key}", <{component} />)}} />'
         require(needle in app_text, f"missing route declaration for {route} -> {component}")
         report.append(f"route {route} -> {component}")
 
@@ -83,6 +111,20 @@ def main() -> int:
         "/provenance",
         "/ledger",
         "/disclosures",
+        "/specimens",
+        "/analysis-cases",
+        "/sandbox-profiles",
+        "/findings",
+        "/indicators",
+        "/prevention-v3",
+        "/defang",
+        "/reports",
+        "/ai-sessions",
+        "/policy",
+        "/workers",
+        "/analytics",
+        "/purple-team",
+        "/research",
     ]:
         require(f'{{ to: "{nav_path}"' in layout_text, f"missing nav config entry for {nav_path}")
         report.append(f"nav link present for {nav_path}")

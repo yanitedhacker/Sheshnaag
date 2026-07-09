@@ -1,8 +1,16 @@
 """Unit tests for password hashing compatibility."""
 
+from pathlib import Path
+
 from passlib.context import CryptContext
 
 from app.core.security import get_password_hash, verify_password
+
+
+def test_release_requirements_do_not_pull_vulnerable_python_jose():
+    requirements = Path("requirements.txt").read_text(encoding="utf-8")
+
+    assert "python-jose" not in requirements
 
 
 def test_get_password_hash_uses_argon2_for_new_hashes():

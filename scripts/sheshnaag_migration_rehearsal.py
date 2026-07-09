@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
 
 import app.models  # noqa: F401
 from app.core.database import Base
-from app.models.sheshnaag import MaintainerAssessment
 
 
 def create_baseline_db(path: Path) -> None:
@@ -95,6 +94,16 @@ def create_baseline_db(path: Path) -> None:
         sa.Column("is_inclusive_end", sa.Boolean, nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime),
     )
+    sa.Table(
+        "analysis_cases",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+    )
+    sa.Table(
+        "malware_reports",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+    )
 
     metadata.create_all(engine)
     with engine.begin() as conn:
@@ -165,12 +174,6 @@ def create_current_schema(path: Path) -> None:
     engine.dispose()
 
 
-def drop_maintainer_assessment_table(path: Path) -> None:
-    engine = sa.create_engine(f"sqlite:///{path}")
-    MaintainerAssessment.__table__.drop(engine, checkfirst=True)
-    engine.dispose()
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -190,8 +193,7 @@ def main() -> int:
 
         v4_db_path = temp_root / "v4a04-rehearsal.sqlite3"
         v4_db_url = f"sqlite:///{v4_db_path}"
-        create_current_schema(v4_db_path)
-        drop_maintainer_assessment_table(v4_db_path)
+        create_baseline_db(v4_db_path)
 
         stamp = run_alembic(v4_db_url, ["stamp", "v4a03"])
         if stamp.returncode != 0:
@@ -199,7 +201,7 @@ def main() -> int:
                 f"Alembic stamp failed:\nSTDOUT:\n{stamp.stdout}\nSTDERR:\n{stamp.stderr}"
             )
 
-        upgrade = run_alembic(v4_db_url, ["upgrade", "head"])
+        upgrade = run_alembic(v4_db_url, ["upgrade", "v4a04"])
         if upgrade.returncode != 0:
             raise RuntimeError(
                 f"Alembic v4a04 upgrade failed:\nSTDOUT:\n{upgrade.stdout}\nSTDERR:\n{upgrade.stderr}"

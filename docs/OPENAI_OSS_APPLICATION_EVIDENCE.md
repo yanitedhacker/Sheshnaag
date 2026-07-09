@@ -31,12 +31,12 @@ Copy-ready evidence for OpenAI OSS program review.
 ## Verification Commands
 
 ```bash
-.venv-v2/bin/python scripts/sheshnaag_release_metadata.py --include-checks
-.venv-v2/bin/python scripts/sheshnaag_release_rehearsal.sh
-.venv-v2/bin/python scripts/sheshnaag_api_smoke.py
-.venv-v2/bin/python scripts/sheshnaag_frontend_smoke.py
-.venv-v2/bin/python -m pytest -q tests/unit/test_maintainer_assessment.py
-.venv-v2/bin/python -m pip_audit -r requirements.txt
+python scripts/sheshnaag_release_metadata.py --include-checks
+python scripts/sheshnaag_release_rehearsal.sh
+python scripts/sheshnaag_api_smoke.py
+python scripts/sheshnaag_frontend_smoke.py
+python -m pytest -q tests/unit/test_maintainer_assessment.py
+python -m pip_audit -r requirements.txt
 npm --prefix frontend audit --audit-level=moderate
 npm --prefix frontend run build
 git diff --check
