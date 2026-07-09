@@ -1,4 +1,4 @@
-name: sheshnaag-v2
+name: project-sheshnaag-ci
 
 on:
   push:

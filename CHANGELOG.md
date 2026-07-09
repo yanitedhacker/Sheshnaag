@@ -8,3 +8,4 @@
 - Add safe demo SBOM/VEX corpus for public maintainer workflow testing.
 - Expand CI/security automation plan with audits, CodeQL, secret scanning, SBOM generation, and Docker build smoke.
 - Bump frontend build dependencies to clear moderate `npm audit` advisories.
+- Polish OSS release readiness docs, route smoke coverage, CI naming, and frontend Docker lockfile installs.
