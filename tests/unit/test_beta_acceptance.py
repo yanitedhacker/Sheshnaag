@@ -95,6 +95,44 @@ def test_p0_integrity_gate_blocks_on_test_failure(monkeypatch):
     }
 
 
+def test_report_never_emits_docker_compose_secret_output(monkeypatch):
+    secret = "beta-database-password-must-not-leak"
+
+    def fake_run(argv, *, timeout=60, env=None):
+        if argv[:3] == ["docker", "compose", "--env-file"]:
+            return 0, f"POSTGRES_PASSWORD: {secret}"
+        if argv == ["git", "status", "--short"]:
+            return 0, ""
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return 0, "c" * 40
+        if argv[:3] == [acceptance.sys.executable, "-m", "pytest"]:
+            return 0, "18 passed"
+        raise AssertionError(f"unexpected command: {argv}")
+
+    monkeypatch.setattr(acceptance, "_run", fake_run)
+    monkeypatch.setattr(acceptance, "_find_duplicate_artifacts", lambda: [])
+    monkeypatch.setattr(
+        acceptance,
+        "_fetch_json",
+        lambda _url: {"api": "ok", "beta": {"status": "ok", "blockers": []}},
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_verify_proof_claims",
+        lambda *_args, **_kwargs: {
+            "status": "ok",
+            "blockers": [],
+            "missing_proofs": [],
+            "claims": {},
+        },
+    )
+
+    report = acceptance.build_report("http://127.0.0.1:8000", ".env.example")
+
+    assert secret not in json.dumps(report)
+    assert report["docker_compose"]["output"] == "validated"
+
+
 def _signed_proof(tmp_path):
     artifact = tmp_path / "agent-runtime.log"
     artifact.write_text("committed run 42\n", encoding="utf-8")

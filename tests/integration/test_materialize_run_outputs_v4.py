@@ -101,7 +101,7 @@ def _seed_run(session):
     case = AnalysisCase(
         tenant_id=tenant.id,
         title="V4 case",
-        status="open",
+        lifecycle_state="triage",
         priority="high",
         analyst_name="V4 Analyst",
         specimen_ids=[specimen.id],

@@ -240,7 +240,7 @@ class HuntService:
                     {
                         "id": c.id,
                         "title": c.title,
-                        "status": c.status,
+                        "status": c.lifecycle_state,
                         "analyst_name": c.analyst_name,
                         "created_at": c.created_at.isoformat() if c.created_at else None,
                     }

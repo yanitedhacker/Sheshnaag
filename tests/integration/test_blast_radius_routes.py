@@ -62,7 +62,7 @@ def test_blast_radius_correlates_indicator_to_asset():
         case = AnalysisCase(
             tenant_id=tenant.id,
             title="Blast case",
-            status="open",
+            lifecycle_state="triage",
             priority="high",
             analyst_name="tester",
             specimen_ids=[],

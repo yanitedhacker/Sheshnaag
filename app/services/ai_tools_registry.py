@@ -295,7 +295,15 @@ def _pivot_ioc(
             }
             for f in findings
         ]
-        + [{"kind": "case", "id": c.id, "title": c.title, "status": c.status} for c in cases]
+        + [
+            {
+                "kind": "case",
+                "id": c.id,
+                "title": c.title,
+                "status": c.lifecycle_state,
+            }
+            for c in cases
+        ]
     )
     base["match_count"] = len(matches)
     base["case_count"] = len(case_ids)

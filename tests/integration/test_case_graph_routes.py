@@ -59,7 +59,7 @@ def test_case_graph_returns_synthetic_anchor_for_real_case():
         case = AnalysisCase(
             tenant_id=tenant.id,
             title="Graph anchor case",
-            status="open",
+            lifecycle_state="triage",
             priority="high",
             analyst_name="tester",
             specimen_ids=[],

@@ -192,7 +192,7 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
     if duplicate_artifacts:
         blockers.append("duplicate_artifacts")
 
-    compose_rc, compose_output = _run(
+    compose_rc, _compose_output = _run(
         ["docker", "compose", "--env-file", compose_env, "config"], timeout=90
     )
     if compose_rc != 0:
@@ -243,7 +243,9 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
         "docker_compose": {
             "env_file": compose_env,
             "status": "ok" if compose_rc == 0 else "failed",
-            "output": compose_output[-4000:],
+            # `docker compose config` expands environment values. Never persist
+            # or print its raw output because it can contain passwords or keys.
+            "output": "validated" if compose_rc == 0 else "failed; output redacted",
         },
         "ops_health": health if health is not None else {"error": health_error},
         "required_proofs": required_proofs,
