@@ -19,6 +19,7 @@ from app.services.capability_policy import (
     IssuanceRequest,
     Reviewer,
     exact_action_digest,
+    exact_action_scope,
 )
 
 
@@ -108,6 +109,89 @@ def test_exact_action_digest_changes_when_an_argument_changes():
     )
 
     assert changed != approved
+
+
+def _agent_action_scope(goal="Review case", case_id=42, tenant_id=7, max_steps=3):
+    arguments = {
+        "tenant_id": tenant_id,
+        "goal": goal,
+        "case_id": case_id,
+        "max_steps": max_steps,
+    }
+    return exact_action_scope(
+        "autonomous_agent_run",
+        arguments,
+        tenant_id=tenant_id,
+        case_id=case_id,
+    )
+
+
+def test_exact_action_artifact_permits_only_the_bound_request(policy):
+    approved_scope = _agent_action_scope()
+    artifact = _issue(
+        policy,
+        "autonomous_agent_run",
+        scope=approved_scope,
+    )
+
+    decision = policy.evaluate(
+        capability="autonomous_agent_run",
+        scope=approved_scope,
+        actor="analyst@example.com",
+    )
+
+    assert decision.permitted is True
+    assert decision.reason == "artifact_match"
+    assert decision.artifact_id == artifact.artifact_id
+
+
+def test_exact_action_artifact_denies_changed_arguments(policy):
+    _issue(
+        policy,
+        "autonomous_agent_run",
+        scope=_agent_action_scope(goal="Review case"),
+    )
+
+    decision = policy.evaluate(
+        capability="autonomous_agent_run",
+        scope=_agent_action_scope(goal="Review another case"),
+        actor="analyst@example.com",
+    )
+
+    assert decision.permitted is False
+    assert decision.reason == "no_matching_exact_action_artifact"
+
+
+def test_exact_action_evaluation_denies_missing_digest(policy):
+    decision = policy.evaluate(
+        capability="autonomous_agent_run",
+        scope={
+            "tenant_id": 7,
+            "case_id": 42,
+            "action": "autonomous_agent_run",
+        },
+        actor="analyst@example.com",
+    )
+
+    assert decision.permitted is False
+    assert decision.reason == "exact_action_scope_required"
+
+
+def test_legacy_tenant_only_artifact_cannot_authorize_exact_action(policy):
+    _issue(
+        policy,
+        "autonomous_agent_run",
+        scope={"tenant_id": 7},
+    )
+
+    decision = policy.evaluate(
+        capability="autonomous_agent_run",
+        scope=_agent_action_scope(),
+        actor="analyst@example.com",
+    )
+
+    assert decision.permitted is False
+    assert decision.reason == "no_matching_exact_action_artifact"
 
 
 def test_denies_without_artifact(policy):

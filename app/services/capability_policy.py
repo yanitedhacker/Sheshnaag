@@ -350,6 +350,20 @@ def exact_action_scope(
     return scope
 
 
+def _valid_exact_action_scope(capability: str, scope: dict[str, Any]) -> bool:
+    if scope.get("action") != capability:
+        return False
+    digest = scope.get("action_digest")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        return False
+    hexadecimal = digest.removeprefix("sha256:")
+    return (
+        len(hexadecimal) == 64
+        and hexadecimal == hexadecimal.lower()
+        and all(character in "0123456789abcdef" for character in hexadecimal)
+    )
+
+
 def _sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
@@ -784,9 +798,25 @@ class CapabilityPolicy:
             )
             return decision
 
+        if capability in EXACT_ACTION_CAPABILITIES and not _valid_exact_action_scope(
+            capability, scope
+        ):
+            decision = Decision(False, "exact_action_scope_required", None)
+            self._append_audit_entry(
+                action="deny",
+                actor=actor,
+                capability=capability,
+                artifact_id=None,
+                scope=scope,
+                payload={"reason": decision.reason},
+            )
+            return decision
+
         # Tenant-default fast path: if the tenant's ScopePolicy declares this
         # capability as pre-authorized, permit without an artifact.
-        if self._tenant_permits(capability, scope):
+        if capability not in EXACT_ACTION_CAPABILITIES and self._tenant_permits(
+            capability, scope
+        ):
             decision = Decision(True, "tenant_default", None)
             self._append_audit_entry(
                 action="exercise",
@@ -800,7 +830,12 @@ class CapabilityPolicy:
 
         artifact = self._find_active_artifact(capability, scope)
         if artifact is None:
-            decision = Decision(False, "no_active_artifact", None)
+            reason = (
+                "no_matching_exact_action_artifact"
+                if capability in EXACT_ACTION_CAPABILITIES
+                else "no_active_artifact"
+            )
+            decision = Decision(False, reason, None)
             self._append_audit_entry(
                 action="deny",
                 actor=actor,
@@ -1188,6 +1223,16 @@ class CapabilityPolicy:
             .order_by(AuthorizationArtifact.issued_at.desc())
         ).scalars().all()
         for row in rows:
+            if capability in EXACT_ACTION_CAPABILITIES:
+                artifact_scope = row.scope or {}
+                if not _valid_exact_action_scope(capability, artifact_scope):
+                    continue
+                if artifact_scope.get("action") != scope.get("action"):
+                    continue
+                if artifact_scope.get("action_digest") != scope.get(
+                    "action_digest"
+                ):
+                    continue
             if self._scope_matches(row.scope or {}, scope or {}):
                 return row
         return None
