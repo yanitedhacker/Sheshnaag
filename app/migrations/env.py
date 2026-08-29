@@ -9,6 +9,7 @@ from sqlalchemy import engine_from_config, inspect, pool
 
 from app.core.config import settings
 from app.core.database import Base
+from app.migrations.bootstrap import create_current_schema_snapshot
 import app.models  # noqa: F401
 
 config = context.config
@@ -90,7 +91,7 @@ def run_migrations_online() -> None:
                     raise RuntimeError(
                         f"fresh_database_requires_single_alembic_head:{heads}"
                     )
-                target_metadata.create_all(bind=connection)
+                create_current_schema_snapshot(connection, target_metadata)
                 context.get_context().stamp(script, heads[0])
                 bootstrapped_empty_database = True
             else:

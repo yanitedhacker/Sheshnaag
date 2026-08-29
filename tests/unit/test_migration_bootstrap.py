@@ -12,6 +12,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_current_schema_snapshot_installs_postgres_vector_extension_first():
+    from app.migrations.bootstrap import create_current_schema_snapshot
+
+    calls: list[tuple[str, object]] = []
+
+    class FakeDialect:
+        name = "postgresql"
+
+    class FakeConnection:
+        dialect = FakeDialect()
+
+        def execute(self, statement):
+            calls.append(("execute", str(statement)))
+
+    class FakeMetadata:
+        def create_all(self, *, bind):
+            calls.append(("create_all", bind))
+
+    connection = FakeConnection()
+    create_current_schema_snapshot(connection, FakeMetadata())
+
+    assert calls == [
+        ("execute", "CREATE EXTENSION IF NOT EXISTS vector"),
+        ("create_all", connection),
+    ]
+
+
 def test_alembic_upgrade_head_bootstraps_empty_database(tmp_path):
     database = tmp_path / "fresh.sqlite3"
     env = os.environ.copy()
@@ -74,6 +101,29 @@ def test_alembic_upgrade_head_bootstraps_empty_database(tmp_path):
     assert repeated.returncode == 0, repeated.stderr
     assert current.returncode == 0, current.stderr
     assert "v5a08 (head)" in current.stdout
+
+
+def test_alembic_console_script_can_import_application(tmp_path):
+    database = tmp_path / "console-script.sqlite3"
+    alembic_executable = Path(sys.executable).with_name("alembic")
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["DATABASE_URL"] = f"sqlite:///{database}"
+
+    result = subprocess.run(
+        [str(alembic_executable), "upgrade", "head"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    with sqlite3.connect(database) as connection:
+        revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+    assert revision == ("v5a08",)
 
 
 def test_container_entrypoint_does_not_start_api_after_migration_failure(tmp_path):

@@ -36,8 +36,11 @@ P0_INTEGRITY_TESTS = (
     "tests/unit/test_disclosure_export_controls.py::test_bundle_excludes_raw_logs_and_redacts_included_payloads",
     "tests/unit/test_autonomous_replay_bounds.py::test_autonomous_replay_has_hard_service_limit_and_tenant_scope",
     "tests/integration/test_autonomous_routes.py::test_autonomous_replay_limit_is_bounded_by_api",
+    "tests/unit/test_migration_bootstrap.py::test_current_schema_snapshot_installs_postgres_vector_extension_first",
     "tests/unit/test_migration_bootstrap.py::test_alembic_upgrade_head_bootstraps_empty_database",
+    "tests/unit/test_migration_bootstrap.py::test_alembic_console_script_can_import_application",
     "tests/unit/test_migration_bootstrap.py::test_container_entrypoint_does_not_start_api_after_migration_failure",
+    "tests/unit/test_observability.py::test_otlp_trace_endpoint_does_not_duplicate_explicit_trace_path",
 )
 
 
