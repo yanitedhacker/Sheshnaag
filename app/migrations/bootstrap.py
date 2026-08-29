@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from app.migrations.rbac_catalog import ensure_current_rbac_catalog
+
 
 def create_current_schema_snapshot(connection, metadata) -> None:
     """Create database prerequisites, then create all current application tables."""
@@ -11,3 +13,4 @@ def create_current_schema_snapshot(connection, metadata) -> None:
     if connection.dialect.name == "postgresql":
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     metadata.create_all(bind=connection)
+    ensure_current_rbac_catalog(connection)
