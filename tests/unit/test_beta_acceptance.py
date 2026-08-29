@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 import json
+from urllib.error import HTTPError
 
 import scripts.sheshnaag_beta_acceptance as acceptance
 from app.services.proof_receipts import build_signed_receipt, generate_proof_key
+
+
+def test_fetch_json_preserves_structured_http_error_body(monkeypatch):
+    payload = {
+        "api": "ok",
+        "beta": {"status": "blocked", "blockers": ["lab_deps.kvm"]},
+    }
+    response_error = HTTPError(
+        "http://127.0.0.1:8000/api/v4/ops/health",
+        503,
+        "Service Unavailable",
+        hdrs=None,
+        fp=BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+    def raise_structured_health_error(*_args, **_kwargs):
+        raise response_error
+
+    monkeypatch.setattr(acceptance, "urlopen", raise_structured_health_error)
+
+    assert acceptance._fetch_json(response_error.url) == payload
 
 
 def test_duplicate_scan_ignores_dependency_and_build_directories(

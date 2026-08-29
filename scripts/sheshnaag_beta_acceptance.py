@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from app.services.proof_receipts import verify_proof_receipt
@@ -104,8 +104,14 @@ def _run_p0_integrity_tests() -> dict[str, Any]:
 
 
 def _fetch_json(url: str, *, timeout: int = 10) -> dict[str, Any]:
-    with urlopen(url, timeout=timeout) as response:  # noqa: S310 - operator-supplied local URL
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(url, timeout=timeout) as response:  # noqa: S310 - operator-supplied local URL
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        # The ops-health route intentionally returns HTTP 503 with a structured
+        # fail-closed beta verdict. Preserve that evidence instead of reporting
+        # a reachable, healthy API as unreachable.
+        return json.loads(exc.read().decode("utf-8"))
 
 
 def _status(value: bool) -> str:
