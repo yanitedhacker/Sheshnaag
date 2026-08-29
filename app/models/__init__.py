@@ -80,7 +80,12 @@ from app.models.embeddings import (
     VectorOrJSON,
     VECTOR_DIM,
 )
-from app.models.capability import AuditLogEntry, AuthorizationArtifact
+from app.models.capability import (
+    AuditLogEntry,
+    AuthorizationArtifact,
+    AuthorizationDecisionRecord,
+    AuthorizationRequestRecord,
+)
 from app.models.rbac import Permission, Role, RolePermission
 from app.models.worker_pool import Worker, WorkerCaKey, WorkerEnrollmentToken
 from app.models.oidc import OidcProvider
@@ -171,6 +176,8 @@ __all__ = [
     "VECTOR_DIM",
     "AuditLogEntry",
     "AuthorizationArtifact",
+    "AuthorizationDecisionRecord",
+    "AuthorizationRequestRecord",
     "Role",
     "Permission",
     "RolePermission",

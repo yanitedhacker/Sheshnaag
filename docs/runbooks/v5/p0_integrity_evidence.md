@@ -43,3 +43,32 @@ The warnings were Starlette/httpx deprecation, Pydantic class-config deprecation
 ## Evidence boundary
 
 This baseline proves only the current capability-policy unit tests and local in-memory route tests. It does not prove Postgres migration behavior, production signing, external identity providers, isolated worker behavior, real detonation, load performance, or beta deployment.
+
+## P0 authorization schema
+
+The model constraint test result after adding request and decision rows was:
+
+```text
+7 passed
+```
+
+A controlled SQLite database was stamped at `v5a07` with the legacy `autonomous_agent_runs` columns. `alembic upgrade v5a08` completed. The database reported:
+
+```text
+v5a08
+authorization_decision_records
+authorization_request_records
+autonomous_agent_runs.disposition JSON NOT NULL DEFAULT '{}'
+autonomous_agent_runs.action_digest VARCHAR(80)
+autonomous_agent_runs.authorization_artifact_id VARCHAR(64)
+```
+
+### Historical fresh-install blocker
+
+A separate empty-database `alembic upgrade head` did not reach `v5a08`. Migration `20260409_0001` tried to alter `advisory_records` before any migration created that table and raised:
+
+```text
+sqlalchemy.exc.NoSuchTableError: advisory_records
+```
+
+This is a confirmed pre-existing fresh-install migration blocker. It is not a `v5a08` result. It must be repaired and retested before the deployment gate can pass.
