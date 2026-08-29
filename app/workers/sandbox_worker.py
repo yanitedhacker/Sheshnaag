@@ -134,6 +134,7 @@ def _decode_message(fields: dict) -> dict[str, Any]:
 
 
 _SHUTDOWN = False
+_WORK_READ_BLOCK_MS = 1000
 
 
 def _install_signal_handlers() -> None:
@@ -150,6 +151,22 @@ def _install_signal_handlers() -> None:
             # main interpreter — multiprocessing workers fall back to
             # default handlers, which is fine.
             pass
+
+
+def _read_work_rows(client, *, group: str, consumer: str) -> list:
+    """Read one queue item without crashing when an idle poll times out."""
+
+    try:
+        return client.xreadgroup(
+            group,
+            consumer,
+            {SANDBOX_WORK_STREAM: ">"},
+            block=_WORK_READ_BLOCK_MS,
+            count=1,
+        )
+    except redis.exceptions.TimeoutError:
+        logger.warning("Redis work-stream read timed out; retrying")
+        return []
 
 
 def run_forever(*, max_messages: Optional[int] = None) -> None:
@@ -172,7 +189,7 @@ def run_forever(*, max_messages: Optional[int] = None) -> None:
     logger.info("sandbox worker consuming %s group=%s consumer=%s", SANDBOX_WORK_STREAM, group, consumer)
     processed = 0
     while not _SHUTDOWN:
-        rows = client.xreadgroup(group, consumer, {SANDBOX_WORK_STREAM: ">"}, block=5000, count=1)
+        rows = _read_work_rows(client, group=group, consumer=consumer)
         if not rows:
             time.sleep(0.05)
             continue

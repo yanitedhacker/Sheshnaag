@@ -13,6 +13,25 @@ from app.models.v2 import Tenant
 from app.workers import sandbox_worker
 
 
+def test_sandbox_worker_treats_redis_read_timeout_as_empty_poll():
+    class TimedOutClient:
+        def xreadgroup(self, group, consumer, streams, *, block, count):
+            assert group == "sandbox-workers"
+            assert consumer == "sandbox-worker-1"
+            assert streams == {"sheshnaag:sandbox:work": ">"}
+            assert block == 1000
+            assert count == 1
+            raise sandbox_worker.redis.exceptions.TimeoutError(
+                "idle blocking read timed out"
+            )
+
+    assert sandbox_worker._read_work_rows(
+        TimedOutClient(),
+        group="sandbox-workers",
+        consumer="sandbox-worker-1",
+    ) == []
+
+
 def test_event_bus_uses_in_memory_fallback_when_redis_unavailable():
     bus = EventBus(redis_url="redis://127.0.0.1:1/0")
     entry_id = bus.publish("test:stream", {"type": "run_queued", "run_id": 42})

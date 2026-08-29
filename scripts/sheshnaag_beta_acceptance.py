@@ -41,6 +41,7 @@ P0_INTEGRITY_TESTS = (
     "tests/unit/test_migration_bootstrap.py::test_alembic_console_script_can_import_application",
     "tests/unit/test_migration_bootstrap.py::test_container_entrypoint_does_not_start_api_after_migration_failure",
     "tests/unit/test_observability.py::test_otlp_trace_endpoint_does_not_duplicate_explicit_trace_path",
+    "tests/unit/test_event_bus_and_worker.py::test_sandbox_worker_treats_redis_read_timeout_as_empty_poll",
 )
 
 
