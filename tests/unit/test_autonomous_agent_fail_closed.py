@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -11,7 +13,6 @@ from app.models.capability import AuditLogEntry, AuthorizationArtifact
 from app.models.sheshnaag import AutonomousAgentRun
 from app.models.v2 import Tenant
 from app.services.autonomous_agent import AgentPersistenceError, AutonomousAgent
-from app.services.capability_policy import CapabilityPolicy
 
 
 class RecordingAI:
@@ -71,8 +72,9 @@ def test_policy_exception_denies_before_tools_ai_or_events(
     ai = RecordingAI()
     bus = RecordingBus()
     agent = AutonomousAgent(session, ai=ai, event_bus=bus)
+    policy_module = importlib.import_module("app.services.capability_policy")
     monkeypatch.setattr(
-        CapabilityPolicy,
+        policy_module.CapabilityPolicy,
         "evaluate",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("policy offline")),
     )

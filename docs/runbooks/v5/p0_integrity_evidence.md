@@ -151,3 +151,51 @@ Focused P0 result after this change:
 ```text
 41 passed
 ```
+
+## Executable acceptance gate
+
+The beta acceptance script now runs eight named P0 behavior tests. It does not use file-presence checks as proof for the P0 integrity boundary. The tests cover exact-action scope, production signer failure, independent approval, policy failure, durable persistence failure, route commit failure, and committed success replay.
+
+Gate result:
+
+```text
+8 passed
+p0_integrity.status=ok
+docker_compose.status=ok
+duplicate_artifacts=[]
+overall status=blocked
+```
+
+The overall result is correctly blocked. The local health endpoint was not available in this execution environment, and these proof receipts do not exist yet:
+
+- real detonation
+- AI provider matrix
+- capability audit
+- STIX/TAXII
+- autonomous agent
+- load rehearsal
+
+The health request returned `Operation not permitted`. This result is an environment-access blocker until the same check runs in a permitted runtime. It is not a product health pass or failure.
+
+## Migration rehearsal
+
+The repository migration rehearsal completed with exit code 0. It validated all four declared checks:
+
+```text
+fresh_bootstrap_creates_maintainer_assessments=true
+maintainer_assessments_has_report_id=true
+v4a03_to_v4a04_creates_maintainer_assessments=true
+v4a04_downgrade_removes_maintainer_assessments=true
+```
+
+The stamped `v4a03` upgrade path reached `v5a08`, and the downgrade returned to `v4a03`. This does not remove the separate empty-database Alembic blocker recorded above.
+
+## Full local regression
+
+The full backend test run completed:
+
+```text
+728 passed, 134 skipped, 14 warnings in 38.83s
+```
+
+The skipped tests are external integration tests controlled by repository policy. They are not passes. The warnings are deprecation and test-collection warnings. The frontend production build result remains the successful result recorded above because no frontend source changed after that build.

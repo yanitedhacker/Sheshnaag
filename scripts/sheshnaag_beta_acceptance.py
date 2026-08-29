@@ -22,11 +22,31 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 
+P0_INTEGRITY_TESTS = (
+    "tests/unit/test_capability_policy.py::test_legacy_tenant_only_artifact_cannot_authorize_exact_action",
+    "tests/unit/test_capability_policy.py::test_production_cosign_does_not_fall_back_when_sigstore_is_missing",
+    "tests/unit/test_authorization_workflow.py::test_requester_cannot_decide_their_own_request",
+    "tests/unit/test_authorization_workflow.py::test_single_independent_approval_issues_bound_artifact",
+    "tests/unit/test_autonomous_agent_fail_closed.py::test_policy_exception_denies_before_tools_ai_or_events",
+    "tests/unit/test_autonomous_agent_fail_closed.py::test_run_flush_failure_raises_and_creates_no_replay_entry",
+    "tests/integration/test_autonomous_routes.py::test_autonomous_commit_failure_returns_503",
+    "tests/integration/test_autonomous_routes.py::test_run_autonomous_agent_returns_only_committed_completion",
+)
 
-def _run(argv: list[str], *, timeout: int = 60) -> tuple[int, str]:
+
+def _run(
+    argv: list[str],
+    *,
+    timeout: int = 60,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str]:
+    command_env = os.environ.copy()
+    if env:
+        command_env.update(env)
     proc = subprocess.run(
         argv,
         cwd=ROOT,
+        env=command_env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -37,11 +57,40 @@ def _run(argv: list[str], *, timeout: int = 60) -> tuple[int, str]:
 
 
 def _find_duplicate_artifacts() -> list[str]:
+    ignored_parts = {
+        ".git",
+        ".pytest_cache",
+        "__pycache__",
+        "dist",
+        "node_modules",
+    }
+
+    def included(path: Path) -> bool:
+        relative_parts = path.relative_to(ROOT).parts
+        return not any(
+            part in ignored_parts or part.startswith(".venv")
+            for part in relative_parts
+        )
+
     return sorted(
         str(path.relative_to(ROOT))
         for path in ROOT.rglob("* 2.*")
-        if "__pycache__" not in path.parts
+        if included(path)
     )
+
+
+def _run_p0_integrity_tests() -> dict[str, Any]:
+    returncode, output = _run(
+        [sys.executable, "-m", "pytest", "-q", *P0_INTEGRITY_TESTS],
+        timeout=180,
+        env={"RUN_INTEGRATION_TESTS": "1"},
+    )
+    return {
+        "status": "ok" if returncode == 0 else "failed",
+        "returncode": returncode,
+        "tests": list(P0_INTEGRITY_TESTS),
+        "output": output[-12000:],
+    }
 
 
 def _fetch_json(url: str, *, timeout: int = 10) -> dict[str, Any]:
@@ -55,6 +104,10 @@ def _status(value: bool) -> str:
 
 def build_report(api: str, compose_env: str) -> dict[str, Any]:
     blockers: list[str] = []
+    p0_integrity = _run_p0_integrity_tests()
+    if p0_integrity["status"] != "ok":
+        blockers.append("p0_integrity_tests")
+
     duplicate_artifacts = _find_duplicate_artifacts()
     if duplicate_artifacts:
         blockers.append("duplicate_artifacts")
@@ -107,6 +160,7 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
         "generated_at_epoch": int(time.time()),
         "status": _status(not blockers),
         "blockers": blockers,
+        "p0_integrity": p0_integrity,
         "repo": {
             "duplicate_artifacts": duplicate_artifacts,
             "git_status": git_output,
