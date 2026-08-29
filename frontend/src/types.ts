@@ -663,6 +663,43 @@ export type AuthorizationListResponse = {
   count: number;
 };
 
+export type AuthorizationDecisionRecord = {
+  reviewer: string;
+  reviewer_roles: string[];
+  decision: "approve" | "reject";
+  note: string | null;
+  created_at: string | null;
+};
+
+export type AuthorizationRequestRecord = {
+  request_id: string;
+  capability: string;
+  scope: Record<string, unknown>;
+  action: string;
+  action_digest: string;
+  requester: string;
+  reason: string;
+  requested_ttl_seconds: number | null;
+  engagement_ref: string | null;
+  status: "pending" | "issued" | "rejected" | "expired";
+  required_approvals: number;
+  requires_admin_approval: boolean;
+  artifact_id: string | null;
+  created_at: string | null;
+  expires_at: string | null;
+  resolved_at: string | null;
+  decisions: AuthorizationDecisionRecord[];
+};
+
+export type AuthorizationRequestListResponse = {
+  items: AuthorizationRequestRecord[];
+  count: number;
+};
+
+export type AuthorizationDecisionResponse = AuthorizationRequestRecord & {
+  artifact: AuthorizationArtifact | null;
+};
+
 export type CapabilityCheckResponse = {
   permitted: boolean;
   reason: string;

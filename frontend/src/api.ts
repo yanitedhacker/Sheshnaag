@@ -4,9 +4,12 @@ import type {
   AttackTechniqueFindingsResponse,
   ArtifactListResponse,
   AuthorizationArtifact,
+  AuthorizationDecisionResponse,
   AuthorizationChainRootResponse,
   AuthorizationChainVerifyResponse,
   AuthorizationListResponse,
+  AuthorizationRequestListResponse,
+  AuthorizationRequestRecord,
   AutonomousAgentRun,
   AutonomousAgentRunRequest,
   CaseGraphResponse,
@@ -306,15 +309,17 @@ export const api = {
 
   listAuthorizations: (params?: Record<string, string | number | boolean | undefined>) =>
     fetchJson<AuthorizationListResponse>(streamUrl("/api/v4/authorization", params)),
+  listAuthorizationRequests: (params?: Record<string, string | number | boolean | undefined>) =>
+    fetchJson<AuthorizationRequestListResponse>(streamUrl("/api/v4/authorization/requests", params)),
   requestAuthorization: async (payload: Record<string, unknown>) =>
-    fetchJson<AuthorizationArtifact>("/api/v4/authorization/request", { method: "POST", body: JSON.stringify(payload) }),
+    fetchJson<AuthorizationRequestRecord>("/api/v4/authorization/requests", { method: "POST", body: JSON.stringify(payload) }),
   revokeAuthorization: async (artifactId: string, payload: Record<string, unknown>) =>
     fetchJson<{ artifact_id: string; revoked: boolean }>(`/api/v4/authorization/${artifactId}/revoke`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  approveAuthorization: async (artifactId: string, payload: Record<string, unknown>) =>
-    fetchJson<AuthorizationArtifact & { approval_status?: string }>(`/api/v4/authorization/${artifactId}/approve`, {
+  decideAuthorizationRequest: async (requestId: string, payload: Record<string, unknown>) =>
+    fetchJson<AuthorizationDecisionResponse>(`/api/v4/authorization/requests/${requestId}/decisions`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),

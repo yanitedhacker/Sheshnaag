@@ -72,3 +72,31 @@ sqlalchemy.exc.NoSuchTableError: advisory_records
 ```
 
 This is a confirmed pre-existing fresh-install migration blocker. It is not a `v5a08` result. It must be repaired and retested before the deployment gate can pass.
+
+## Independent exact-action HTTP lifecycle
+
+The safe route lifecycle now creates a pending request and needs a decision from a different token subject. The route test also submitted requester-controlled `reviewers` and `is_admin_approved` fields. The response remained pending with no artifact. A separate reviewer then issued the artifact. The exact scope passed policy evaluation, a changed digest failed, and the unsafe legacy endpoint returned HTTP 410.
+
+Focused backend result:
+
+```text
+34 passed
+```
+
+The focused set was:
+
+- capability policy
+- authorization workflow
+- audit chain
+- V4 foundation routes
+- autonomous routes
+
+Frontend production build result:
+
+```text
+TypeScript no-emit check passed
+Vite transformed 100 modules
+Production build completed in 732ms
+```
+
+`npm ci` reported 6 dependency audit findings: 3 moderate and 3 high. This is not treated as a pass. The dependency findings need a separate validated update because an automatic audit fix can make breaking dependency changes.
