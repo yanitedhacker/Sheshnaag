@@ -696,5 +696,8 @@ class AutonomousAgentRun(Base):
     case_id = Column(Integer, index=True)  # soft FK; case may be deleted, run history persists
     final_summary = Column(Text)
     steps = Column(JSON, default=list, nullable=False)
+    disposition = Column(JSON, default=dict, nullable=False)
+    action_digest = Column(String(80), index=True)
+    authorization_artifact_id = Column(String(64), index=True)
     created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
     completed_at = Column(DateTime)

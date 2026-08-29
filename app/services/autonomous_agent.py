@@ -40,6 +40,14 @@ from app.services.ai_provider_harness import AIProviderHarness
 logger = logging.getLogger(__name__)
 
 
+class AgentPersistenceError(RuntimeError):
+    """The durable run record could not be written."""
+
+
+class AgentReplayError(RuntimeError):
+    """Durable agent replay rows could not be read."""
+
+
 @dataclass
 class AgentStep:
     step: int
@@ -58,6 +66,9 @@ class AgentRun:
     reason: str | None
     steps: list[AgentStep]
     final_summary: str
+    disposition: dict[str, Any] = field(default_factory=dict)
+    action_digest: str | None = None
+    authorization_artifact_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +78,9 @@ class AgentRun:
             "reason": self.reason,
             "steps": [step.__dict__ for step in self.steps],
             "final_summary": self.final_summary,
+            "disposition": self.disposition,
+            "action_digest": self.action_digest,
+            "authorization_artifact_id": self.authorization_artifact_id,
         }
 
 
@@ -85,10 +99,6 @@ class AutonomousAgent:
         self.session = session
         self.ai = ai or AIProviderHarness()
         self._bus = event_bus
-        # Runs are now persisted in the autonomous_agent_runs table; we keep
-        # a per-instance cache of the most recently produced runs so the API
-        # can return them even if a flush failed mid-request.
-        self._recent: list[AgentRun] = []
 
     @property
     def bus(self) -> EventBus:
@@ -178,32 +188,73 @@ class AutonomousAgent:
         run_id = f"agent_{uuid.uuid4().hex[:16]}"
         steps: list[AgentStep] = []
 
-        # Capability gate: if the policy is unavailable (degraded test rigs),
-        # we still run but stamp the reason so reviewers see it.
-        denial: str | None = None
-        try:
-            from app.services.capability_policy import CapabilityPolicy
+        requested_steps = max_steps if max_steps is not None else self.DEFAULT_MAX_STEPS
+        budget = max(1, min(requested_steps, 10))
+        action_arguments = {
+            "tenant_id": tenant.id,
+            "goal": goal,
+            "case_id": case_id,
+            "max_steps": budget,
+        }
 
+        # Capability gate: every policy error denies before the first tool.
+        denial: str | None = None
+        policy_reason: str | None = None
+        authorization_artifact_id: str | None = None
+        from app.services.capability_policy import (
+            CapabilityPolicy,
+            exact_action_scope,
+        )
+
+        scope = exact_action_scope(
+            "autonomous_agent_run",
+            action_arguments,
+            tenant_id=tenant.id,
+            case_id=case_id,
+        )
+        try:
             policy = CapabilityPolicy(self.session)
             decision = policy.evaluate(
                 capability="autonomous_agent_run",
-                scope={"tenant_id": tenant.id, "case_id": case_id},
+                scope=scope,
                 actor=actor,
             )
+            policy_reason = decision.reason
+            authorization_artifact_id = decision.artifact_id
             if not decision.permitted:
                 denial = f"capability_denied:{decision.reason}"
-        except Exception as exc:  # pragma: no cover - degraded path
+        except Exception as exc:
             denial = f"policy_unavailable:{exc.__class__.__name__}"
+            policy_reason = denial
 
-        if denial and not denial.startswith("policy_unavailable"):
+        if denial:
+            policy_unavailable = denial.startswith("policy_unavailable:")
             run = AgentRun(
-                run_id=run_id, goal=goal, status="denied", reason=denial, steps=[], final_summary=""
+                run_id=run_id,
+                goal=goal,
+                status="denied",
+                reason=denial,
+                steps=[],
+                final_summary="",
+                disposition={
+                    "code": (
+                        "denied_policy_unavailable"
+                        if policy_unavailable
+                        else "denied_no_authorization"
+                    ),
+                    "message": (
+                        "Authorization policy was unavailable. The action did not run."
+                        if policy_unavailable
+                        else "No matching exact-action authorization was found. The action did not run."
+                    ),
+                    "retryable": policy_unavailable,
+                    "policy_reason": policy_reason,
+                },
+                action_digest=scope["action_digest"],
+                authorization_artifact_id=None,
             )
             self._persist(tenant=tenant, run=run, actor=actor, case_id=case_id)
             return run
-
-        max_steps = max_steps or self.DEFAULT_MAX_STEPS
-        budget = max(1, min(max_steps, 10))
 
         # Step 1: anchor on case context (deterministic, no LLM round-trip yet).
         if case_id is not None:
@@ -218,7 +269,6 @@ class AutonomousAgent:
                     citations=[{"label": f"case:{case_id}"}] if "case" in output else [],
                 )
             )
-            self._publish(run_id, "agent_step", {"step": 1, "tool": "summarise_case"})
 
         # Step 2: ATT&CK posture as deterministic context.
         att_output = self._tool_attack_summary(tenant)
@@ -232,7 +282,6 @@ class AutonomousAgent:
                 citations=[{"label": "attack_coverage"}],
             )
         )
-        self._publish(run_id, "agent_step", {"step": steps[-1].step, "tool": "attack_summary"})
 
         # Step 3+: optional LLM synthesis when a provider is configured.
         synthesis = self._synthesise(goal=goal, steps=steps, tenant=tenant)
@@ -254,9 +303,16 @@ class AutonomousAgent:
             reason=denial,
             steps=steps,
             final_summary=synthesis["summary"],
+            disposition={
+                "code": "completed_read_only",
+                "message": "The approved read-only action completed.",
+                "retryable": False,
+                "policy_reason": policy_reason,
+            },
+            action_digest=scope["action_digest"],
+            authorization_artifact_id=authorization_artifact_id,
         )
         self._persist(tenant=tenant, run=run, actor=actor, case_id=case_id)
-        self._publish(run_id, "agent_done", {"summary": synthesis["summary"]})
         return run
 
     def _publish(self, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
@@ -274,6 +330,23 @@ class AutonomousAgent:
             )
         except Exception:  # pragma: no cover - infra-dependent
             pass
+
+    def publish_committed(self, run: AgentRun) -> None:
+        """Publish telemetry only after the caller commits the run row."""
+
+        if run.status != "completed":
+            return
+        for step in run.steps:
+            self._publish(
+                run.run_id,
+                "agent_step",
+                {"step": step.step, "tool": step.tool},
+            )
+        self._publish(
+            run.run_id,
+            "agent_done",
+            {"summary": run.final_summary},
+        )
 
     def _synthesise(self, *, goal: str, steps: list[AgentStep], tenant: Tenant) -> dict[str, Any]:
         # Default deterministic summary so the agent works even when no LLM
@@ -334,9 +407,8 @@ class AutonomousAgent:
         actor: str,
         case_id: int | None,
     ) -> None:
-        """Insert the run into autonomous_agent_runs and cache it locally."""
+        """Insert the run and fail when the durable write cannot flush."""
 
-        self._recent.append(run)
         try:
             row = AutonomousAgentRun(
                 tenant_id=tenant.id,
@@ -348,16 +420,26 @@ class AutonomousAgent:
                 case_id=case_id,
                 final_summary=run.final_summary,
                 steps=[step.__dict__ for step in run.steps],
+                disposition=run.disposition,
+                action_digest=run.action_digest,
+                authorization_artifact_id=run.authorization_artifact_id,
                 completed_at=utc_now() if run.status != "denied" else None,
             )
             self.session.add(row)
             self.session.flush()
-        except Exception as exc:  # pragma: no cover - persistence is best-effort
-            logger.warning("autonomous run persistence failed (run_id=%s): %s", run.run_id, exc)
+        except Exception as exc:
+            logger.error(
+                "autonomous run persistence failed (run_id=%s): %s",
+                run.run_id,
+                exc,
+            )
             try:
                 self.session.rollback()
             except Exception:  # pragma: no cover
                 pass
+            raise AgentPersistenceError(
+                "autonomous_run_persistence_unavailable"
+            ) from exc
 
     # ------------------------------------------------------------- replay log
 
@@ -369,25 +451,24 @@ class AutonomousAgent:
     ) -> list[dict[str, Any]]:
         """Return persisted runs, newest first.
 
-        When ``tenant`` is supplied we scope to it (the route layer should
-        always pass one); without a tenant we return the in-process recent
-        cache so legacy tests that don't seed the table still see runs they
-        just produced.
+        A tenant is required so replay cannot cross a tenant boundary.
         """
 
         if tenant is None:
-            return [run.to_dict() for run in self._recent]
+            raise AgentReplayError("tenant_required_for_agent_replay")
         try:
             rows = (
                 self.session.query(AutonomousAgentRun)
                 .filter(AutonomousAgentRun.tenant_id == tenant.id)
                 .order_by(AutonomousAgentRun.created_at.desc())
-                .limit(max(1, min(limit, 500)))
+                .limit(max(1, min(limit, 100)))
                 .all()
             )
-        except Exception as exc:  # pragma: no cover - degraded mode
-            logger.warning("autonomous run listing failed: %s", exc)
-            return [run.to_dict() for run in self._recent]
+        except Exception as exc:
+            logger.error("autonomous run listing failed: %s", exc)
+            raise AgentReplayError(
+                "autonomous_run_replay_unavailable"
+            ) from exc
         return [
             {
                 "run_id": row.run_id,
@@ -398,6 +479,9 @@ class AutonomousAgent:
                 "case_id": row.case_id,
                 "final_summary": row.final_summary,
                 "steps": row.steps or [],
+                "disposition": row.disposition or {},
+                "action_digest": row.action_digest,
+                "authorization_artifact_id": row.authorization_artifact_id,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "completed_at": row.completed_at.isoformat() if row.completed_at else None,
             }
@@ -405,4 +489,10 @@ class AutonomousAgent:
         ]
 
 
-__all__ = ["AgentRun", "AgentStep", "AutonomousAgent"]
+__all__ = [
+    "AgentPersistenceError",
+    "AgentReplayError",
+    "AgentRun",
+    "AgentStep",
+    "AutonomousAgent",
+]

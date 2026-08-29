@@ -20,6 +20,12 @@ from app.lab.collectors.process_tree import ProcessTreeCollector
 from app.lab.collectors.registry import COLLECTOR_REGISTRY
 from app.lab.collectors.tracee_collector import TraceeEventsCollector
 from app.lab.docker_kali_provider import DEFAULT_KALI_IMAGE, DockerKaliProvider
+from app.models.sheshnaag import EvidenceArtifact
+from app.services.sheshnaag_service import evidence_collection_statuses
+from scripts.sheshnaag_osquery_smoke import (
+    OSQUERY_SMOKE_HOLD_SECONDS,
+    osquery_smoke_command,
+)
 
 
 @pytest.mark.unit
@@ -93,7 +99,7 @@ def test_registry_covers_known_recipe_collectors():
 
 
 @pytest.mark.unit
-def test_provider_marks_tracee_capability_ready_on_tracee_profile():
+def test_provider_blocks_tracee_without_managed_disposable_worker():
     provider = DockerKaliProvider()
     plan = provider.build_plan(
         revision_content={
@@ -103,10 +109,13 @@ def test_provider_marks_tracee_capability_ready_on_tracee_profile():
         run_context={"tenant_slug": "demo", "analyst_name": "Tester", "run_id": 1},
     )
     capability = next(
-        item for item in plan["collector_capabilities"] if item["collector_name"] == "tracee_events"
+        item
+        for item in plan["collector_capabilities"]
+        if item["collector_name"] == "tracee_events"
     )
-    assert capability["status"] == "ready"
+    assert capability["status"] == "unavailable"
     assert capability["tier"] == "supported"
+    assert "disposable" in capability["reason"].lower()
 
 
 @pytest.mark.unit
@@ -153,6 +162,34 @@ def test_tracee_live_payload_uses_standardized_session_fields(monkeypatch):
     assert payload["session"]["transport"] == "docker_exec"
     assert payload["session"]["event_limit"] >= 1
     assert payload["support"]["supported"] is True
+
+
+@pytest.mark.unit
+def test_tracee_degraded_payload_preserves_bounded_runtime_diagnostics(monkeypatch):
+    collector = TraceeEventsCollector()
+
+    def fake_run_in_guest(provider_result, argv, timeout_sec=90, stdin_text=None):
+        joined = " ".join(argv)
+        if "tracee version" in joined:
+            return 0, "Tracee version: v0.22.6", ""
+        return 1, "", "ebpf.New: could not set capabilities: operation not permitted"
+
+    monkeypatch.setattr(tracee_module, "run_in_guest", fake_run_in_guest)
+    evidence = collector.collect(
+        run_context={"run_id": 1, "launch_mode": "execute"},
+        provider_result=build_provider_result_dict(
+            provider_run_ref="run-1",
+            plan={"provider": "docker_kali", "tooling_profile": {"profile": "tracee_capable", "tracee_available": True}},
+            state="running",
+            container_id="container-123",
+        ),
+    )
+
+    payload = evidence[0]["payload"]
+    assert payload["collection_state"] == "degraded"
+    assert payload["session"]["exit_code"] == 1
+    assert "2>/dev/null" not in payload["session"]["command"]
+    assert "could not set capabilities" in payload["stderr_preview"]
 
 
 @pytest.mark.unit
@@ -248,3 +285,42 @@ def test_pcap_payload_marks_sensitive_bounded_capture(monkeypatch):
     assert payload["capture_policy"]["bounded_capture"] is True
     assert payload["review_sensitivity"]["external_export_requires_confirmation"] is True
     assert payload["storage"]["contains_raw_payload"] is True
+
+
+@pytest.mark.unit
+def test_osquery_smoke_keeps_guest_alive_for_collection_window():
+    assert OSQUERY_SMOKE_HOLD_SECONDS >= 30
+    assert osquery_smoke_command() == [
+        "sleep",
+        str(OSQUERY_SMOKE_HOLD_SECONDS),
+    ]
+
+
+@pytest.mark.unit
+def test_evidence_status_diagnostics_are_bounded_and_actionable():
+    rows = [
+        EvidenceArtifact(
+            artifact_kind="process_tree",
+            payload={
+                "collection_state": "error",
+                "collector_health": {
+                    "status": "error",
+                    "error": "docker exec failed: container stopped",
+                },
+            },
+        ),
+        EvidenceArtifact(
+            artifact_kind="osquery_snapshot",
+            payload={
+                "collection_state": "live",
+                "collector_health": {"status": "ok"},
+            },
+        ),
+    ]
+
+    statuses = evidence_collection_statuses(rows)
+
+    assert statuses == [
+        "process_tree:error:docker exec failed: container stopped",
+        "osquery_snapshot:live",
+    ]

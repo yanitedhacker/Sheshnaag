@@ -21,6 +21,18 @@ from app.models import Asset
 from app.services.auth_service import AuthService
 from app.services.demo_seed_service import DemoSeedService
 from app.services.sheshnaag_service import SheshnaagService
+from scripts.sheshnaag_smoke_worker import (
+    configure_in_memory_worker_queue,
+    process_queued_run,
+)
+
+OSQUERY_SMOKE_HOLD_SECONDS = 30
+
+
+def osquery_smoke_command() -> list[str]:
+    """Keep the guest alive without a shell or pre-collection workspace write."""
+
+    return ["sleep", str(OSQUERY_SMOKE_HOLD_SECONDS)]
 
 
 def docker_ready() -> bool:
@@ -61,6 +73,7 @@ def main() -> int:
     session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     session = session_factory()
+    configure_in_memory_worker_queue()
 
     try:
         DemoSeedService(session).seed()
@@ -98,11 +111,7 @@ def main() -> int:
             created_by="osquery Smoke",
             content={
                 "base_image": image,
-                "command": [
-                    "bash",
-                    "-lc",
-                    "echo osquery-smoke > /workspace/osquery-smoke.txt && sleep 5",
-                ],
+                "command": osquery_smoke_command(),
                 "network_policy": {"allow_egress_hosts": []},
                 "collectors": ["process_tree", "osquery_snapshot", "file_diff"],
             },
@@ -125,9 +134,14 @@ def main() -> int:
             acknowledge_sensitive=False,
         )
 
-        if run["state"] not in {"running", "completed"}:
+        session.commit()
+        process_queued_run(run=run, session_factory=session_factory)
+        session.expire_all()
+        run = service.get_run(tenant, run["id"])
+        if run["state"] != "completed":
             raise RuntimeError(
-                f"osquery smoke failed: state={run['state']} transcript={run.get('run_transcript')}"
+                "osquery run did not reach completed state after worker processing: "
+                f"state={run['state']} transcript={run.get('run_transcript')}"
             )
 
         evidence = service.list_evidence(tenant, run_id=run["id"])

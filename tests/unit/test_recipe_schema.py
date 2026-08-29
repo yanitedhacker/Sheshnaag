@@ -277,6 +277,36 @@ def test_lint_clean_recipe():
 
 
 @pytest.mark.unit
+def test_privileged_tracee_policy_is_rejected_for_docker_provider():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            provider="docker_kali",
+            image_profile="tracee_capable",
+            execution_policy={"allow_privileged_tracee": True},
+        )
+    )
+
+    assert result.valid is False
+    assert any("managed disposable Linux worker" in error for error in result.errors)
+
+
+@pytest.mark.unit
+def test_high_risk_acknowledgement_does_not_unlock_privileged_docker_tracee():
+    result = RecipeSchemaValidator().validate(
+        _valid_recipe(
+            provider="docker_kali",
+            image_profile="tracee_capable",
+            risk_level="high",
+            requires_acknowledgement=True,
+            execution_policy={"allow_privileged_tracee": True},
+        )
+    )
+
+    assert result.valid is False
+    assert any("managed disposable Linux worker" in error for error in result.errors)
+
+
+@pytest.mark.unit
 def test_lint_dangerous_capability_warning():
     content = _valid_recipe(cap_add=["SYS_ADMIN"])
     result = RecipeLinter().lint(content)

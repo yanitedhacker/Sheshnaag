@@ -26,6 +26,15 @@ def otel_enabled() -> bool:
     return bool(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 
 
+def _otlp_trace_endpoint(endpoint: str) -> str:
+    """Return one exact OTLP/HTTP trace endpoint without a duplicate path."""
+
+    normalized = endpoint.rstrip("/")
+    if normalized.endswith("/v1/traces"):
+        return normalized
+    return f"{normalized}/v1/traces"
+
+
 def configure_telemetry(app: Any = None, *, service_name: str | None = None) -> bool:
     """Wire OpenTelemetry tracing if an exporter endpoint is configured.
 
@@ -61,7 +70,10 @@ def configure_telemetry(app: Any = None, *, service_name: str | None = None) -> 
         }
     )
     provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter()
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    exporter = OTLPSpanExporter(
+        endpoint=_otlp_trace_endpoint(endpoint) if endpoint else None
+    )
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
 

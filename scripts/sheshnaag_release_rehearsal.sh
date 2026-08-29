@@ -22,7 +22,7 @@ STEPS = [
     ),
     ("Backend smoke [runtime-execution]", f"{PYTHON_BIN} scripts/sheshnaag_api_smoke.py"),
     ("Migration rehearsal [deployment]", f"{PYTHON_BIN} scripts/sheshnaag_migration_rehearsal.py"),
-    ("Frontend route smoke [deployment]", f"{PYTHON_BIN} scripts/sheshnaag_frontend_smoke.py"),
+    ("Frontend route smoke [deployment]", f"{PYTHON_BIN} scripts/sheshnaag_frontend_ci_smoke.py"),
     (
         "Maintainer CLI smoke [deployment]",
         f"{PYTHON_BIN} scripts/sheshnaag_maintainer.py --help >/dev/null && "
@@ -56,7 +56,7 @@ STEPS = [
         f"{PYTHON_BIN} scripts/sheshnaag_osquery_smoke.py",
     ),
     (
-        "Tracee smoke [runtime-execution self-skip without Docker]",
+        "Tracee smoke [external-worker self-skip without disposable Linux worker]",
         f"{PYTHON_BIN} scripts/sheshnaag_tracee_smoke.py",
     ),
     (

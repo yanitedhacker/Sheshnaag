@@ -163,13 +163,6 @@ class V5AnalyticsSeeder:
                 tenant_id=tenant.id,
                 title=f"[seed#{i:04d}] {self._sample_title(rng)}",
                 summary=self._sample_summary(rng),
-                status="open"
-                if case_path[-1][2]
-                not in {
-                    CaseLifecycleState.SHIPPED.value,
-                    CaseLifecycleState.ARCHIVED.value,
-                }
-                else "closed",
                 lifecycle_state=case_path[-1][2],
                 state_changed_at=case_path[-1][0],
                 state_changed_by=case_path[-1][3],

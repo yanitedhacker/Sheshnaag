@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 import app.models  # noqa: F401  registers tables
 from app.core.database import Base
 from app.core.security import (
@@ -24,7 +25,8 @@ from app.models.rbac import Permission, Role, RolePermission
 
 
 @pytest.fixture()
-def session():
+def session(monkeypatch):
+    monkeypatch.setattr(settings, "auth_enabled", True)
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},

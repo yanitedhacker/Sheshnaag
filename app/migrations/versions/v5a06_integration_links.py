@@ -15,6 +15,8 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
+from app.migrations.guards import existing_tables, index_exists
+
 
 revision = "v5a06"
 down_revision = "v5a05"
@@ -23,38 +25,45 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    bind = op.get_bind()
+    if "case_integration_links" not in existing_tables(bind):
+        op.create_table(
+            "case_integration_links",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column(
+                "case_id",
+                sa.Integer(),
+                sa.ForeignKey("analysis_cases.id", ondelete="CASCADE"),
+                nullable=False,
+                index=True,
+            ),
+            sa.Column("provider", sa.String(length=20), nullable=False),
+            sa.Column("external_id", sa.String(length=255), nullable=False),
+            sa.Column(
+                "metadata",
+                sa.JSON(),
+                nullable=False,
+                server_default=sa.text("'{}'"),
+            ),
+            sa.Column("created_at", sa.DateTime(), nullable=True),
+            sa.Column("created_by", sa.String(length=200), nullable=True),
+            sa.UniqueConstraint(
+                "provider",
+                "external_id",
+                name="uq_case_integration_provider_external",
+            ),
+        )
+    if not index_exists(
+        bind,
         "case_integration_links",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column(
-            "case_id",
-            sa.Integer(),
-            sa.ForeignKey("analysis_cases.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-        sa.Column("provider", sa.String(length=20), nullable=False),
-        sa.Column("external_id", sa.String(length=255), nullable=False),
-        sa.Column(
-            "metadata",
-            sa.JSON(),
-            nullable=False,
-            server_default=sa.text("'{}'"),
-        ),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("created_by", sa.String(length=200), nullable=True),
-        sa.UniqueConstraint(
-            "provider",
-            "external_id",
-            name="uq_case_integration_provider_external",
-        ),
-    )
-    op.create_index(
         "ix_case_integration_links_provider",
-        "case_integration_links",
-        ["provider"],
-        unique=False,
-    )
+    ):
+        op.create_index(
+            "ix_case_integration_links_provider",
+            "case_integration_links",
+            ["provider"],
+            unique=False,
+        )
 
 
 def downgrade() -> None:

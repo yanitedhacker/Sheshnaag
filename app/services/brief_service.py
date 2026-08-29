@@ -125,7 +125,8 @@ class BriefService:
                 for f in new_findings[:5]
             ],
             "top_cases": [
-                {"id": c.id, "title": c.title, "status": c.status} for c in new_cases[:5]
+                {"id": c.id, "title": c.title, "status": c.lifecycle_state}
+                for c in new_cases[:5]
             ],
             "agent_run_status": [
                 {"run_id": r.run_id, "status": r.status, "goal": r.goal[:120]}

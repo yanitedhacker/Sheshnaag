@@ -67,7 +67,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm --prefix frontend ci
       - name: Route smoke
-        run: python3 scripts/sheshnaag_frontend_smoke.py
+        run: python3 scripts/sheshnaag_frontend_ci_smoke.py
       - name: Frontend build
         run: |
           set -o pipefail

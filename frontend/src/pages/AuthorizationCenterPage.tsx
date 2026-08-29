@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useCurrentRole } from "../hooks/useCurrentRole";
-import type { AuthorizationArtifact, AuthorizationChainRootResponse, AuthorizationChainVerifyResponse } from "../types";
+import type {
+  AuthorizationArtifact,
+  AuthorizationChainRootResponse,
+  AuthorizationChainVerifyResponse,
+  AuthorizationRequestRecord,
+} from "../types";
 
 type CapabilityMeta = {
   name: string;
@@ -10,11 +15,23 @@ type CapabilityMeta = {
   requester_roles: string[] | null;
 };
 
-function parseScope(scopeText: string): Record<string, unknown> {
-  if (!scopeText.trim()) {
-    return {};
+const DEFAULT_ACTION_ARGUMENTS = JSON.stringify(
+  {
+    tenant_id: 1,
+    case_id: null,
+    goal: "Review this exact case.",
+    max_steps: 3,
+  },
+  null,
+  2,
+);
+
+function parseActionArguments(text: string): Record<string, unknown> {
+  const parsed = JSON.parse(text) as unknown;
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new Error("Action arguments must be a JSON object.");
   }
-  return JSON.parse(scopeText) as Record<string, unknown>;
+  return parsed as Record<string, unknown>;
 }
 
 function rolesPermitted(meta: CapabilityMeta | undefined, roles: string[]): boolean {
@@ -23,25 +40,21 @@ function rolesPermitted(meta: CapabilityMeta | undefined, roles: string[]): bool
   return roles.some((r) => meta.requester_roles!.includes(r));
 }
 
-function requiredReviewers(reviewKind: string): number {
-  return reviewKind === "single" ? 1 : 2;
-}
-
 export function AuthorizationCenterPage() {
   const { roles } = useCurrentRole();
   const [registry, setRegistry] = useState<CapabilityMeta[]>([]);
-  const [items, setItems] = useState<AuthorizationArtifact[]>([]);
+  const [artifacts, setArtifacts] = useState<AuthorizationArtifact[]>([]);
+  const [requests, setRequests] = useState<AuthorizationRequestRecord[]>([]);
   const [capability, setCapability] = useState(
     new URLSearchParams(window.location.search).get("capability") ?? "autonomous_agent_run",
   );
-  const [stateFilter, setStateFilter] = useState("");
-  const [scopeText, setScopeText] = useState("{}");
+  const [artifactStateFilter, setArtifactStateFilter] = useState("");
+  const [requestStateFilter, setRequestStateFilter] = useState("");
+  const [actionArgumentsText, setActionArgumentsText] = useState(DEFAULT_ACTION_ARGUMENTS);
   const [requester, setRequester] = useState("Demo Analyst");
-  const [reason, setReason] = useState("Beta authorization request");
-  const [reviewerOne, setReviewerOne] = useState("Lead Reviewer");
-  const [reviewerTwo, setReviewerTwo] = useState("Security Reviewer");
+  const [reason, setReason] = useState("Approve one exact beta action.");
   const [engagementRef, setEngagementRef] = useState("");
-  const [isAdminApproved, setIsAdminApproved] = useState(false);
+  const [decisionNote, setDecisionNote] = useState("Exact action and scope verified.");
   const [root, setRoot] = useState<AuthorizationChainRootResponse | null>(null);
   const [verify, setVerify] = useState<AuthorizationChainVerifyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,8 +64,6 @@ export function AuthorizationCenterPage() {
     [registry, capability],
   );
   const canRequest = rolesPermitted(selectedMeta, roles);
-  const needsDual = selectedMeta ? requiredReviewers(selectedMeta.review_kind) >= 2 : false;
-  const needsAdmin = selectedMeta?.review_kind === "dual_plus_admin";
   const needsEngagement = Boolean(selectedMeta?.requires_engagement_doc);
 
   useEffect(() => {
@@ -69,49 +80,71 @@ export function AuthorizationCenterPage() {
   }, []);
 
   async function load() {
-    const [auths, chainRoot, chainVerify] = await Promise.all([
-      api.listAuthorizations({ capability: capability || undefined, state: stateFilter || undefined }),
+    const [authorizationArtifacts, authorizationRequests, chainRoot, chainVerify] = await Promise.all([
+      api.listAuthorizations({
+        capability: capability || undefined,
+        state: artifactStateFilter || undefined,
+      }),
+      api.listAuthorizationRequests({
+        capability: capability || undefined,
+        state: requestStateFilter || undefined,
+      }),
       api.getAuthorizationChainRoot(),
       api.verifyAuthorizationChain(),
     ]);
-    setItems(auths.items);
+    setArtifacts(authorizationArtifacts.items);
+    setRequests(authorizationRequests.items);
     setRoot(chainRoot);
     setVerify(chainVerify);
   }
 
   useEffect(() => {
-    load().catch((err) => setError(err instanceof Error ? err.message : "Failed to load authorization state."));
-  }, [capability, stateFilter]);
+    load().catch((loadError) =>
+      setError(loadError instanceof Error ? loadError.message : "Failed to load authorization state."),
+    );
+  }, [capability, artifactStateFilter, requestStateFilter]);
 
   async function requestAuthorization() {
     try {
-      const reviewers = [{ reviewer: reviewerOne, decision: "approve" }];
-      if (needsDual) {
-        reviewers.push({ reviewer: reviewerTwo, decision: "approve" });
-      }
       await api.requestAuthorization({
         capability,
-        scope: parseScope(scopeText),
+        action: capability,
+        action_arguments: parseActionArguments(actionArgumentsText),
         requester,
         reason,
-        reviewers,
         requested_ttl_seconds: 3600 * 24,
         engagement_ref: engagementRef || undefined,
-        is_admin_approved: needsAdmin ? isAdminApproved : false,
       });
       setError(null);
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Authorization request failed.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Authorization request failed.");
+    }
+  }
+
+  async function decide(requestId: string, decision: "approve" | "reject") {
+    try {
+      await api.decideAuthorizationRequest(requestId, {
+        decision,
+        note: decisionNote || undefined,
+      });
+      setError(null);
+      await load();
+    } catch (decisionError) {
+      setError(decisionError instanceof Error ? decisionError.message : "Authorization decision failed.");
     }
   }
 
   async function revoke(artifactId: string) {
     try {
-      await api.revokeAuthorization(artifactId, { actor: requester, reason: "Revoked from Authorization Center" });
+      await api.revokeAuthorization(artifactId, {
+        actor: requester,
+        reason: "Revoked from Authorization Center",
+      });
+      setError(null);
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Revoke failed.");
+    } catch (revokeError) {
+      setError(revokeError instanceof Error ? revokeError.message : "Revoke failed.");
     }
   }
 
@@ -120,9 +153,9 @@ export function AuthorizationCenterPage() {
       <div className="page-intro">
         <div>
           <p className="eyebrow">Authorization Center</p>
-          <h1>Signed capability artifacts and audit-chain verification</h1>
+          <h1>Independent exact-action approvals</h1>
           <p className="page-copy">
-            Issue, inspect, and revoke scoped authorization artifacts. Quorum follows each capability&apos;s review_kind.
+            Request one action, review its server-derived digest, and issue a signed artifact only after the server-enforced independent quorum approves it.
           </p>
         </div>
       </div>
@@ -143,27 +176,23 @@ export function AuthorizationCenterPage() {
                 </option>
               ))}
             </select>
-            <input value={requester} onChange={(event) => setRequester(event.target.value)} placeholder="Requester" />
-            <input value={reviewerOne} onChange={(event) => setReviewerOne(event.target.value)} placeholder="Reviewer 1" />
-            {needsDual ? (
-              <input value={reviewerTwo} onChange={(event) => setReviewerTwo(event.target.value)} placeholder="Reviewer 2" />
-            ) : null}
+            <input value={requester} onChange={(event) => setRequester(event.target.value)} placeholder="Requester fallback for local development" />
             {needsEngagement ? (
               <input value={engagementRef} onChange={(event) => setEngagementRef(event.target.value)} placeholder="Engagement digest or URL" />
             ) : null}
-            {needsAdmin ? (
-              <label className="checkbox-row">
-                <input type="checkbox" checked={isAdminApproved} onChange={(event) => setIsAdminApproved(event.target.checked)} />
-                Admin co-signature recorded
-              </label>
-            ) : null}
-            <textarea value={scopeText} onChange={(event) => setScopeText(event.target.value)} rows={4} />
-            <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={4} />
+            <label>
+              Exact action arguments
+              <textarea value={actionArgumentsText} onChange={(event) => setActionArgumentsText(event.target.value)} rows={8} />
+            </label>
+            <label>
+              Reason
+              <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={4} />
+            </label>
             {!canRequest ? (
               <p className="muted">Your role cannot request this capability ({roles.join(", ") || "none"}).</p>
             ) : null}
             <button className="primary-button" disabled={!canRequest} onClick={() => void requestAuthorization()}>
-              Issue artifact
+              Submit request
             </button>
           </div>
         </section>
@@ -194,9 +223,56 @@ export function AuthorizationCenterPage() {
 
       <section className="panel">
         <div className="panel-header">
-          <h2>Artifacts</h2>
+          <h2>Approval requests</h2>
           <div className="toolbar">
-            <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
+            <select value={requestStateFilter} onChange={(event) => setRequestStateFilter(event.target.value)}>
+              <option value="">All states</option>
+              <option value="pending">Pending</option>
+              <option value="issued">Issued</option>
+              <option value="rejected">Rejected</option>
+              <option value="expired">Expired</option>
+            </select>
+          </div>
+        </div>
+        <label className="form-grid">
+          Reviewer note
+          <input value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} />
+        </label>
+        <div className="stack-list">
+          {requests.map((item) => (
+            <article className="line-card stacked-card" key={item.request_id}>
+              <div>
+                <strong>{item.request_id}</strong>
+                <p>{item.capability} · {item.status} · requester {item.requester}</p>
+                <p className="muted">
+                  {item.decisions.length}/{item.required_approvals} approvals
+                  {item.requires_admin_approval ? " · lab lead required" : ""}
+                </p>
+                <p className="muted">Digest {item.action_digest}</p>
+                <pre className="code-card">{JSON.stringify(item.scope, null, 2)}</pre>
+                {item.decisions.map((decision) => (
+                  <p className="muted" key={`${item.request_id}-${decision.reviewer}`}>
+                    {decision.reviewer}: {decision.decision}
+                  </p>
+                ))}
+              </div>
+              {item.status === "pending" ? (
+                <div className="button-row">
+                  <button className="ghost-button" onClick={() => void decide(item.request_id, "reject")}>Reject</button>
+                  <button className="primary-button" onClick={() => void decide(item.request_id, "approve")}>Approve exact action</button>
+                </div>
+              ) : null}
+            </article>
+          ))}
+          {!requests.length ? <div className="empty-panel">No authorization requests match this filter.</div> : null}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Issued artifacts</h2>
+          <div className="toolbar">
+            <select value={artifactStateFilter} onChange={(event) => setArtifactStateFilter(event.target.value)}>
               <option value="">All states</option>
               <option value="active">Active</option>
               <option value="revoked">Revoked</option>
@@ -204,7 +280,7 @@ export function AuthorizationCenterPage() {
           </div>
         </div>
         <div className="stack-list">
-          {items.map((item) => (
+          {artifacts.map((item) => (
             <article className="line-card stacked-card" key={item.artifact_id}>
               <div>
                 <strong>{item.artifact_id}</strong>
@@ -215,16 +291,13 @@ export function AuthorizationCenterPage() {
                 <pre className="code-card">{JSON.stringify(item.scope, null, 2)}</pre>
               </div>
               <div className="button-row">
-                <button className="ghost-button" onClick={() => void api.approveAuthorization(item.artifact_id, { reviewer: reviewerOne })}>
-                  Check approval
-                </button>
                 <button className="primary-button" disabled={Boolean(item.revoked_at)} onClick={() => void revoke(item.artifact_id)}>
                   Revoke
                 </button>
               </div>
             </article>
           ))}
-          {!items.length ? <div className="empty-panel">No authorization artifacts match this filter.</div> : null}
+          {!artifacts.length ? <div className="empty-panel">No authorization artifacts match this filter.</div> : null}
         </div>
       </section>
     </section>

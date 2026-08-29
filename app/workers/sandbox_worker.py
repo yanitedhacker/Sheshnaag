@@ -38,6 +38,7 @@ from app.core.time import utc_now
 from app.models.sheshnaag import LabRun, RunEvent
 from app.models.v2 import Tenant
 from app.services.malware_lab_service import MalwareLabService
+from app.services.sheshnaag_service import SheshnaagService
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,6 @@ def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None
         if run is None or tenant is None:
             raise ValueError("run_or_tenant_not_found")
 
-        run.state = "running"
         run.started_at = run.started_at or utc_now()
         started = _event(
             run_id, "run_started", payload={"correlation_id": message.get("correlation_id")}
@@ -101,8 +101,11 @@ def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None
         bus.publish(run_event_stream(run_id), started)
         session.commit()
 
-        lab_service = MalwareLabService(session)
-        preflight_fn = getattr(lab_service, "enforce_run_execution_preflight", None)
+        preflight_fn = getattr(
+            MalwareLabService(session),
+            "enforce_run_execution_preflight",
+            None,
+        )
         if callable(preflight_fn):
             preflight = preflight_fn(
                 tenant,
@@ -110,9 +113,13 @@ def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None
                 actor=str(message.get("actor") or "sandbox_worker"),
             )
             run.manifest = {**dict(run.manifest or {}), "detonation_preflight": preflight}
-        result = lab_service.materialize_run_outputs(tenant, run=run)
-        run.state = "completed"
-        run.ended_at = utc_now()
+        result = SheshnaagService(session).execute_queued_run(
+            tenant,
+            run_id=run_id,
+            actor=str(message.get("actor") or "sandbox_worker"),
+        )
+        if result.get("state") != "completed" or int(result.get("evidence_count") or 0) < 1:
+            raise RuntimeError(f"worker_execution_incomplete:{result}")
         completed = _event(run_id, "run_completed", payload=result)
         _record_event(session, run_id, "run_completed", completed)
         bus.publish(run_event_stream(run_id), completed)
@@ -149,6 +156,7 @@ def _decode_message(fields: dict) -> dict[str, Any]:
 
 
 _SHUTDOWN = False
+_WORK_READ_BLOCK_MS = 1000
 
 
 def _install_signal_handlers() -> None:
@@ -165,6 +173,22 @@ def _install_signal_handlers() -> None:
             # main interpreter — multiprocessing workers fall back to
             # default handlers, which is fine.
             pass
+
+
+def _read_work_rows(client, *, group: str, consumer: str) -> list:
+    """Read one queue item without crashing when an idle poll times out."""
+
+    try:
+        return client.xreadgroup(
+            group,
+            consumer,
+            {SANDBOX_WORK_STREAM: ">"},
+            block=_WORK_READ_BLOCK_MS,
+            count=1,
+        )
+    except redis.exceptions.TimeoutError:
+        logger.warning("Redis work-stream read timed out; retrying")
+        return []
 
 
 def run_forever(*, max_messages: int | None = None) -> None:
@@ -189,7 +213,7 @@ def run_forever(*, max_messages: int | None = None) -> None:
     )
     processed = 0
     while not _SHUTDOWN:
-        rows = client.xreadgroup(group, consumer, {SANDBOX_WORK_STREAM: ">"}, block=5000, count=1)
+        rows = _read_work_rows(client, group=group, consumer=consumer)
         if not rows:
             time.sleep(0.05)
             continue

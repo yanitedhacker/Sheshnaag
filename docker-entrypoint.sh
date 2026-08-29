@@ -6,7 +6,7 @@ echo "Starting Project Sheshnaag..."
 # Run database migrations if alembic is configured
 if [ -f "alembic.ini" ]; then
     echo "Running database migrations..."
-    alembic upgrade head || echo "Migration failed or not needed, continuing..."
+    alembic upgrade head
 fi
 
 # Start the application

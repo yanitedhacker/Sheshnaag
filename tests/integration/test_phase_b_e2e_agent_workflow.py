@@ -99,7 +99,7 @@ def seeded():
         title="WidgetServer intrusion 2026-W17",
         analyst_name="alice",
         specimen_ids=[specimen.id],
-        status="investigating",
+        lifecycle_state="analysis",
     )
     session.add(case)
     session.flush()

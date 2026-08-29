@@ -1,7 +1,12 @@
 """Database models."""
 
 from app.models.asset import Asset, AssetVulnerability
-from app.models.capability import AuditLogEntry, AuthorizationArtifact
+from app.models.capability import (
+    AuditLogEntry,
+    AuthorizationArtifact,
+    AuthorizationDecisionRecord,
+    AuthorizationRequestRecord,
+)
 from app.models.cve import CVE, AffectedProduct, CVEReference
 from app.models.embeddings import (
     VECTOR_DIM,
@@ -173,6 +178,8 @@ __all__ = [
     "VECTOR_DIM",
     "AuditLogEntry",
     "AuthorizationArtifact",
+    "AuthorizationDecisionRecord",
+    "AuthorizationRequestRecord",
     "Role",
     "Permission",
     "RolePermission",

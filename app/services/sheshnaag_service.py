@@ -107,6 +107,128 @@ CANDIDATE_STATUS_TRANSITIONS: dict[str, set] = {
 }
 
 
+def evidence_collection_statuses(
+    evidence_rows: Iterable[EvidenceArtifact],
+    *,
+    limit: int = 12,
+) -> list[str]:
+    """Return bounded collector health details for worker failure diagnostics."""
+
+    statuses: list[str] = []
+    for item in list(evidence_rows)[: max(0, limit)]:
+        payload = item.payload if isinstance(item.payload, dict) else {}
+        health = payload.get("collector_health")
+        health = health if isinstance(health, dict) else {}
+        state = str(
+            payload.get("collection_state")
+            or health.get("status")
+            or "unknown"
+        ).strip().lower()
+        entry = f"{item.artifact_kind}:{state}"
+        if state not in {"live", "ok"}:
+            detail = str(
+                health.get("error")
+                or payload.get("message")
+                or payload.get("reason")
+                or ""
+            )
+            detail = " ".join(detail.split())[:160]
+            if detail:
+                entry = f"{entry}:{detail}"
+        statuses.append(entry)
+    return statuses
+
+_EXPORT_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "credential",
+        "credentials",
+        "password",
+        "passwd",
+        "private_key",
+        "secret",
+        "secret_key",
+        "session_cookie",
+        "token",
+    }
+)
+
+_ATTACHMENT_DEFAULTS: dict[str, dict[str, bool]] = {
+    "vendor_disclosure": {
+        "include_raw_logs": False,
+        "include_pcap": False,
+        "include_screenshots": False,
+    },
+    "bug_bounty": {
+        "include_raw_logs": False,
+        "include_pcap": False,
+        "include_screenshots": True,
+    },
+    "research_submission": {
+        "include_raw_logs": True,
+        "include_pcap": False,
+        "include_screenshots": True,
+    },
+    "internal_remediation": {
+        "include_raw_logs": True,
+        "include_pcap": False,
+        "include_screenshots": True,
+    },
+}
+
+
+def _export_policy_key(artifact_kind: str) -> str | None:
+    if artifact_kind == "service_logs":
+        return "include_raw_logs"
+    if artifact_kind == "pcap":
+        return "include_pcap"
+    if artifact_kind in {"screenshot", "screenshots", "screen_capture"}:
+        return "include_screenshots"
+    return None
+
+
+def _redact_export_value(
+    value: Any,
+    *,
+    path: str,
+    redactions: list[dict[str, str]],
+) -> Any:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            normalized = key_text.strip().lower().replace("-", "_")
+            child_path = f"{path}.{key_text}"
+            if normalized in _EXPORT_SENSITIVE_KEYS:
+                result[key_text] = "[REDACTED]"
+                redactions.append(
+                    {
+                        "path": child_path,
+                        "disposition": "redacted_sensitive_key",
+                    }
+                )
+            else:
+                result[key_text] = _redact_export_value(
+                    item,
+                    path=child_path,
+                    redactions=redactions,
+                )
+        return result
+    if isinstance(value, list):
+        return [
+            _redact_export_value(
+                item,
+                path=f"{path}[{index}]",
+                redactions=redactions,
+            )
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
 @dataclass
 class RunArtifacts:
     """In-memory run outputs before persistence."""
@@ -1384,6 +1506,204 @@ class SheshnaagService:
         self.session.flush()
         return self.get_run(tenant, run.id)
 
+    def execute_queued_run(
+        self,
+        tenant: Tenant,
+        *,
+        run_id: int,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """Execute one queued run and require live evidence before completion."""
+
+        run = self._get_run(tenant, run_id)
+        if run.launch_mode != "execute" or run.state != "queued":
+            raise ValueError(
+                "Worker execution requires a queued execute-mode run; "
+                f"launch_mode={run.launch_mode} state={run.state}."
+            )
+
+        revision = (
+            self.session.query(RecipeRevision)
+            .filter(RecipeRevision.id == run.recipe_revision_id)
+            .first()
+        )
+        if revision is None:
+            raise ValueError("Queued run is missing its recipe revision.")
+
+        candidate = self._get_candidate(tenant, run.candidate_id) if run.candidate_id else None
+        provider = self._provider_for_name(run.provider)
+        run_context = self._run_context_for_provider(
+            tenant,
+            run,
+            analyst_name=actor,
+            candidate=candidate,
+        )
+        revision_content = self._revision_content_for_provider(
+            dict(revision.content or {}),
+            run.provider,
+        )
+        launch_result = provider.launch(
+            revision_content=revision_content,
+            run_context=run_context,
+        )
+        self._apply_provider_result(run, launch_result)
+        self._add_run_event(run, "provider_launch", launch_result)
+        run.started_at = run.started_at or utc_now()
+
+        allowed_states = {RunState.RUNNING.value, RunState.COMPLETED.value}
+        if run.state not in allowed_states:
+            run.ended_at = utc_now()
+            self.session.flush()
+            raise RuntimeError(
+                "Provider did not start queued execution: "
+                f"state={run.state} error={launch_result.error or 'unknown'}"
+            )
+
+        cleanup_result: Optional[ProviderResult] = None
+        try:
+            if self._should_collect_after_provider_launch(run):
+                artifacts = self._collect_and_generate(
+                    run=run,
+                    candidate=candidate,
+                    analyst_name=actor,
+                )
+                self._persist_run_artifacts(run=run, artifacts=artifacts)
+
+            from app.services.malware_lab_service import MalwareLabService
+
+            malware_outputs = MalwareLabService(self.session).materialize_run_outputs(
+                tenant,
+                run=run,
+            )
+            self.session.flush()
+
+            evidence_rows = (
+                self.session.query(EvidenceArtifact)
+                .filter(EvidenceArtifact.run_id == run.id)
+                .all()
+            )
+            live_evidence_count = sum(
+                1
+                for item in evidence_rows
+                if str(
+                    (item.payload or {}).get("collection_state")
+                    or ((item.payload or {}).get("collector_health") or {}).get("status")
+                    or ""
+                ).lower()
+                in {"live", "ok"}
+            )
+            if not evidence_rows or live_evidence_count < 1:
+                status_summary = "; ".join(
+                    evidence_collection_statuses(evidence_rows)
+                )
+                raise RuntimeError(
+                    "Queued execution produced no live evidence; "
+                    f"evidence_count={len(evidence_rows)} "
+                    f"live_evidence_count={live_evidence_count} "
+                    f"statuses=[{status_summary}]."
+                )
+
+            if run.state == RunState.RUNNING.value:
+                timeout_seconds = int(
+                    os.getenv("SHESHNAAG_WORKER_EXECUTION_TIMEOUT", "180")
+                )
+                deadline = time.monotonic() + max(1, timeout_seconds)
+                while True:
+                    health_result = provider.health(
+                        provider_run_ref=run.provider_run_ref
+                    )
+                    health_state = (
+                        health_result.state.value
+                        if isinstance(health_result.state, RunState)
+                        else str(health_result.state)
+                    )
+                    if health_state in {
+                        RunState.STOPPED.value,
+                        RunState.COMPLETED.value,
+                        RunState.DESTROYED.value,
+                    }:
+                        break
+                    if health_state in {
+                        RunState.ERRORED.value,
+                        RunState.UNHEALTHY.value,
+                        RunState.BLOCKED.value,
+                    }:
+                        raise RuntimeError(
+                            "Queued execution entered a failed provider state: "
+                            f"{health_state}."
+                        )
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            "Queued execution exceeded worker timeout: "
+                            f"{timeout_seconds}s."
+                        )
+                    time.sleep(0.25)
+
+            cleanup_result = provider.teardown(
+                provider_run_ref=run.provider_run_ref,
+                retain_workspace=False,
+            )
+            cleanup_state = (
+                cleanup_result.state.value
+                if isinstance(cleanup_result.state, RunState)
+                else str(cleanup_result.state)
+            )
+            if cleanup_state == RunState.ERRORED.value:
+                raise RuntimeError(
+                    "Provider cleanup failed after queued execution: "
+                    f"{cleanup_result.error or cleanup_result.transcript}"
+                )
+
+            run.state = RunState.COMPLETED.value
+            run.ended_at = utc_now()
+            run.run_transcript = (
+                "Sandbox worker completed provider execution, evidence collection, "
+                "and resource cleanup."
+            )
+            manifest = dict(run.manifest or {})
+            manifest["worker_execution"] = {
+                "status": "completed",
+                "actor": actor,
+                "evidence_count": len(evidence_rows),
+                "live_evidence_count": live_evidence_count,
+                "malware_outputs": malware_outputs,
+                "cleanup_state": cleanup_state,
+                "completed_at": run.ended_at.isoformat(),
+            }
+            run.manifest = manifest
+            self._ledger(
+                tenant.id,
+                run.analyst_id,
+                "run_completed",
+                "run",
+                str(run.id),
+                5.0,
+                {
+                    "state": run.state,
+                    "evidence_count": len(evidence_rows),
+                    "live_evidence_count": live_evidence_count,
+                },
+            )
+            self.session.flush()
+            return {
+                "run_id": run.id,
+                "state": run.state,
+                "evidence_count": len(evidence_rows),
+                "live_evidence_count": live_evidence_count,
+                "cleanup_state": cleanup_state,
+                "malware_outputs": malware_outputs,
+            }
+        except Exception:
+            if run.provider_run_ref and cleanup_result is None:
+                try:
+                    provider.teardown(
+                        provider_run_ref=run.provider_run_ref,
+                        retain_workspace=False,
+                    )
+                except Exception:
+                    pass
+            raise
+
     def plan_run(
         self,
         tenant: Tenant,
@@ -2495,6 +2815,11 @@ class SheshnaagService:
                 "Bundle requires explicit external export confirmation for sensitive evidence."
             )
 
+        export_controls = self._prepare_export_evidence(
+            bundle_type=bundle_type,
+            evidence_rows=evidence_rows,
+            attachment_policy=attachment_policy or {},
+        )
         manifest = self._build_bundle_manifest(
             run=run,
             bundle_type=bundle_type,
@@ -2503,13 +2828,13 @@ class SheshnaagService:
             evidence_rows=evidence_rows,
             artifacts=selected_artifacts,
             redaction_notes=redaction_notes or [],
-            attachment_policy=attachment_policy or {},
+            export_controls=export_controls,
             warnings=warnings,
             review_checklist=review_checklist or {},
         )
         archive = self._write_bundle_archive(
             manifest=manifest,
-            evidence_rows=evidence_rows,
+            evidence_records=export_controls["archive_records"],
             detection_rows=[
                 row for row in selected_artifacts if isinstance(row, DetectionArtifact)
             ],
@@ -4194,6 +4519,100 @@ class SheshnaagService:
             ]
         )
 
+    def _prepare_export_evidence(
+        self,
+        *,
+        bundle_type: str,
+        evidence_rows: list[EvidenceArtifact],
+        attachment_policy: dict[str, Any],
+    ) -> dict[str, Any]:
+        defaults = _ATTACHMENT_DEFAULTS.get(
+            bundle_type,
+            _ATTACHMENT_DEFAULTS["vendor_disclosure"],
+        )
+        for key in defaults:
+            if key in attachment_policy and not isinstance(
+                attachment_policy[key],
+                bool,
+            ):
+                raise ValueError(
+                    f"attachment_policy_boolean_required:{key}"
+                )
+        effective_policy = {**defaults, **attachment_policy}
+        inventory: list[dict[str, Any]] = []
+        archive_records: list[dict[str, Any]] = []
+        automatic_redactions: list[dict[str, str]] = []
+
+        for row in evidence_rows:
+            policy_key = _export_policy_key(row.artifact_kind)
+            included = True if policy_key is None else bool(effective_policy.get(policy_key, False))
+            if not included:
+                inventory.append(
+                    {
+                        "evidence_id": row.id,
+                        "kind": row.artifact_kind,
+                        "title": row.title,
+                        "include": False,
+                        "disposition": "excluded_by_policy",
+                        "policy_key": policy_key,
+                        "reason": f"Attachment policy set {policy_key}=false.",
+                    }
+                )
+                continue
+
+            record_redactions: list[dict[str, str]] = []
+            payload = _redact_export_value(
+                row.payload or {},
+                path=f"evidence.{row.id}.payload",
+                redactions=record_redactions,
+            )
+            automatic_redactions.extend(record_redactions)
+            export_payload_sha256 = hashlib.sha256(
+                json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            archive_records.append(
+                {
+                    "id": row.id,
+                    "artifact_kind": row.artifact_kind,
+                    "title": row.title,
+                    "summary": row.summary,
+                    "source_sha256": row.sha256,
+                    "export_payload_sha256": export_payload_sha256,
+                    "payload": payload,
+                }
+            )
+            inventory.append(
+                {
+                    "evidence_id": row.id,
+                    "kind": row.artifact_kind,
+                    "title": row.title,
+                    "include": True,
+                    "disposition": (
+                        "included_redacted"
+                        if record_redactions
+                        else "included_unchanged"
+                    ),
+                    "policy_key": policy_key,
+                    "reason": (
+                        "Included after automatic sensitive-key redaction."
+                        if record_redactions
+                        else "Included by attachment policy."
+                    ),
+                }
+            )
+
+        return {
+            "attachment_policy": effective_policy,
+            "attachment_inventory": inventory,
+            "archive_records": archive_records,
+            "automatic_redactions": automatic_redactions,
+        }
+
     def _build_bundle_manifest(
         self,
         *,
@@ -4204,37 +4623,12 @@ class SheshnaagService:
         evidence_rows: list[EvidenceArtifact],
         artifacts: list[Any],
         redaction_notes: list[dict[str, Any]],
-        attachment_policy: list[dict[str, Any]] | dict[str, Any],
+        export_controls: dict[str, Any],
         warnings: list[str],
         review_checklist: dict[str, Any],
     ) -> dict[str, Any]:
         reproduction_steps = self._build_reproduction_steps(run=run, evidence_rows=evidence_rows)
-        attachment_defaults = {
-            "vendor_disclosure": {
-                "include_raw_logs": False,
-                "include_pcap": False,
-                "include_screenshots": False,
-            },
-            "bug_bounty": {
-                "include_raw_logs": False,
-                "include_pcap": False,
-                "include_screenshots": True,
-            },
-            "research_submission": {
-                "include_raw_logs": True,
-                "include_pcap": False,
-                "include_screenshots": True,
-            },
-            "internal_remediation": {
-                "include_raw_logs": True,
-                "include_pcap": False,
-                "include_screenshots": True,
-            },
-        }
-        effective_attachment_policy = {
-            **attachment_defaults.get(bundle_type, attachment_defaults["vendor_disclosure"]),
-            **(attachment_policy if isinstance(attachment_policy, dict) else {}),
-        }
+        effective_attachment_policy = export_controls["attachment_policy"]
         report_sections = {
             "summary": True,
             "impact_summary": True,
@@ -4245,21 +4639,19 @@ class SheshnaagService:
             "redaction_log": True,
             "provenance_summary": True,
         }
-        attachment_inventory = [
-            {
-                "kind": row.artifact_kind,
-                "title": row.title,
-                "include": effective_attachment_policy.get(
-                    "include_raw_logs"
-                    if row.artifact_kind == "service_logs"
-                    else ("include_pcap" if row.artifact_kind == "pcap" else "include_screenshots"),
-                    True,
-                ),
-                "reason": "Included by attachment policy."
-                if effective_attachment_policy
-                else "Included by default.",
-            }
-            for row in evidence_rows
+        attachment_inventory = export_controls["attachment_inventory"]
+        included_ids = {
+            row["evidence_id"]
+            for row in attachment_inventory
+            if row["include"]
+        }
+        included_evidence_rows = [
+            row for row in evidence_rows if row.id in included_ids
+        ]
+        automatic_redactions = export_controls["automatic_redactions"]
+        manual_notes = [
+            {**note, "disposition": "review_note_only"}
+            for note in redaction_notes
         ]
         return {
             "title": title,
@@ -4292,15 +4684,17 @@ class SheshnaagService:
             },
             "redaction_notes": redaction_notes,
             "redaction_log": {
-                "count": len(redaction_notes),
-                "items": redaction_notes,
+                "count": len(automatic_redactions) + len(manual_notes),
+                "automatic": automatic_redactions,
+                "manual_notes": manual_notes,
             },
             "reproduction_steps": reproduction_steps,
             "impact_summary": {
                 "candidate_id": run.candidate_id,
                 "warning_count": len(warnings),
                 "artifact_count": len(artifacts),
-                "evidence_count": len(evidence_rows),
+                "evidence_count": len(included_evidence_rows),
+                "excluded_evidence_count": len(evidence_rows) - len(included_evidence_rows),
             },
             "fix_guidance": [row.title for row in artifacts if isinstance(row, MitigationArtifact)],
             "provenance_summary": {
@@ -4316,10 +4710,14 @@ class SheshnaagService:
                     "artifact_kind": row.artifact_kind,
                     "title": row.title,
                     "summary": row.summary,
-                    "sha256": row.sha256,
-                    "storage_path": row.storage_path,
+                    "source_sha256": row.sha256,
+                    "disposition": next(
+                        item["disposition"]
+                        for item in attachment_inventory
+                        if item["evidence_id"] == row.id
+                    ),
                 }
-                for row in evidence_rows
+                for row in included_evidence_rows
             ],
             "artifacts": [
                 self._detection_artifact_payload(row)
@@ -4331,7 +4729,7 @@ class SheshnaagService:
                 bundle_type=bundle_type,
                 title=title,
                 run=run,
-                evidence_rows=evidence_rows,
+                evidence_rows=included_evidence_rows,
                 artifacts=artifacts,
                 warnings=warnings,
                 reproduction_steps=reproduction_steps,
@@ -4342,7 +4740,7 @@ class SheshnaagService:
         self,
         *,
         manifest: dict[str, Any],
-        evidence_rows: list[EvidenceArtifact],
+        evidence_records: list[dict[str, Any]],
         detection_rows: list[DetectionArtifact],
         mitigation_rows: list[MitigationArtifact],
     ) -> dict[str, Any]:
@@ -4394,18 +4792,11 @@ class SheshnaagService:
                     default=str,
                 ),
             )
-            for row in evidence_rows:
+            for record in evidence_records:
                 archive.writestr(
-                    f"evidence/evidence-{row.id}.json",
+                    f"evidence/evidence-{record['id']}.json",
                     json.dumps(
-                        {
-                            "id": row.id,
-                            "artifact_kind": row.artifact_kind,
-                            "title": row.title,
-                            "summary": row.summary,
-                            "sha256": row.sha256,
-                            "payload": row.payload,
-                        },
+                        record,
                         indent=2,
                         sort_keys=True,
                         default=str,

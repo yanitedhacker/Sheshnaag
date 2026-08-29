@@ -55,7 +55,6 @@ def _fresh_case(sess, state: CaseLifecycleState) -> int:
         tenant_id=1,
         title="rt",
         analyst_name="rt",
-        status="open",
         lifecycle_state=state.value,
     )
     sess.add(case)

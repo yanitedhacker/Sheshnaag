@@ -6,14 +6,22 @@ import base64
 from datetime import timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.security import TokenData, verify_token
-from app.models.capability import AuthorizationArtifact
-from app.services.capability_policy import CapabilityPolicy, IssuanceRequest, Reviewer
+from app.models.capability import (
+    AuthorizationArtifact,
+    AuthorizationDecisionRecord,
+    AuthorizationRequestRecord,
+)
+from app.services.capability_policy import (
+    AuthorizationDecisionResult,
+    AuthorizationWorkflowError,
+    CapabilityPolicy,
+)
 
 router = APIRouter(prefix="/api/v4/authorization", tags=["Sheshnaag V4 Authorization"])
 
@@ -29,25 +37,28 @@ def _bound_actor(token_data: TokenData, fallback: str) -> str:
     return fallback
 
 
-class AuthorizationRequest(BaseModel):
+class PendingAuthorizationRequest(BaseModel):
     capability: str
-    scope: dict[str, Any] = Field(default_factory=dict)
-    requester: str
-    reason: str
-    reviewers: list[dict[str, Any]] = Field(default_factory=list)
-    requested_ttl_seconds: int | None = None
+    action: str
+    action_arguments: dict[str, Any]
+    requester: str = "ui"
+    reason: str = Field(min_length=4, max_length=2000)
+    requested_ttl_seconds: int | None = Field(
+        default=None,
+        gt=0,
+        le=31_536_000,
+    )
     engagement_ref: str | None = None
-    is_admin_approved: bool = False
-    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuthorizationDecisionRequest(BaseModel):
+    decision: str
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class RevokeRequest(BaseModel):
     actor: str
     reason: str
-
-
-class ApproveRequest(BaseModel):
-    reviewer: str
 
 
 def _artifact_payload(row: AuthorizationArtifact) -> dict[str, Any]:
@@ -68,6 +79,66 @@ def _artifact_payload(row: AuthorizationArtifact) -> dict[str, Any]:
     }
 
 
+def _request_payload(
+    row: AuthorizationRequestRecord,
+    *,
+    decisions: list[AuthorizationDecisionRecord] | None = None,
+) -> dict[str, Any]:
+    return {
+        "request_id": row.request_id,
+        "capability": row.capability,
+        "scope": row.scope or {},
+        "action": row.action,
+        "action_digest": row.action_digest,
+        "requester": row.requester,
+        "reason": row.reason,
+        "requested_ttl_seconds": row.requested_ttl_seconds,
+        "engagement_ref": row.engagement_ref,
+        "status": row.status,
+        "required_approvals": row.required_approvals,
+        "requires_admin_approval": row.requires_admin_approval,
+        "artifact_id": row.artifact_id,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        "decisions": [
+            {
+                "reviewer": item.reviewer,
+                "reviewer_roles": item.reviewer_roles or [],
+                "decision": item.decision,
+                "note": item.note,
+                "created_at": item.created_at.isoformat()
+                if item.created_at
+                else None,
+            }
+            for item in (decisions or [])
+        ],
+    }
+
+
+def _decision_payload(result: AuthorizationDecisionResult) -> dict[str, Any]:
+    payload = _request_payload(result.request)
+    payload["artifact"] = (
+        _artifact_payload(result.artifact) if result.artifact is not None else None
+    )
+    return payload
+
+
+def _raise_workflow_http(exc: AuthorizationWorkflowError) -> None:
+    code = exc.code
+    if code.startswith("unknown_request:"):
+        status_code = status.HTTP_404_NOT_FOUND
+    elif code.startswith("request_not_pending:") or code in {
+        "duplicate_reviewer_decision",
+        "requester_cannot_review",
+        "request_expired",
+    }:
+        status_code = status.HTTP_409_CONFLICT
+    else:
+        status_code = status.HTTP_400_BAD_REQUEST
+    raise HTTPException(status_code=status_code, detail=code) from exc
+
+
 @router.get("")
 def list_authorizations(
     capability: str | None = Query(None),
@@ -86,55 +157,118 @@ def list_authorizations(
     return {"items": [_artifact_payload(row) for row in rows], "count": len(rows)}
 
 
-@router.post("/request")
-def request_authorization(
-    request: AuthorizationRequest,
+@router.get("/requests")
+def list_authorization_requests(
+    capability: str | None = Query(None),
+    state: str | None = Query(None),
+    session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 - auth gate
+):
+    query = session.query(AuthorizationRequestRecord).order_by(
+        AuthorizationRequestRecord.created_at.desc()
+    )
+    if capability:
+        query = query.filter(AuthorizationRequestRecord.capability == capability)
+    if state:
+        query = query.filter(AuthorizationRequestRecord.status == state)
+    rows = query.limit(500).all()
+    request_ids = [row.request_id for row in rows]
+    decisions_by_request: dict[str, list[AuthorizationDecisionRecord]] = {
+        request_id: [] for request_id in request_ids
+    }
+    if request_ids:
+        decisions = (
+            session.query(AuthorizationDecisionRecord)
+            .filter(AuthorizationDecisionRecord.request_id.in_(request_ids))
+            .order_by(AuthorizationDecisionRecord.created_at.asc())
+            .all()
+        )
+        for decision in decisions:
+            decisions_by_request.setdefault(decision.request_id, []).append(decision)
+    return {
+        "items": [
+            _request_payload(
+                row,
+                decisions=decisions_by_request.get(row.request_id, []),
+            )
+            for row in rows
+        ],
+        "count": len(rows),
+    }
+
+
+@router.post("/requests", status_code=status.HTTP_201_CREATED)
+def create_authorization_request(
+    request: PendingAuthorizationRequest,
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),
 ):
-    reviewers = [
-        Reviewer(
-            reviewer=str(item.get("reviewer") or item.get("name") or ""),
-            decision=str(item.get("decision") or "approve"),
+    policy = CapabilityPolicy(session)
+    actor = _bound_actor(token_data, request.requester)
+    if actor != "anonymous" and not policy.permitted_requester_for(
+        request.capability, token_data.roles
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="requester_role_not_permitted",
         )
-        for item in request.reviewers
-    ]
     try:
-        artifact = CapabilityPolicy(session).issue(
-            IssuanceRequest(
-                capability=request.capability,
-                scope=request.scope,
-                requester=_bound_actor(token_data, request.requester),
-                reason=request.reason,
-                requested_ttl=timedelta(seconds=request.requested_ttl_seconds)
-                if request.requested_ttl_seconds
-                else None,
-                engagement_ref=request.engagement_ref,
-                is_admin_approved=request.is_admin_approved,
-                requester_roles=list(token_data.roles or []),
-                extra=request.extra,
-            ),
-            reviewers,
+        row = policy.create_request(
+            capability=request.capability,
+            action=request.action,
+            arguments=request.action_arguments,
+            requester=actor,
+            reason=request.reason,
+            requested_ttl=timedelta(seconds=request.requested_ttl_seconds)
+            if request.requested_ttl_seconds is not None
+            else None,
+            engagement_ref=request.engagement_ref,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _artifact_payload(artifact)
+    except AuthorizationWorkflowError as exc:
+        _raise_workflow_http(exc)
+    return _request_payload(row)
+
+
+@router.post("/requests/{request_id}/decisions")
+def decide_authorization_request(
+    request_id: str,
+    request: AuthorizationDecisionRequest,
+    session: Session = Depends(get_sync_session),
+    token_data: TokenData = Depends(verify_token),
+):
+    reviewer = (token_data.username or "").strip() or "anonymous"
+    try:
+        result = CapabilityPolicy(session).record_decision(
+            request_id,
+            reviewer=reviewer,
+            reviewer_roles=token_data.roles,
+            decision=request.decision,
+            note=request.note,
+        )
+    except AuthorizationWorkflowError as exc:
+        _raise_workflow_http(exc)
+    return _decision_payload(result)
+
+
+@router.post("/request")
+def removed_unsafe_authorization_request(
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 - auth gate
+):
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="unsafe_authorization_flow_removed",
+    )
 
 
 @router.post("/{artifact_id}/approve")
-def approve_authorization(
+def removed_artifact_approval(
     artifact_id: str,
-    request: ApproveRequest,
-    session: Session = Depends(get_sync_session),
-    token_data: TokenData = Depends(verify_token),
+    token_data: TokenData = Depends(verify_token),  # noqa: ARG001 - auth gate
 ):
-    artifact = session.get(AuthorizationArtifact, artifact_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="authorization_request_not_found")
-    payload = _artifact_payload(artifact)
-    payload["approval_status"] = "already_issued"
-    payload["approved_by"] = _bound_actor(token_data, request.reviewer)
-    return payload
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=f"artifact_approval_removed:{artifact_id}",
+    )
 
 
 @router.post("/{artifact_id}/revoke")

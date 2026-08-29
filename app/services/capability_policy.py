@@ -40,7 +40,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.models.capability import AuditLogEntry, AuthorizationArtifact
+from app.models.capability import (
+    AuditLogEntry,
+    AuthorizationArtifact,
+    AuthorizationDecisionRecord,
+    AuthorizationRequestRecord,
+)
 from app.models.malware_lab import ScopePolicy
 
 logger = logging.getLogger(__name__)
@@ -48,6 +53,8 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = "v4.1"
 GENESIS_HASH = b"\x00" * 32
 _DEFAULT_TTL = timedelta(days=30)
+_REQUEST_REVIEW_TTL = timedelta(hours=24)
+EXACT_ACTION_CAPABILITIES = frozenset({"autonomous_agent_run"})
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +275,22 @@ class VerificationResult:
     reason: str
 
 
+@dataclass(frozen=True)
+class AuthorizationDecisionResult:
+    """Result of one immutable reviewer decision."""
+
+    request: AuthorizationRequestRecord
+    artifact: Optional[AuthorizationArtifact]
+
+
+class AuthorizationWorkflowError(ValueError):
+    """Stable error raised for an invalid authorization transition."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
 # ---------------------------------------------------------------------------
 # Canonical JSON + helpers
 # ---------------------------------------------------------------------------
@@ -303,6 +326,46 @@ def canonical_json(body: Any) -> bytes:
     ).encode("utf-8")
 
 
+def exact_action_digest(action: str, arguments: dict[str, Any]) -> str:
+    """Return the SHA-256 digest for one validated action request."""
+
+    body = canonical_json({"action": action, "arguments": arguments})
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+def exact_action_scope(
+    action: str,
+    arguments: dict[str, Any],
+    *,
+    tenant_id: int,
+    case_id: Optional[int] = None,
+) -> dict[str, Any]:
+    """Build the capability scope that binds an artifact to one action."""
+
+    scope: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "action": action,
+        "action_digest": exact_action_digest(action, arguments),
+    }
+    if case_id is not None:
+        scope["case_id"] = case_id
+    return scope
+
+
+def _valid_exact_action_scope(capability: str, scope: dict[str, Any]) -> bool:
+    if scope.get("action") != capability:
+        return False
+    digest = scope.get("action_digest")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        return False
+    hexadecimal = digest.removeprefix("sha256:")
+    return (
+        len(hexadecimal) == 64
+        and hexadecimal == hexadecimal.lower()
+        and all(character in "0123456789abcdef" for character in hexadecimal)
+    )
+
+
 def _sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
@@ -328,6 +391,10 @@ class Signer(Protocol):
 
     def verify(self, body: bytes, signature: bytes, cert: bytes) -> bool:
         """Return True iff ``signature`` is valid for ``body`` under ``cert``."""
+
+
+class ProductionSignerUnavailable(RuntimeError):
+    """A secure deployment could not construct its required signer."""
 
 
 class HmacDevSigner:
@@ -393,16 +460,19 @@ class CosignSigner:
 
     name = "cosign-sigstore"
 
-    def __init__(self) -> None:
+    def __init__(self, *, allow_hmac_fallback: bool = True) -> None:
         try:
             import sigstore  # noqa: F401  # keep optional
 
             self._impl: Any = _SigstoreImpl()
         except Exception as exc:  # pragma: no cover — optional dep missing in dev
+            if not allow_hmac_fallback:
+                raise ProductionSignerUnavailable(
+                    f"sigstore_unavailable:{exc.__class__.__name__}"
+                ) from exc
             logger.warning(
                 "CosignSigner requested but sigstore unavailable (%s); "
-                "falling back to HmacDevSigner. Production deployments must "
-                "install 'sigstore>=3' so signatures land in Rekor.",
+                "falling back to HmacDevSigner for development only.",
                 exc,
             )
             self._impl = HmacDevSigner()
@@ -484,9 +554,25 @@ def build_signer() -> Signer:
     """Pick a signer based on the ``SHESHNAAG_AUDIT_SIGNER`` env var."""
 
     choice = os.getenv("SHESHNAAG_AUDIT_SIGNER", "hmac").strip().lower()
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    deployment_profile = os.getenv(
+        "DEPLOYMENT_PROFILE", "local_dev"
+    ).strip().lower()
+    secure_profiles = {
+        "design_partner_beta",
+        "full_v4_beta",
+        "release_verification",
+    }
+    secure_runtime = environment in {"staging", "production"} or (
+        deployment_profile in secure_profiles
+    )
+    if secure_runtime and choice != "cosign":
+        raise ProductionSignerUnavailable("cosign_required_for_secure_runtime")
     if choice == "cosign":
-        return CosignSigner()
-    return HmacDevSigner()
+        return CosignSigner(allow_hmac_fallback=not secure_runtime)
+    if choice == "hmac":
+        return HmacDevSigner()
+    raise ValueError(f"unknown_audit_signer:{choice}")
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +613,198 @@ class CapabilityPolicy:
             return True
         return bool(set(roles) & cap.requester_roles)
 
+    def create_request(
+        self,
+        *,
+        capability: str,
+        action: str,
+        arguments: dict[str, Any],
+        requester: str,
+        reason: str,
+        requested_ttl: Optional[timedelta] = None,
+        engagement_ref: Optional[str] = None,
+    ) -> AuthorizationRequestRecord:
+        """Create a pending request for one server-derived exact action."""
+
+        cap = CAPABILITIES.get(capability)
+        if cap is None:
+            raise AuthorizationWorkflowError(f"unknown_capability:{capability}")
+        if action != capability:
+            raise AuthorizationWorkflowError("action_must_match_capability")
+        if not isinstance(arguments, dict):
+            raise AuthorizationWorkflowError("action_arguments_must_be_object")
+        tenant_id = arguments.get("tenant_id")
+        if isinstance(tenant_id, bool) or not isinstance(tenant_id, int):
+            raise AuthorizationWorkflowError("tenant_id_required")
+        if cap.requires_engagement_doc and not engagement_ref:
+            raise AuthorizationWorkflowError("need_engagement_doc")
+
+        ttl = requested_ttl or cap.max_ttl
+        if ttl <= timedelta(0):
+            raise AuthorizationWorkflowError("requested_ttl_must_be_positive")
+        ttl = min(ttl, cap.max_ttl)
+        now = utc_now()
+        case_id = arguments.get("case_id")
+        if isinstance(case_id, bool) or (
+            case_id is not None and not isinstance(case_id, int)
+        ):
+            raise AuthorizationWorkflowError("case_id_must_be_integer")
+        scope = exact_action_scope(
+            action,
+            arguments,
+            tenant_id=tenant_id,
+            case_id=case_id,
+        )
+        required_approvals = 1 if cap.review_kind == "single" else 2
+        row = AuthorizationRequestRecord(
+            request_id="areq_" + uuid.uuid4().hex[:24],
+            capability=capability,
+            scope=scope,
+            action=action,
+            action_digest=scope["action_digest"],
+            requester=requester,
+            reason=reason,
+            requested_ttl_seconds=int(ttl.total_seconds()),
+            engagement_ref=engagement_ref,
+            status="pending",
+            required_approvals=required_approvals,
+            requires_admin_approval=cap.review_kind == "dual_plus_admin",
+            created_at=now,
+            expires_at=now + min(ttl, _REQUEST_REVIEW_TTL),
+        )
+        self._session.add(row)
+        self._session.flush()
+        self._append_audit_entry(
+            action="request",
+            actor=requester,
+            capability=capability,
+            artifact_id=None,
+            scope=scope,
+            payload={
+                "request_id": row.request_id,
+                "reason": reason,
+                "requested_ttl_seconds": row.requested_ttl_seconds,
+                "review_expires_at": row.expires_at.isoformat().replace(
+                    "+00:00", "Z"
+                ),
+            },
+        )
+        return row
+
+    def record_decision(
+        self,
+        request_id: str,
+        *,
+        reviewer: str,
+        reviewer_roles: Iterable[str],
+        decision: str,
+        note: Optional[str],
+    ) -> AuthorizationDecisionResult:
+        """Record one reviewer decision and issue when the threshold is met."""
+
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise AuthorizationWorkflowError("invalid_decision")
+        request_row = self._session.get(AuthorizationRequestRecord, request_id)
+        if request_row is None:
+            raise AuthorizationWorkflowError(f"unknown_request:{request_id}")
+        if request_row.status != "pending":
+            raise AuthorizationWorkflowError(
+                f"request_not_pending:{request_row.status}"
+            )
+        if _ensure_aware(request_row.expires_at) <= _ensure_aware(utc_now()):
+            raise AuthorizationWorkflowError("request_expired")
+        if reviewer == request_row.requester:
+            raise AuthorizationWorkflowError("requester_cannot_review")
+        duplicate = self._session.execute(
+            select(AuthorizationDecisionRecord)
+            .where(AuthorizationDecisionRecord.request_id == request_id)
+            .where(AuthorizationDecisionRecord.reviewer == reviewer)
+        ).scalars().first()
+        if duplicate is not None:
+            raise AuthorizationWorkflowError("duplicate_reviewer_decision")
+
+        roles = sorted({str(role) for role in reviewer_roles if str(role)})
+        decision_row = AuthorizationDecisionRecord(
+            request_id=request_id,
+            reviewer=reviewer,
+            reviewer_roles=roles,
+            decision=normalized_decision,
+            note=note,
+        )
+        self._session.add(decision_row)
+        self._session.flush()
+        self._append_audit_entry(
+            action=normalized_decision,
+            actor=reviewer,
+            capability=request_row.capability,
+            artifact_id=None,
+            scope=request_row.scope or {},
+            payload={
+                "request_id": request_id,
+                "note": note,
+                "reviewer_roles": roles,
+            },
+        )
+
+        if normalized_decision == "reject":
+            request_row.status = "rejected"
+            request_row.resolved_at = utc_now()
+            self._session.flush()
+            return AuthorizationDecisionResult(request_row, None)
+
+        approvals = self._session.execute(
+            select(AuthorizationDecisionRecord)
+            .where(AuthorizationDecisionRecord.request_id == request_id)
+            .where(AuthorizationDecisionRecord.decision == "approve")
+            .order_by(AuthorizationDecisionRecord.id.asc())
+        ).scalars().all()
+        enough_approvals = len(approvals) >= request_row.required_approvals
+        has_admin_approval = any(
+            "lab_lead" in set(row.reviewer_roles or []) for row in approvals
+        )
+        if not enough_approvals or (
+            request_row.requires_admin_approval and not has_admin_approval
+        ):
+            return AuthorizationDecisionResult(request_row, None)
+
+        reviewers = [
+            Reviewer(
+                reviewer=row.reviewer,
+                decision="approve",
+                signed_at=row.created_at,
+            )
+            for row in approvals
+        ]
+        issuance = IssuanceRequest(
+            capability=request_row.capability,
+            scope=request_row.scope or {},
+            requester=request_row.requester,
+            reason=request_row.reason,
+            requested_ttl=timedelta(
+                seconds=request_row.requested_ttl_seconds
+            )
+            if request_row.requested_ttl_seconds is not None
+            else None,
+            engagement_ref=request_row.engagement_ref,
+            is_admin_approved=has_admin_approval,
+            extra={
+                "request_id": request_id,
+                "action": request_row.action,
+                "action_digest": request_row.action_digest,
+            },
+        )
+        artifact = self._issue_artifact(
+            issuance,
+            reviewers,
+            audit_approvals=False,
+        )
+        request_row.status = "issued"
+        request_row.artifact_id = artifact.artifact_id
+        request_row.resolved_at = utc_now()
+        self._session.flush()
+        return AuthorizationDecisionResult(request_row, artifact)
+
     def evaluate(self, *, capability: str, scope: dict, actor: str) -> Decision:
         """Resolve ``(capability, scope, actor)`` against the active artifacts."""
 
@@ -543,9 +821,25 @@ class CapabilityPolicy:
             )
             return decision
 
+        if capability in EXACT_ACTION_CAPABILITIES and not _valid_exact_action_scope(
+            capability, scope
+        ):
+            decision = Decision(False, "exact_action_scope_required", None)
+            self._append_audit_entry(
+                action="deny",
+                actor=actor,
+                capability=capability,
+                artifact_id=None,
+                scope=scope,
+                payload={"reason": decision.reason},
+            )
+            return decision
+
         # Tenant-default fast path: if the tenant's ScopePolicy declares this
         # capability as pre-authorized, permit without an artifact.
-        if self._tenant_permits(capability, scope):
+        if capability not in EXACT_ACTION_CAPABILITIES and self._tenant_permits(
+            capability, scope
+        ):
             decision = Decision(True, "tenant_default", None)
             self._append_audit_entry(
                 action="exercise",
@@ -559,7 +853,12 @@ class CapabilityPolicy:
 
         artifact = self._find_active_artifact(capability, scope)
         if artifact is None:
-            decision = Decision(False, "no_active_artifact", None)
+            reason = (
+                "no_matching_exact_action_artifact"
+                if capability in EXACT_ACTION_CAPABILITIES
+                else "no_active_artifact"
+            )
+            decision = Decision(False, reason, None)
             self._append_audit_entry(
                 action="deny",
                 actor=actor,
@@ -587,6 +886,17 @@ class CapabilityPolicy:
         reviewers: list[Reviewer],
     ) -> AuthorizationArtifact:
         """Validate and persist an authorization artifact."""
+
+        return self._issue_artifact(request, reviewers, audit_approvals=True)
+
+    def _issue_artifact(
+        self,
+        request: IssuanceRequest,
+        reviewers: list[Reviewer],
+        *,
+        audit_approvals: bool,
+    ) -> AuthorizationArtifact:
+        """Issue an artifact from validated reviewer records."""
 
         cap = CAPABILITIES.get(request.capability)
         if cap is None:
@@ -696,19 +1006,20 @@ class CapabilityPolicy:
                 "engagement_ref": request.engagement_ref,
             },
         )
-        for reviewer in approving:
-            self._append_audit_entry(
-                action="approve",
-                actor=reviewer.reviewer,
-                capability=cap.name,
-                artifact_id=artifact_id,
-                scope=request.scope,
-                payload={
-                    "signed_at": _ensure_aware(reviewer.signed_at or issued_at)
-                    .isoformat()
-                    .replace("+00:00", "Z"),
-                },
-            )
+        if audit_approvals:
+            for reviewer in approving:
+                self._append_audit_entry(
+                    action="approve",
+                    actor=reviewer.reviewer,
+                    capability=cap.name,
+                    artifact_id=artifact_id,
+                    scope=request.scope,
+                    payload={
+                        "signed_at": _ensure_aware(reviewer.signed_at or issued_at)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                    },
+                )
 
         return artifact
 
@@ -949,6 +1260,16 @@ class CapabilityPolicy:
             .all()
         )
         for row in rows:
+            if capability in EXACT_ACTION_CAPABILITIES:
+                artifact_scope = row.scope or {}
+                if not _valid_exact_action_scope(capability, artifact_scope):
+                    continue
+                if artifact_scope.get("action") != scope.get("action"):
+                    continue
+                if artifact_scope.get("action_digest") != scope.get(
+                    "action_digest"
+                ):
+                    continue
             if self._scope_matches(row.scope or {}, scope or {}):
                 return row
         return None
@@ -992,7 +1313,10 @@ class CapabilityPolicy:
 
 
 __all__ = [
+    "AuthorizationDecisionResult",
+    "AuthorizationWorkflowError",
     "CAPABILITIES",
+    "EXACT_ACTION_CAPABILITIES",
     "Capability",
     "CapabilityPolicy",
     "CosignSigner",
@@ -1001,9 +1325,12 @@ __all__ = [
     "HmacDevSigner",
     "IssuanceRequest",
     "Reviewer",
+    "ProductionSignerUnavailable",
     "SCHEMA_VERSION",
     "Signer",
     "VerificationResult",
     "build_signer",
     "canonical_json",
+    "exact_action_digest",
+    "exact_action_scope",
 ]

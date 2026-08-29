@@ -10,7 +10,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.routes.autonomous_routes import router as autonomous_router
 from app.core.database import Base, get_sync_session
+from app.models.sheshnaag import AutonomousAgentRun
 from app.models.v2 import Tenant
+from app.services.capability_policy import (
+    CapabilityPolicy,
+    HmacDevSigner,
+    IssuanceRequest,
+    Reviewer,
+    exact_action_scope,
+)
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -42,23 +50,46 @@ def teardown_module() -> None:
     Base.metadata.drop_all(bind=engine)
 
 
-def test_run_autonomous_agent_completes_with_tenant_default(monkeypatch):
-    # No capability artifact and no scope policy means the agent reaches the
-    # synthesis step but the policy returns "no_active_artifact" and we
-    # tolerate that as a deny. We assert that the run object is well-formed.
+def test_run_autonomous_agent_returns_only_committed_completion():
+    goal = "Summarise the active findings and ATT&CK posture."
     session = TestingSession()
     try:
         tenant = Tenant(slug="agent-test", name="agent-test")
         session.add(tenant)
+        session.flush()
+        arguments = {
+            "tenant_id": tenant.id,
+            "goal": goal,
+            "case_id": None,
+            "max_steps": 3,
+        }
+        scope = exact_action_scope(
+            "autonomous_agent_run",
+            arguments,
+            tenant_id=tenant.id,
+        )
+        artifact = CapabilityPolicy(
+            session,
+            signer=HmacDevSigner(key=b"autonomous-route-test-key"),
+        ).issue(
+            IssuanceRequest(
+                capability="autonomous_agent_run",
+                scope=scope,
+                requester="analyst@example.com",
+                reason="Route durability test.",
+            ),
+            [Reviewer("reviewer@example.com", "approve")],
+        )
         session.commit()
         slug = tenant.slug
+        artifact_id = artifact.artifact_id
     finally:
         session.close()
 
     response = client.post(
         "/api/v4/autonomous/run",
         json={
-            "goal": "Summarise the active findings and ATT&CK posture.",
+            "goal": goal,
             "tenant_slug": slug,
             "actor": "tester",
             "max_steps": 3,
@@ -67,10 +98,23 @@ def test_run_autonomous_agent_completes_with_tenant_default(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["goal"].startswith("Summarise")
-    assert body["status"] in {"completed", "denied"}
-    # Even on deny we want a stable shape.
-    assert "run_id" in body
-    assert "steps" in body
+    assert body["status"] == "completed"
+    assert body["disposition"]["code"] == "completed_read_only"
+    assert body["authorization_artifact_id"] == artifact_id
+    assert body["action_digest"] == scope["action_digest"]
+
+    verification_session = TestingSession()
+    try:
+        durable = (
+            verification_session.query(AutonomousAgentRun)
+            .filter_by(run_id=body["run_id"])
+            .one()
+        )
+        assert durable.status == "completed"
+        assert durable.authorization_artifact_id == artifact_id
+        assert durable.action_digest == scope["action_digest"]
+    finally:
+        verification_session.close()
 
 
 def test_list_autonomous_runs_returns_history(monkeypatch):
@@ -78,3 +122,69 @@ def test_list_autonomous_runs_returns_history(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["count"] >= 1
+    assert body["replay"] == {
+        "disposition": "bounded",
+        "limit": 50,
+        "maximum_limit": 100,
+    }
+
+
+def test_autonomous_replay_limit_is_bounded_by_api():
+    session = TestingSession()
+    try:
+        tenant = session.query(Tenant).filter(Tenant.slug == "agent-replay-limit").first()
+        if tenant is None:
+            tenant = Tenant(slug="agent-replay-limit", name="agent-replay-limit")
+            session.add(tenant)
+            session.commit()
+        slug = tenant.slug
+    finally:
+        session.close()
+
+    response = client.get(
+        "/api/v4/autonomous/runs",
+        params={"tenant_slug": slug, "limit": 101},
+    )
+
+    assert response.status_code == 422
+
+
+def test_autonomous_commit_failure_returns_503():
+    session = TestingSession()
+    try:
+        tenant = Tenant(slug="agent-commit-failure", name="agent-commit-failure")
+        session.add(tenant)
+        session.commit()
+        slug = tenant.slug
+    finally:
+        session.close()
+
+    def override_failing_commit_session():
+        failing_session = TestingSession()
+
+        def fail_commit():
+            raise RuntimeError("commit unavailable")
+
+        failing_session.commit = fail_commit  # type: ignore[method-assign]
+        try:
+            yield failing_session
+        finally:
+            failing_session.rollback()
+            failing_session.close()
+
+    test_app.dependency_overrides[get_sync_session] = override_failing_commit_session
+    try:
+        response = client.post(
+            "/api/v4/autonomous/run",
+            json={
+                "goal": "Persist the denial before the API returns.",
+                "tenant_slug": slug,
+                "actor": "tester",
+                "max_steps": 3,
+            },
+        )
+    finally:
+        test_app.dependency_overrides[get_sync_session] = override_get_sync_session
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "autonomous_run_persistence_unavailable"
