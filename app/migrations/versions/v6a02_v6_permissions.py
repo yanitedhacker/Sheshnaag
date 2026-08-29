@@ -5,20 +5,27 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
+from app.migrations.rbac_catalog import (
+    V6_GRANT_TO_ROLES,
+    V6_PERMISSIONS,
+    ensure_current_rbac_catalog,
+)
+
 
 revision = "v6a02"
 down_revision = "v6a01"
 branch_labels = None
 depends_on = None
 
-NEW_PERMISSIONS = (
-    ("purple.replay", "Run purple-team ART/Caldera replay"),
-    ("research.write", "Use offensive research workbench"),
-)
-GRANT_TO_ROLES = ("senior_analyst", "lab_lead")
+NEW_PERMISSIONS = V6_PERMISSIONS
+GRANT_TO_ROLES = V6_GRANT_TO_ROLES
 
 
 def upgrade() -> None:
+    if not op.get_context().as_sql:
+        ensure_current_rbac_catalog(op.get_bind())
+        return
+
     permission_table = sa.table(
         "permissions",
         sa.column("name", sa.String),
@@ -44,7 +51,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     for perm, _ in NEW_PERMISSIONS:
         op.execute(
-            sa.text("DELETE FROM role_permissions WHERE permission_name = :p"),
-            {"p": perm},
+            sa.text(
+                "DELETE FROM role_permissions WHERE permission_name = :p"
+            ).bindparams(p=perm)
         )
-        op.execute(sa.text("DELETE FROM permissions WHERE name = :p"), {"p": perm})
+        op.execute(
+            sa.text("DELETE FROM permissions WHERE name = :p").bindparams(p=perm)
+        )
