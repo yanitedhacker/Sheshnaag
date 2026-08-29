@@ -12,7 +12,12 @@ from app.services.proof_receipts import (
 )
 
 
-def _write_receipt(tmp_path, *, status: str = "passed"):
+def _write_receipt(
+    tmp_path,
+    *,
+    status: str = "passed",
+    deployment_profile: str = "design_partner_beta",
+):
     artifact = tmp_path / "runtime.log"
     artifact.write_text("bounded runtime evidence\n", encoding="utf-8")
     key_path = tmp_path / "proof.key"
@@ -23,7 +28,7 @@ def _write_receipt(tmp_path, *, status: str = "passed"):
         subject={
             "system": "sheshnaag",
             "git_commit": "a" * 40,
-            "deployment_profile": "design_partner_beta",
+            "deployment_profile": deployment_profile,
         },
         checks=[
             {
@@ -125,3 +130,20 @@ def test_cryptographically_valid_blocked_receipt_does_not_pass(tmp_path):
 
     assert result["status"] == "blocked"
     assert result["errors"] == ["receipt.status.blocked"]
+
+
+def test_beta_verifier_rejects_local_development_receipt(tmp_path):
+    receipt_path, _artifact, key = _write_receipt(
+        tmp_path,
+        deployment_profile="local_dev",
+    )
+
+    result = verify_proof_receipt(
+        receipt_path,
+        expected_proof_class="autonomous_agent",
+        expected_git_commit="a" * 40,
+        trusted_fingerprint=key["fingerprint"],
+    )
+
+    assert result["status"] == "blocked"
+    assert result["errors"] == ["receipt.deployment_profile_mismatch"]

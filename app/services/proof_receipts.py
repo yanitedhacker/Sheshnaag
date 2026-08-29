@@ -174,6 +174,7 @@ def verify_proof_receipt(
     expected_proof_class: str,
     expected_git_commit: str,
     trusted_fingerprint: str,
+    expected_deployment_profile: str = "design_partner_beta",
 ) -> dict[str, Any]:
     """Verify receipt trust, subject, signature, and every evidence artifact."""
 
@@ -202,6 +203,11 @@ def verify_proof_receipt(
     subject = receipt.get("subject")
     if not isinstance(subject, dict) or subject.get("git_commit") != expected_git_commit:
         errors.append("receipt.git_commit_mismatch")
+    if (
+        not isinstance(subject, dict)
+        or subject.get("deployment_profile") != expected_deployment_profile
+    ):
+        errors.append("receipt.deployment_profile_mismatch")
 
     integrity = receipt.get("integrity")
     if not isinstance(integrity, dict):
