@@ -11,7 +11,7 @@ from typing import Any, Optional, List
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+import jwt
 from pydantic import BaseModel
 
 try:
@@ -121,12 +121,12 @@ def decode_token(token: str) -> dict:
             algorithms=[settings.algorithm]
         )
         return payload
-    except JWTError as e:
+    except jwt.InvalidTokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from e
 
 
 def verify_token(
