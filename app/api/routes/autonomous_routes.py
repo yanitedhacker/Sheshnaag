@@ -86,6 +86,7 @@ def run_autonomous_agent(
 def list_autonomous_runs(
     tenant_slug: Optional[str] = Query(None),
     tenant_id: Optional[int] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
     session: Session = Depends(get_sync_session),
     token_data: TokenData = Depends(verify_token),  # noqa: ARG001 — gate only
 ):
@@ -93,10 +94,18 @@ def list_autonomous_runs(
         session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False
     )
     try:
-        runs = AutonomousAgent(session).list_runs(tenant=tenant)
+        runs = AutonomousAgent(session).list_runs(tenant=tenant, limit=limit)
     except AgentReplayError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="autonomous_run_replay_unavailable",
         ) from exc
-    return {"items": runs, "count": len(runs)}
+    return {
+        "items": runs,
+        "count": len(runs),
+        "replay": {
+            "disposition": "bounded",
+            "limit": limit,
+            "maximum_limit": 100,
+        },
+    }

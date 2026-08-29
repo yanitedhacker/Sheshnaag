@@ -91,6 +91,98 @@ CANDIDATE_STATUS_TRANSITIONS: Dict[str, set] = {
     "duplicate": set(),
     "archived": {"queued"},
 }
+
+_EXPORT_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "credential",
+        "credentials",
+        "password",
+        "passwd",
+        "private_key",
+        "secret",
+        "secret_key",
+        "session_cookie",
+        "token",
+    }
+)
+
+_ATTACHMENT_DEFAULTS: Dict[str, Dict[str, bool]] = {
+    "vendor_disclosure": {
+        "include_raw_logs": False,
+        "include_pcap": False,
+        "include_screenshots": False,
+    },
+    "bug_bounty": {
+        "include_raw_logs": False,
+        "include_pcap": False,
+        "include_screenshots": True,
+    },
+    "research_submission": {
+        "include_raw_logs": True,
+        "include_pcap": False,
+        "include_screenshots": True,
+    },
+    "internal_remediation": {
+        "include_raw_logs": True,
+        "include_pcap": False,
+        "include_screenshots": True,
+    },
+}
+
+
+def _export_policy_key(artifact_kind: str) -> Optional[str]:
+    if artifact_kind == "service_logs":
+        return "include_raw_logs"
+    if artifact_kind == "pcap":
+        return "include_pcap"
+    if artifact_kind in {"screenshot", "screenshots", "screen_capture"}:
+        return "include_screenshots"
+    return None
+
+
+def _redact_export_value(
+    value: Any,
+    *,
+    path: str,
+    redactions: List[Dict[str, str]],
+) -> Any:
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            normalized = key_text.strip().lower().replace("-", "_")
+            child_path = f"{path}.{key_text}"
+            if normalized in _EXPORT_SENSITIVE_KEYS:
+                result[key_text] = "[REDACTED]"
+                redactions.append(
+                    {
+                        "path": child_path,
+                        "disposition": "redacted_sensitive_key",
+                    }
+                )
+            else:
+                result[key_text] = _redact_export_value(
+                    item,
+                    path=child_path,
+                    redactions=redactions,
+                )
+        return result
+    if isinstance(value, list):
+        return [
+            _redact_export_value(
+                item,
+                path=f"{path}[{index}]",
+                redactions=redactions,
+            )
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
 @dataclass
 class RunArtifacts:
     """In-memory run outputs before persistence."""
@@ -2123,6 +2215,11 @@ class SheshnaagService:
         if warnings and not confirm_external_export:
             raise ValueError("Bundle requires explicit external export confirmation for sensitive evidence.")
 
+        export_controls = self._prepare_export_evidence(
+            bundle_type=bundle_type,
+            evidence_rows=evidence_rows,
+            attachment_policy=attachment_policy or {},
+        )
         manifest = self._build_bundle_manifest(
             run=run,
             bundle_type=bundle_type,
@@ -2131,13 +2228,13 @@ class SheshnaagService:
             evidence_rows=evidence_rows,
             artifacts=selected_artifacts,
             redaction_notes=redaction_notes or [],
-            attachment_policy=attachment_policy or {},
+            export_controls=export_controls,
             warnings=warnings,
             review_checklist=review_checklist or {},
         )
         archive = self._write_bundle_archive(
             manifest=manifest,
-            evidence_rows=evidence_rows,
+            evidence_records=export_controls["archive_records"],
             detection_rows=[row for row in selected_artifacts if isinstance(row, DetectionArtifact)],
             mitigation_rows=[row for row in selected_artifacts if isinstance(row, MitigationArtifact)],
         )
@@ -3615,6 +3712,100 @@ class SheshnaagService:
             ]
         )
 
+    def _prepare_export_evidence(
+        self,
+        *,
+        bundle_type: str,
+        evidence_rows: List[EvidenceArtifact],
+        attachment_policy: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        defaults = _ATTACHMENT_DEFAULTS.get(
+            bundle_type,
+            _ATTACHMENT_DEFAULTS["vendor_disclosure"],
+        )
+        for key in defaults:
+            if key in attachment_policy and not isinstance(
+                attachment_policy[key],
+                bool,
+            ):
+                raise ValueError(
+                    f"attachment_policy_boolean_required:{key}"
+                )
+        effective_policy = {**defaults, **attachment_policy}
+        inventory: List[Dict[str, Any]] = []
+        archive_records: List[Dict[str, Any]] = []
+        automatic_redactions: List[Dict[str, str]] = []
+
+        for row in evidence_rows:
+            policy_key = _export_policy_key(row.artifact_kind)
+            included = True if policy_key is None else bool(effective_policy.get(policy_key, False))
+            if not included:
+                inventory.append(
+                    {
+                        "evidence_id": row.id,
+                        "kind": row.artifact_kind,
+                        "title": row.title,
+                        "include": False,
+                        "disposition": "excluded_by_policy",
+                        "policy_key": policy_key,
+                        "reason": f"Attachment policy set {policy_key}=false.",
+                    }
+                )
+                continue
+
+            record_redactions: List[Dict[str, str]] = []
+            payload = _redact_export_value(
+                row.payload or {},
+                path=f"evidence.{row.id}.payload",
+                redactions=record_redactions,
+            )
+            automatic_redactions.extend(record_redactions)
+            export_payload_sha256 = hashlib.sha256(
+                json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            archive_records.append(
+                {
+                    "id": row.id,
+                    "artifact_kind": row.artifact_kind,
+                    "title": row.title,
+                    "summary": row.summary,
+                    "source_sha256": row.sha256,
+                    "export_payload_sha256": export_payload_sha256,
+                    "payload": payload,
+                }
+            )
+            inventory.append(
+                {
+                    "evidence_id": row.id,
+                    "kind": row.artifact_kind,
+                    "title": row.title,
+                    "include": True,
+                    "disposition": (
+                        "included_redacted"
+                        if record_redactions
+                        else "included_unchanged"
+                    ),
+                    "policy_key": policy_key,
+                    "reason": (
+                        "Included after automatic sensitive-key redaction."
+                        if record_redactions
+                        else "Included by attachment policy."
+                    ),
+                }
+            )
+
+        return {
+            "attachment_policy": effective_policy,
+            "attachment_inventory": inventory,
+            "archive_records": archive_records,
+            "automatic_redactions": automatic_redactions,
+        }
+
     def _build_bundle_manifest(
         self,
         *,
@@ -3625,21 +3816,12 @@ class SheshnaagService:
         evidence_rows: List[EvidenceArtifact],
         artifacts: List[Any],
         redaction_notes: List[Dict[str, Any]],
-        attachment_policy: List[Dict[str, Any]] | Dict[str, Any],
+        export_controls: Dict[str, Any],
         warnings: List[str],
         review_checklist: Dict[str, Any],
     ) -> Dict[str, Any]:
         reproduction_steps = self._build_reproduction_steps(run=run, evidence_rows=evidence_rows)
-        attachment_defaults = {
-            "vendor_disclosure": {"include_raw_logs": False, "include_pcap": False, "include_screenshots": False},
-            "bug_bounty": {"include_raw_logs": False, "include_pcap": False, "include_screenshots": True},
-            "research_submission": {"include_raw_logs": True, "include_pcap": False, "include_screenshots": True},
-            "internal_remediation": {"include_raw_logs": True, "include_pcap": False, "include_screenshots": True},
-        }
-        effective_attachment_policy = {
-            **attachment_defaults.get(bundle_type, attachment_defaults["vendor_disclosure"]),
-            **(attachment_policy if isinstance(attachment_policy, dict) else {}),
-        }
+        effective_attachment_policy = export_controls["attachment_policy"]
         report_sections = {
             "summary": True,
             "impact_summary": True,
@@ -3650,19 +3832,19 @@ class SheshnaagService:
             "redaction_log": True,
             "provenance_summary": True,
         }
-        attachment_inventory = [
-            {
-                "kind": row.artifact_kind,
-                "title": row.title,
-                "include": effective_attachment_policy.get(
-                    "include_raw_logs" if row.artifact_kind == "service_logs" else (
-                        "include_pcap" if row.artifact_kind == "pcap" else "include_screenshots"
-                    ),
-                    True,
-                ),
-                "reason": "Included by attachment policy." if effective_attachment_policy else "Included by default.",
-            }
-            for row in evidence_rows
+        attachment_inventory = export_controls["attachment_inventory"]
+        included_ids = {
+            row["evidence_id"]
+            for row in attachment_inventory
+            if row["include"]
+        }
+        included_evidence_rows = [
+            row for row in evidence_rows if row.id in included_ids
+        ]
+        automatic_redactions = export_controls["automatic_redactions"]
+        manual_notes = [
+            {**note, "disposition": "review_note_only"}
+            for note in redaction_notes
         ]
         return {
             "title": title,
@@ -3691,15 +3873,17 @@ class SheshnaagService:
             },
             "redaction_notes": redaction_notes,
             "redaction_log": {
-                "count": len(redaction_notes),
-                "items": redaction_notes,
+                "count": len(automatic_redactions) + len(manual_notes),
+                "automatic": automatic_redactions,
+                "manual_notes": manual_notes,
             },
             "reproduction_steps": reproduction_steps,
             "impact_summary": {
                 "candidate_id": run.candidate_id,
                 "warning_count": len(warnings),
                 "artifact_count": len(artifacts),
-                "evidence_count": len(evidence_rows),
+                "evidence_count": len(included_evidence_rows),
+                "excluded_evidence_count": len(evidence_rows) - len(included_evidence_rows),
             },
             "fix_guidance": [row.title for row in artifacts if isinstance(row, MitigationArtifact)],
             "provenance_summary": {
@@ -3715,10 +3899,14 @@ class SheshnaagService:
                     "artifact_kind": row.artifact_kind,
                     "title": row.title,
                     "summary": row.summary,
-                    "sha256": row.sha256,
-                    "storage_path": row.storage_path,
+                    "source_sha256": row.sha256,
+                    "disposition": next(
+                        item["disposition"]
+                        for item in attachment_inventory
+                        if item["evidence_id"] == row.id
+                    ),
                 }
-                for row in evidence_rows
+                for row in included_evidence_rows
             ],
             "artifacts": [
                 self._detection_artifact_payload(row) if isinstance(row, DetectionArtifact) else self._mitigation_artifact_payload(row)
@@ -3728,7 +3916,7 @@ class SheshnaagService:
                 bundle_type=bundle_type,
                 title=title,
                 run=run,
-                evidence_rows=evidence_rows,
+                evidence_rows=included_evidence_rows,
                 artifacts=artifacts,
                 warnings=warnings,
                 reproduction_steps=reproduction_steps,
@@ -3739,7 +3927,7 @@ class SheshnaagService:
         self,
         *,
         manifest: Dict[str, Any],
-        evidence_rows: List[EvidenceArtifact],
+        evidence_records: List[Dict[str, Any]],
         detection_rows: List[DetectionArtifact],
         mitigation_rows: List[MitigationArtifact],
     ) -> Dict[str, Any]:
@@ -3755,18 +3943,11 @@ class SheshnaagService:
             archive.writestr("impact-summary.json", json.dumps(manifest.get("impact_summary") or {}, indent=2, sort_keys=True, default=str))
             archive.writestr("provenance-summary.json", json.dumps(manifest.get("provenance_summary") or {}, indent=2, sort_keys=True, default=str))
             archive.writestr("attachment-inventory.json", json.dumps(manifest.get("attachment_inventory") or [], indent=2, sort_keys=True, default=str))
-            for row in evidence_rows:
+            for record in evidence_records:
                 archive.writestr(
-                    f"evidence/evidence-{row.id}.json",
+                    f"evidence/evidence-{record['id']}.json",
                     json.dumps(
-                        {
-                            "id": row.id,
-                            "artifact_kind": row.artifact_kind,
-                            "title": row.title,
-                            "summary": row.summary,
-                            "sha256": row.sha256,
-                            "payload": row.payload,
-                        },
+                        record,
                         indent=2,
                         sort_keys=True,
                         default=str,

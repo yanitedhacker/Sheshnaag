@@ -33,6 +33,9 @@ P0_INTEGRITY_TESTS = (
     "tests/unit/test_autonomous_agent_fail_closed.py::test_run_flush_failure_raises_and_creates_no_replay_entry",
     "tests/integration/test_autonomous_routes.py::test_autonomous_commit_failure_returns_503",
     "tests/integration/test_autonomous_routes.py::test_run_autonomous_agent_returns_only_committed_completion",
+    "tests/unit/test_disclosure_export_controls.py::test_bundle_excludes_raw_logs_and_redacts_included_payloads",
+    "tests/unit/test_autonomous_replay_bounds.py::test_autonomous_replay_has_hard_service_limit_and_tenant_scope",
+    "tests/integration/test_autonomous_routes.py::test_autonomous_replay_limit_is_bounded_by_api",
 )
 
 

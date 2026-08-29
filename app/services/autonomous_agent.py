@@ -450,7 +450,7 @@ class AutonomousAgent:
                 self.session.query(AutonomousAgentRun)
                 .filter(AutonomousAgentRun.tenant_id == tenant.id)
                 .order_by(AutonomousAgentRun.created_at.desc())
-                .limit(max(1, min(limit, 500)))
+                .limit(max(1, min(limit, 100)))
                 .all()
             )
         except Exception as exc:

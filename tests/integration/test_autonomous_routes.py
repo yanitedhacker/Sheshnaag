@@ -123,6 +123,31 @@ def test_list_autonomous_runs_returns_history(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["count"] >= 1
+    assert body["replay"] == {
+        "disposition": "bounded",
+        "limit": 50,
+        "maximum_limit": 100,
+    }
+
+
+def test_autonomous_replay_limit_is_bounded_by_api():
+    session = TestingSession()
+    try:
+        tenant = session.query(Tenant).filter(Tenant.slug == "agent-replay-limit").first()
+        if tenant is None:
+            tenant = Tenant(slug="agent-replay-limit", name="agent-replay-limit")
+            session.add(tenant)
+            session.commit()
+        slug = tenant.slug
+    finally:
+        session.close()
+
+    response = client.get(
+        "/api/v4/autonomous/runs",
+        params={"tenant_slug": slug, "limit": 101},
+    )
+
+    assert response.status_code == 422
 
 
 def test_autonomous_commit_failure_returns_503():
