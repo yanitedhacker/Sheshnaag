@@ -1,5 +1,7 @@
 """Unit coverage for v2 provider and trusted image selection."""
 
+from pathlib import Path
+
 import pytest
 
 from app.lab.docker_kali_provider import DockerKaliProvider
@@ -62,3 +64,12 @@ def test_untrusted_image_is_rejected():
             requested_image="docker.io/library/alpine:latest",
             collectors=["process_tree"],
         )
+
+
+@pytest.mark.unit
+def test_osquery_image_explicitly_installs_collector_runtime_tools():
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "lab/images/osquery/Dockerfile").read_text(encoding="utf-8")
+
+    for package in ("bash", "coreutils", "findutils", "procps"):
+        assert package in dockerfile

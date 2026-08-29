@@ -26,6 +26,21 @@ from scripts.sheshnaag_smoke_worker import (
     process_queued_run,
 )
 
+OSQUERY_SMOKE_HOLD_SECONDS = 30
+
+
+def osquery_smoke_command() -> list[str]:
+    """Keep the guest alive for all curated osquery and baseline collectors."""
+
+    return [
+        "bash",
+        "-lc",
+        (
+            "echo osquery-smoke > /workspace/osquery-smoke.txt && "
+            f"sleep {OSQUERY_SMOKE_HOLD_SECONDS}"
+        ),
+    ]
+
 
 def docker_ready() -> bool:
     try:
@@ -97,7 +112,7 @@ def main() -> int:
             created_by="osquery Smoke",
             content={
                 "base_image": image,
-                "command": ["bash", "-lc", "echo osquery-smoke > /workspace/osquery-smoke.txt && sleep 5"],
+                "command": osquery_smoke_command(),
                 "network_policy": {"allow_egress_hosts": []},
                 "collectors": ["process_tree", "osquery_snapshot", "file_diff"],
             },

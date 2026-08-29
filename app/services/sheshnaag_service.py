@@ -92,6 +92,38 @@ CANDIDATE_STATUS_TRANSITIONS: Dict[str, set] = {
     "archived": {"queued"},
 }
 
+
+def evidence_collection_statuses(
+    evidence_rows: Iterable[EvidenceArtifact],
+    *,
+    limit: int = 12,
+) -> List[str]:
+    """Return bounded collector health details for worker failure diagnostics."""
+
+    statuses: List[str] = []
+    for item in list(evidence_rows)[: max(0, limit)]:
+        payload = item.payload if isinstance(item.payload, dict) else {}
+        health = payload.get("collector_health")
+        health = health if isinstance(health, dict) else {}
+        state = str(
+            payload.get("collection_state")
+            or health.get("status")
+            or "unknown"
+        ).strip().lower()
+        entry = f"{item.artifact_kind}:{state}"
+        if state not in {"live", "ok"}:
+            detail = str(
+                health.get("error")
+                or payload.get("message")
+                or payload.get("reason")
+                or ""
+            )
+            detail = " ".join(detail.split())[:160]
+            if detail:
+                entry = f"{entry}:{detail}"
+        statuses.append(entry)
+    return statuses
+
 _EXPORT_SENSITIVE_KEYS = frozenset(
     {
         "api_key",
@@ -1417,9 +1449,14 @@ class SheshnaagService:
                 in {"live", "ok"}
             )
             if not evidence_rows or live_evidence_count < 1:
+                status_summary = "; ".join(
+                    evidence_collection_statuses(evidence_rows)
+                )
                 raise RuntimeError(
                     "Queued execution produced no live evidence; "
-                    f"evidence_count={len(evidence_rows)} live_evidence_count={live_evidence_count}."
+                    f"evidence_count={len(evidence_rows)} "
+                    f"live_evidence_count={live_evidence_count} "
+                    f"statuses=[{status_summary}]."
                 )
 
             if run.state == RunState.RUNNING.value:

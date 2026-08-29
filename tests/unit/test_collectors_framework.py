@@ -20,6 +20,12 @@ from app.lab.collectors.tracee_collector import TraceeEventsCollector
 from app.lab.collectors import instantiate_collectors
 from app.lab.collectors.registry import COLLECTOR_REGISTRY
 from app.lab.docker_kali_provider import DEFAULT_KALI_IMAGE, DockerKaliProvider
+from app.models.sheshnaag import EvidenceArtifact
+from app.services.sheshnaag_service import evidence_collection_statuses
+from scripts.sheshnaag_osquery_smoke import (
+    OSQUERY_SMOKE_HOLD_SECONDS,
+    osquery_smoke_command,
+)
 
 
 @pytest.mark.unit
@@ -260,3 +266,41 @@ def test_pcap_payload_marks_sensitive_bounded_capture(monkeypatch):
     assert payload["capture_policy"]["bounded_capture"] is True
     assert payload["review_sensitivity"]["external_export_requires_confirmation"] is True
     assert payload["storage"]["contains_raw_payload"] is True
+
+
+@pytest.mark.unit
+def test_osquery_smoke_keeps_guest_alive_for_collection_window():
+    assert OSQUERY_SMOKE_HOLD_SECONDS >= 30
+    assert osquery_smoke_command()[-1].endswith(
+        f"sleep {OSQUERY_SMOKE_HOLD_SECONDS}"
+    )
+
+
+@pytest.mark.unit
+def test_evidence_status_diagnostics_are_bounded_and_actionable():
+    rows = [
+        EvidenceArtifact(
+            artifact_kind="process_tree",
+            payload={
+                "collection_state": "error",
+                "collector_health": {
+                    "status": "error",
+                    "error": "docker exec failed: container stopped",
+                },
+            },
+        ),
+        EvidenceArtifact(
+            artifact_kind="osquery_snapshot",
+            payload={
+                "collection_state": "live",
+                "collector_health": {"status": "ok"},
+            },
+        ),
+    ]
+
+    statuses = evidence_collection_statuses(rows)
+
+    assert statuses == [
+        "process_tree:error:docker exec failed: container stopped",
+        "osquery_snapshot:live",
+    ]
