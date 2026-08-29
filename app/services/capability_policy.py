@@ -39,7 +39,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.models.capability import AuditLogEntry, AuthorizationArtifact
+from app.models.capability import (
+    AuditLogEntry,
+    AuthorizationArtifact,
+    AuthorizationDecisionRecord,
+    AuthorizationRequestRecord,
+)
 from app.models.malware_lab import ScopePolicy
 
 logger = logging.getLogger(__name__)
@@ -47,6 +52,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = "v4.1"
 GENESIS_HASH = b"\x00" * 32
 _DEFAULT_TTL = timedelta(days=30)
+_REQUEST_REVIEW_TTL = timedelta(hours=24)
 EXACT_ACTION_CAPABILITIES = frozenset({"autonomous_agent_run"})
 
 
@@ -265,6 +271,22 @@ class VerificationResult:
     last_verified_idx: int
     first_bad_idx: Optional[int]
     reason: str
+
+
+@dataclass(frozen=True)
+class AuthorizationDecisionResult:
+    """Result of one immutable reviewer decision."""
+
+    request: AuthorizationRequestRecord
+    artifact: Optional[AuthorizationArtifact]
+
+
+class AuthorizationWorkflowError(ValueError):
+    """Stable error raised for an invalid authorization transition."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +576,198 @@ class CapabilityPolicy:
             return True
         return bool(set(roles) & cap.requester_roles)
 
+    def create_request(
+        self,
+        *,
+        capability: str,
+        action: str,
+        arguments: dict[str, Any],
+        requester: str,
+        reason: str,
+        requested_ttl: Optional[timedelta] = None,
+        engagement_ref: Optional[str] = None,
+    ) -> AuthorizationRequestRecord:
+        """Create a pending request for one server-derived exact action."""
+
+        cap = CAPABILITIES.get(capability)
+        if cap is None:
+            raise AuthorizationWorkflowError(f"unknown_capability:{capability}")
+        if action != capability:
+            raise AuthorizationWorkflowError("action_must_match_capability")
+        if not isinstance(arguments, dict):
+            raise AuthorizationWorkflowError("action_arguments_must_be_object")
+        tenant_id = arguments.get("tenant_id")
+        if isinstance(tenant_id, bool) or not isinstance(tenant_id, int):
+            raise AuthorizationWorkflowError("tenant_id_required")
+        if cap.requires_engagement_doc and not engagement_ref:
+            raise AuthorizationWorkflowError("need_engagement_doc")
+
+        ttl = requested_ttl or cap.max_ttl
+        if ttl <= timedelta(0):
+            raise AuthorizationWorkflowError("requested_ttl_must_be_positive")
+        ttl = min(ttl, cap.max_ttl)
+        now = utc_now()
+        case_id = arguments.get("case_id")
+        if isinstance(case_id, bool) or (
+            case_id is not None and not isinstance(case_id, int)
+        ):
+            raise AuthorizationWorkflowError("case_id_must_be_integer")
+        scope = exact_action_scope(
+            action,
+            arguments,
+            tenant_id=tenant_id,
+            case_id=case_id,
+        )
+        required_approvals = 1 if cap.review_kind == "single" else 2
+        row = AuthorizationRequestRecord(
+            request_id="areq_" + uuid.uuid4().hex[:24],
+            capability=capability,
+            scope=scope,
+            action=action,
+            action_digest=scope["action_digest"],
+            requester=requester,
+            reason=reason,
+            requested_ttl_seconds=int(ttl.total_seconds()),
+            engagement_ref=engagement_ref,
+            status="pending",
+            required_approvals=required_approvals,
+            requires_admin_approval=cap.review_kind == "dual_plus_admin",
+            created_at=now,
+            expires_at=now + min(ttl, _REQUEST_REVIEW_TTL),
+        )
+        self._session.add(row)
+        self._session.flush()
+        self._append_audit_entry(
+            action="request",
+            actor=requester,
+            capability=capability,
+            artifact_id=None,
+            scope=scope,
+            payload={
+                "request_id": row.request_id,
+                "reason": reason,
+                "requested_ttl_seconds": row.requested_ttl_seconds,
+                "review_expires_at": row.expires_at.isoformat().replace(
+                    "+00:00", "Z"
+                ),
+            },
+        )
+        return row
+
+    def record_decision(
+        self,
+        request_id: str,
+        *,
+        reviewer: str,
+        reviewer_roles: Iterable[str],
+        decision: str,
+        note: Optional[str],
+    ) -> AuthorizationDecisionResult:
+        """Record one reviewer decision and issue when the threshold is met."""
+
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise AuthorizationWorkflowError("invalid_decision")
+        request_row = self._session.get(AuthorizationRequestRecord, request_id)
+        if request_row is None:
+            raise AuthorizationWorkflowError(f"unknown_request:{request_id}")
+        if request_row.status != "pending":
+            raise AuthorizationWorkflowError(
+                f"request_not_pending:{request_row.status}"
+            )
+        if _ensure_aware(request_row.expires_at) <= _ensure_aware(utc_now()):
+            raise AuthorizationWorkflowError("request_expired")
+        if reviewer == request_row.requester:
+            raise AuthorizationWorkflowError("requester_cannot_review")
+        duplicate = self._session.execute(
+            select(AuthorizationDecisionRecord)
+            .where(AuthorizationDecisionRecord.request_id == request_id)
+            .where(AuthorizationDecisionRecord.reviewer == reviewer)
+        ).scalars().first()
+        if duplicate is not None:
+            raise AuthorizationWorkflowError("duplicate_reviewer_decision")
+
+        roles = sorted({str(role) for role in reviewer_roles if str(role)})
+        decision_row = AuthorizationDecisionRecord(
+            request_id=request_id,
+            reviewer=reviewer,
+            reviewer_roles=roles,
+            decision=normalized_decision,
+            note=note,
+        )
+        self._session.add(decision_row)
+        self._session.flush()
+        self._append_audit_entry(
+            action=normalized_decision,
+            actor=reviewer,
+            capability=request_row.capability,
+            artifact_id=None,
+            scope=request_row.scope or {},
+            payload={
+                "request_id": request_id,
+                "note": note,
+                "reviewer_roles": roles,
+            },
+        )
+
+        if normalized_decision == "reject":
+            request_row.status = "rejected"
+            request_row.resolved_at = utc_now()
+            self._session.flush()
+            return AuthorizationDecisionResult(request_row, None)
+
+        approvals = self._session.execute(
+            select(AuthorizationDecisionRecord)
+            .where(AuthorizationDecisionRecord.request_id == request_id)
+            .where(AuthorizationDecisionRecord.decision == "approve")
+            .order_by(AuthorizationDecisionRecord.id.asc())
+        ).scalars().all()
+        enough_approvals = len(approvals) >= request_row.required_approvals
+        has_admin_approval = any(
+            "lab_lead" in set(row.reviewer_roles or []) for row in approvals
+        )
+        if not enough_approvals or (
+            request_row.requires_admin_approval and not has_admin_approval
+        ):
+            return AuthorizationDecisionResult(request_row, None)
+
+        reviewers = [
+            Reviewer(
+                reviewer=row.reviewer,
+                decision="approve",
+                signed_at=row.created_at,
+            )
+            for row in approvals
+        ]
+        issuance = IssuanceRequest(
+            capability=request_row.capability,
+            scope=request_row.scope or {},
+            requester=request_row.requester,
+            reason=request_row.reason,
+            requested_ttl=timedelta(
+                seconds=request_row.requested_ttl_seconds
+            )
+            if request_row.requested_ttl_seconds is not None
+            else None,
+            engagement_ref=request_row.engagement_ref,
+            is_admin_approved=has_admin_approval,
+            extra={
+                "request_id": request_id,
+                "action": request_row.action,
+                "action_digest": request_row.action_digest,
+            },
+        )
+        artifact = self._issue_artifact(
+            issuance,
+            reviewers,
+            audit_approvals=False,
+        )
+        request_row.status = "issued"
+        request_row.artifact_id = artifact.artifact_id
+        request_row.resolved_at = utc_now()
+        self._session.flush()
+        return AuthorizationDecisionResult(request_row, artifact)
+
     def evaluate(self, *, capability: str, scope: dict, actor: str) -> Decision:
         """Resolve ``(capability, scope, actor)`` against the active artifacts."""
 
@@ -614,6 +828,17 @@ class CapabilityPolicy:
         reviewers: list[Reviewer],
     ) -> AuthorizationArtifact:
         """Validate and persist an authorization artifact."""
+
+        return self._issue_artifact(request, reviewers, audit_approvals=True)
+
+    def _issue_artifact(
+        self,
+        request: IssuanceRequest,
+        reviewers: list[Reviewer],
+        *,
+        audit_approvals: bool,
+    ) -> AuthorizationArtifact:
+        """Issue an artifact from validated reviewer records."""
 
         cap = CAPABILITIES.get(request.capability)
         if cap is None:
@@ -721,19 +946,20 @@ class CapabilityPolicy:
                 "engagement_ref": request.engagement_ref,
             },
         )
-        for reviewer in approving:
-            self._append_audit_entry(
-                action="approve",
-                actor=reviewer.reviewer,
-                capability=cap.name,
-                artifact_id=artifact_id,
-                scope=request.scope,
-                payload={
-                    "signed_at": _ensure_aware(reviewer.signed_at or issued_at)
-                    .isoformat()
-                    .replace("+00:00", "Z"),
-                },
-            )
+        if audit_approvals:
+            for reviewer in approving:
+                self._append_audit_entry(
+                    action="approve",
+                    actor=reviewer.reviewer,
+                    capability=cap.name,
+                    artifact_id=artifact_id,
+                    scope=request.scope,
+                    payload={
+                        "signed_at": _ensure_aware(reviewer.signed_at or issued_at)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                    },
+                )
 
         return artifact
 
@@ -1005,6 +1231,8 @@ class CapabilityPolicy:
 
 
 __all__ = [
+    "AuthorizationDecisionResult",
+    "AuthorizationWorkflowError",
     "CAPABILITIES",
     "EXACT_ACTION_CAPABILITIES",
     "Capability",
