@@ -262,12 +262,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     report = build_report(args.api, args.compose_env)
-    rendered = json.dumps(report, indent=2, sort_keys=True)
+    report_path: str | None = None
     if args.output:
         out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(rendered + "\n", encoding="utf-8")
-    print(rendered)
+        out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        report_path = str(out)
+    print(
+        json.dumps(
+            {
+                "blocker_count": len(report.get("blockers", [])),
+                "blockers": list(report.get("blockers", [])),
+                "report_path": report_path,
+                "status": report["status"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0 if report["status"] == "ok" else 1
 
 

@@ -133,6 +133,30 @@ def test_report_never_emits_docker_compose_secret_output(monkeypatch):
     assert report["docker_compose"]["output"] == "validated"
 
 
+def test_main_prints_summary_without_sensitive_report_values(monkeypatch, capsys):
+    secret = "private-proof-path-must-not-reach-stdout"
+    monkeypatch.setattr(
+        acceptance,
+        "build_report",
+        lambda _api, _compose_env: {
+            "status": "ok",
+            "blockers": [],
+            "required_proofs": {"real_detonation": secret},
+        },
+    )
+
+    assert acceptance.main([]) == 0
+
+    stdout = capsys.readouterr().out
+    assert secret not in stdout
+    assert json.loads(stdout) == {
+        "blocker_count": 0,
+        "blockers": [],
+        "report_path": None,
+        "status": "ok",
+    }
+
+
 def _signed_proof(tmp_path):
     artifact = tmp_path / "agent-runtime.log"
     artifact.write_text("committed run 42\n", encoding="utf-8")
