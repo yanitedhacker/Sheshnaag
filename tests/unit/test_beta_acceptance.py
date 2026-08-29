@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
 import scripts.sheshnaag_beta_acceptance as acceptance
+from app.services.proof_receipts import build_signed_receipt, generate_proof_key
 
 
 def test_duplicate_scan_ignores_dependency_and_build_directories(
@@ -67,3 +70,74 @@ def test_p0_integrity_gate_blocks_on_test_failure(monkeypatch):
         "tests": list(acceptance.P0_INTEGRITY_TESTS),
         "output": "1 failed, 7 passed",
     }
+
+
+def _signed_proof(tmp_path):
+    artifact = tmp_path / "agent-runtime.log"
+    artifact.write_text("committed run 42\n", encoding="utf-8")
+    key_path = tmp_path / "proof.key"
+    key = generate_proof_key(key_path)
+    receipt = build_signed_receipt(
+        proof_class="autonomous_agent",
+        status="passed",
+        subject={
+            "system": "sheshnaag",
+            "git_commit": "c" * 40,
+            "deployment_profile": "design_partner_beta",
+        },
+        checks=[{"id": "committed_run", "status": "passed", "detail": "run 42"}],
+        artifact_paths=[artifact],
+        base_dir=tmp_path,
+        private_key_path=key_path,
+        issuer="acceptance-test",
+        issued_at="2026-08-29T12:00:00Z",
+    )
+    receipt_path = tmp_path / "autonomous-agent.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    return receipt_path, key
+
+
+def test_claim_ledger_accepts_only_pinned_signed_receipt(tmp_path):
+    receipt_path, key = _signed_proof(tmp_path)
+
+    result = acceptance._verify_proof_claims(
+        {"autonomous_agent": str(receipt_path)},
+        expected_git_commit="c" * 40,
+        trusted_fingerprint=key["fingerprint"],
+    )
+
+    assert result["status"] == "ok"
+    assert result["blockers"] == []
+    assert result["missing_proofs"] == []
+    assert result["claims"]["autonomous_agent"]["status"] == "verified"
+
+
+def test_claim_ledger_rejects_file_presence_without_valid_receipt(tmp_path):
+    fake_proof = tmp_path / "proof.txt"
+    fake_proof.write_text("PASS: trust me\n", encoding="utf-8")
+
+    result = acceptance._verify_proof_claims(
+        {"real_detonation": str(fake_proof)},
+        expected_git_commit="c" * 40,
+        trusted_fingerprint="f" * 64,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blockers"] == ["proof.real_detonation.invalid"]
+    assert result["claims"]["real_detonation"]["status"] == "blocked"
+
+
+def test_claim_ledger_blocks_when_trust_root_is_not_pinned(tmp_path):
+    receipt_path, _key = _signed_proof(tmp_path)
+
+    result = acceptance._verify_proof_claims(
+        {"autonomous_agent": str(receipt_path)},
+        expected_git_commit="c" * 40,
+        trusted_fingerprint=None,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blockers"] == ["proof_trust_root_missing"]
+    assert result["claims"]["autonomous_agent"]["errors"] == [
+        "receipt.trust_root_missing"
+    ]

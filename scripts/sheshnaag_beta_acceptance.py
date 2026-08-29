@@ -20,6 +20,8 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from app.services.proof_receipts import verify_proof_receipt
+
 ROOT = Path(__file__).resolve().parents[1]
 
 P0_INTEGRITY_TESTS = (
@@ -102,6 +104,68 @@ def _status(value: bool) -> str:
     return "ok" if value else "blocked"
 
 
+def _verify_proof_claims(
+    required_proofs: dict[str, str | None],
+    *,
+    expected_git_commit: str,
+    trusted_fingerprint: str | None,
+) -> dict[str, Any]:
+    """Build a fail-closed claim ledger from pinned signed receipts."""
+
+    blockers: list[str] = []
+    claims: dict[str, Any] = {}
+    missing_proofs: list[str] = []
+    trusted = (trusted_fingerprint or "").strip().lower()
+    if not trusted:
+        blockers.append("proof_trust_root_missing")
+
+    for proof_class, configured_path in required_proofs.items():
+        if not configured_path or not Path(configured_path).is_file():
+            missing_proofs.append(proof_class)
+            blockers.append(f"missing_proof.{proof_class}")
+            claims[proof_class] = {
+                "status": "missing",
+                "receipt_path": configured_path,
+                "errors": ["receipt.path_missing"],
+            }
+            continue
+
+        if not trusted:
+            claims[proof_class] = {
+                "status": "blocked",
+                "receipt_path": configured_path,
+                "errors": ["receipt.trust_root_missing"],
+            }
+            continue
+
+        verification = verify_proof_receipt(
+            configured_path,
+            expected_proof_class=proof_class,
+            expected_git_commit=expected_git_commit,
+            trusted_fingerprint=trusted,
+        )
+        verified = verification["status"] == "ok"
+        claims[proof_class] = {
+            "receipt_path": configured_path,
+            "verification_status": verification["status"],
+            "errors": verification["errors"],
+            "proof_class": verification["proof_class"],
+            "artifact_count": verification["artifact_count"],
+            "status": "verified" if verified else "blocked",
+        }
+        if not verified:
+            blockers.append(f"proof.{proof_class}.invalid")
+
+    return {
+        "status": _status(not blockers),
+        "blockers": blockers,
+        "missing_proofs": missing_proofs,
+        "trusted_fingerprint": trusted or None,
+        "expected_git_commit": expected_git_commit,
+        "claims": claims,
+    }
+
+
 def build_report(api: str, compose_env: str) -> dict[str, Any]:
     blockers: list[str] = []
     p0_integrity = _run_p0_integrity_tests()
@@ -119,6 +183,9 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
     git_rc, git_output = _run(["git", "status", "--short"], timeout=30)
     if git_rc != 0:
         blockers.append("git_status")
+    revision_rc, git_revision = _run(["git", "rev-parse", "HEAD"], timeout=30)
+    if revision_rc != 0:
+        blockers.append("git_revision")
 
     health: dict[str, Any] | None = None
     health_error: str | None = None
@@ -138,23 +205,12 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
         "autonomous_agent": os.getenv("SHESHNAAG_AUTONOMOUS_AGENT_PROOF"),
         "load_rehearsal": os.getenv("SHESHNAAG_LOAD_REHEARSAL_PROOF"),
     }
-    missing_proofs = [name for name, path in required_proofs.items() if not path or not Path(path).exists()]
-    blockers.extend(f"missing_proof.{name}" for name in missing_proofs)
-    real_detonation_proof = required_proofs.get("real_detonation")
-    if real_detonation_proof and Path(real_detonation_proof).exists():
-        proof_text = Path(real_detonation_proof).read_text(encoding="utf-8", errors="replace")
-        required_markers = [
-            "PASS: V4 real detonation E2E completed",
-            "snapshot",
-            "egress",
-            "pcap",
-            "zeek",
-        ]
-        missing_markers = [marker for marker in required_markers if marker.lower() not in proof_text.lower()]
-        if missing_markers:
-            blockers.append("proof.real_detonation_incomplete")
-    else:
-        missing_markers = []
+    claim_ledger = _verify_proof_claims(
+        required_proofs,
+        expected_git_commit=git_revision if revision_rc == 0 else "",
+        trusted_fingerprint=os.getenv("SHESHNAAG_PROOF_TRUST_FINGERPRINT"),
+    )
+    blockers.extend(claim_ledger["blockers"])
 
     return {
         "generated_at_epoch": int(time.time()),
@@ -164,6 +220,7 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
         "repo": {
             "duplicate_artifacts": duplicate_artifacts,
             "git_status": git_output,
+            "git_revision": git_revision if revision_rc == 0 else None,
         },
         "docker_compose": {
             "env_file": compose_env,
@@ -172,8 +229,8 @@ def build_report(api: str, compose_env: str) -> dict[str, Any]:
         },
         "ops_health": health if health is not None else {"error": health_error},
         "required_proofs": required_proofs,
-        "missing_proofs": missing_proofs,
-        "real_detonation_required_markers_missing": missing_markers,
+        "missing_proofs": claim_ledger["missing_proofs"],
+        "claim_ledger": claim_ledger,
     }
 
 

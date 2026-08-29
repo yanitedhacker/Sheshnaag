@@ -199,3 +199,39 @@ The full backend test run completed:
 ```
 
 The skipped tests are external integration tests controlled by repository policy. They are not passes. The warnings are deprecation and test-collection warnings. The frontend production build result remains the successful result recorded above because no frontend source changed after that build.
+
+## Evidence-gated claim ledger
+
+The beta gate no longer accepts file presence or marker text as proof. Each proof class now needs an Ed25519-signed receipt with a pinned trust fingerprint. The verifier checks:
+
+- proof schema and class
+- exact Git commit
+- receipt pass state
+- pinned signer fingerprint
+- canonical payload digest and Ed25519 signature
+- relative artifact path, byte size, and SHA-256
+
+Focused proof and P0 result:
+
+```text
+51 passed
+```
+
+The focused run included capability policy, authorization workflow, autonomous fail-closed behavior, proof receipts, the proof CLI, beta acceptance, and the V4 authorization and autonomous HTTP routes.
+
+The current live acceptance report remains blocked:
+
+```text
+p0_integrity=ok
+docker_compose=ok
+ops_health_unreachable
+proof_trust_root_missing
+missing_proof.real_detonation
+missing_proof.ai_provider_matrix
+missing_proof.capability_audit
+missing_proof.stix_taxii
+missing_proof.autonomous_agent
+missing_proof.load_rehearsal
+```
+
+This is the correct release state. No proof receipt was generated from missing evidence.
