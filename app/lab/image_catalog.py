@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 
-DEFAULT_BASELINE_IMAGE = os.environ.get("SHESHNAAG_BASELINE_IMAGE", "kalilinux/kali-rolling:2026.1")
+KALI_ROLLING_MANIFEST_DIGEST = (
+    "sha256:ef7a551400b01dc501ff97f192c5b2b1ec629576dab5032822190cd2684ca4e1"
+)
+DEFAULT_BASELINE_IMAGE = os.environ.get(
+    "SHESHNAAG_BASELINE_IMAGE",
+    f"kalilinux/kali-rolling@{KALI_ROLLING_MANIFEST_DIGEST}",
+)
 DEFAULT_OSQUERY_IMAGE = os.environ.get("SHESHNAAG_OSQUERY_IMAGE", "sheshnaag-kali-osquery:2026.1")
 DEFAULT_TRACEE_IMAGE = os.environ.get("SHESHNAAG_TRACEE_IMAGE", "sheshnaag-kali-tracee:2026.1")
 DEFAULT_LIMA_IMAGE = os.environ.get("SHESHNAAG_LIMA_IMAGE", "sheshnaag-lima-ubuntu:2026.1")
@@ -30,6 +36,8 @@ class ImageCatalogEntry:
 
     @property
     def digest(self) -> str:
+        if "@sha256:" in self.image:
+            return self.image.rsplit("@sha256:", 1)[1]
         return hashlib.sha256(self.image.encode("utf-8")).hexdigest()
 
     def to_manifest(self) -> Dict[str, Any]:

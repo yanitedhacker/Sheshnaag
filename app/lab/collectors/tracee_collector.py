@@ -76,10 +76,13 @@ class TraceeEventsCollector(Collector):
                 )
             ]
         session_command = (
-            f"tmp=$(mktemp); "
-            f"(timeout {time_limit} sh -lc 'tracee --output json 2>/dev/null' || true) >\"$tmp\" 2>/dev/null; "
-            f"head -n {event_limit} \"$tmp\"; "
-            "rm -f \"$tmp\""
+            "out_file=$(mktemp); err_file=$(mktemp); "
+            f"timeout {time_limit} tracee --output json >\"$out_file\" 2>\"$err_file\"; "
+            "tracee_code=$?; "
+            f"head -n {event_limit} \"$out_file\"; "
+            "head -c 4000 \"$err_file\" >&2; "
+            "rm -f \"$out_file\" \"$err_file\"; "
+            "exit \"$tracee_code\""
         )
         code, out, err = run_in_guest(
             provider_result,

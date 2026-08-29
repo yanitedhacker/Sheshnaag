@@ -31,8 +31,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_KALI_IMAGE = DEFAULT_BASELINE_IMAGE
 DEFAULT_SECURITY_OPTS = [
     "no-new-privileges:true",
-    "apparmor=sheshnaag-default",
-    "seccomp=default",
 ]
 DEFAULT_CAP_DROP = ["ALL"]
 
@@ -139,6 +137,10 @@ class DockerKaliProvider(LabProvider):
             "read_only_rootfs": True,
             "default_cap_drop": list(DEFAULT_CAP_DROP),
             "security_options": list(DEFAULT_SECURITY_OPTS),
+            "engine_default_confinement": (
+                "Docker engine seccomp and platform LSM defaults remain active; "
+                "no unresolved custom profile path is requested."
+            ),
             "writable_mounts_require_policy": True,
             "pcap_policy": "secure_mode_only",
             "network_enforcement_limits": (
@@ -662,10 +664,12 @@ class DockerKaliProvider(LabProvider):
         if tracee_requested:
             checks.append(
                 {
-                    "name": "tracee_image_support",
-                    "status": "ready" if tooling_profile["tracee_available"] else "unavailable",
+                    "name": "tracee_runtime_isolation",
+                    "status": "unavailable",
                     "detail": (
-                        f"Image {image} is marked Tracee-capable."
+                        "Tracee binary packaging is present, but runtime collection requires "
+                        "a separately managed disposable Linux worker. The docker_kali provider "
+                        "does not request privileged host-kernel access."
                         if tooling_profile["tracee_available"]
                         else f"Collector tracee_events requires a Tracee-capable image such as {DEFAULT_TRACEE_IMAGE}."
                     ),
@@ -723,8 +727,11 @@ class DockerKaliProvider(LabProvider):
                 reason = f"osquery_snapshot requires an osquery-capable image such as {DEFAULT_OSQUERY_IMAGE}."
             if name == "tracee_events":
                 if tooling_profile["tracee_available"]:
-                    status = "ready" if docker_ready else "unavailable"
-                    reason = "Tracee is a supported advanced collector when a trusted Tracee-capable image is selected."
+                    status = "unavailable"
+                    reason = (
+                        "Tracee runtime collection requires a separately managed disposable "
+                        "Linux worker; docker_kali does not request privileged host access."
+                    )
                 else:
                     status = "unavailable"
                     reason = f"tracee_events requires a Tracee-capable image such as {DEFAULT_TRACEE_IMAGE}."

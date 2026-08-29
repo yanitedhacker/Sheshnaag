@@ -80,12 +80,16 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
     tenant_id = tenant.id
     session.close()
 
-    class FakeService:
+    class FakeExecutionService:
         def __init__(self, session):
             self.session = session
 
-        def materialize_run_outputs(self, tenant, *, run):
-            return {"evidence_count": 0}
+        def execute_queued_run(self, tenant, *, run_id, actor):
+            assert actor == "analyst"
+            stored = self.session.get(LabRun, run_id)
+            assert stored.state == "queued"
+            stored.state = "completed"
+            return {"state": "completed", "evidence_count": 1}
 
     published = []
 
@@ -95,7 +99,7 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
             return "1-0"
 
     monkeypatch.setattr(sandbox_worker, "SessionLocal", TestingSession)
-    monkeypatch.setattr(sandbox_worker, "MalwareLabService", FakeService)
+    monkeypatch.setattr(sandbox_worker, "SheshnaagService", FakeExecutionService)
 
     result = sandbox_worker.process_sandbox_work(
         {"run_id": run_id, "tenant_id": tenant_id, "actor": "analyst", "correlation_id": "abc"},
@@ -108,6 +112,7 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
     verify.close()
 
     assert result["status"] == "completed"
+    assert result["result"]["evidence_count"] == 1
     assert stored.state == "completed"
     assert {"run_started", "run_completed"}.issubset(set(event_types))
     assert [event["type"] for _, event in published] == ["run_started", "run_completed"]

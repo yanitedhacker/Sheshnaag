@@ -10,13 +10,34 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
-from app.migrations.util import column_exists, existing_tables, index_exists
-
-
 revision = "v5a08"
 down_revision = "v5a07"
 branch_labels = None
 depends_on = None
+
+
+def _is_offline_mode() -> bool:
+    return bool(op.get_context().as_sql)
+
+
+def existing_tables(bind) -> set[str]:
+    if _is_offline_mode():
+        return set()
+    return set(sa.inspect(bind).get_table_names())
+
+
+def column_exists(bind, table: str, column: str) -> bool:
+    if _is_offline_mode():
+        return False
+    return column in {item["name"] for item in sa.inspect(bind).get_columns(table)}
+
+
+def index_exists(bind, table: str, index_name: str) -> bool:
+    if _is_offline_mode():
+        return False
+    return index_name in {
+        item["name"] for item in sa.inspect(bind).get_indexes(table)
+    }
 
 
 def upgrade() -> None:

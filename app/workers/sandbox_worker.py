@@ -38,6 +38,7 @@ from app.core.time import utc_now
 from app.models.sheshnaag import LabRun, RunEvent
 from app.models.v2 import Tenant
 from app.services.malware_lab_service import MalwareLabService
+from app.services.sheshnaag_service import SheshnaagService
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +82,17 @@ def process_sandbox_work(message: dict[str, Any], *, bus: Optional[EventBus] = N
         if run is None or tenant is None:
             raise ValueError("run_or_tenant_not_found")
 
-        run.state = "running"
         run.started_at = run.started_at or utc_now()
         started = _event(run_id, "run_started", payload={"correlation_id": message.get("correlation_id")})
         _record_event(session, run_id, "run_started", started)
         bus.publish(run_event_stream(run_id), started)
         session.commit()
 
-        lab_service = MalwareLabService(session)
-        preflight_fn = getattr(lab_service, "enforce_run_execution_preflight", None)
+        preflight_fn = getattr(
+            MalwareLabService(session),
+            "enforce_run_execution_preflight",
+            None,
+        )
         if callable(preflight_fn):
             preflight = preflight_fn(
                 tenant,
@@ -97,9 +100,13 @@ def process_sandbox_work(message: dict[str, Any], *, bus: Optional[EventBus] = N
                 actor=str(message.get("actor") or "sandbox_worker"),
             )
             run.manifest = {**dict(run.manifest or {}), "detonation_preflight": preflight}
-        result = lab_service.materialize_run_outputs(tenant, run=run)
-        run.state = "completed"
-        run.ended_at = utc_now()
+        result = SheshnaagService(session).execute_queued_run(
+            tenant,
+            run_id=run_id,
+            actor=str(message.get("actor") or "sandbox_worker"),
+        )
+        if result.get("state") != "completed" or int(result.get("evidence_count") or 0) < 1:
+            raise RuntimeError(f"worker_execution_incomplete:{result}")
         completed = _event(run_id, "run_completed", payload=result)
         _record_event(session, run_id, "run_completed", completed)
         bus.publish(run_event_stream(run_id), completed)

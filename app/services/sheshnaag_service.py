@@ -1330,6 +1330,199 @@ class SheshnaagService:
         self.session.flush()
         return self.get_run(tenant, run.id)
 
+    def execute_queued_run(
+        self,
+        tenant: Tenant,
+        *,
+        run_id: int,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """Execute one queued run and require live evidence before completion."""
+
+        run = self._get_run(tenant, run_id)
+        if run.launch_mode != "execute" or run.state != "queued":
+            raise ValueError(
+                "Worker execution requires a queued execute-mode run; "
+                f"launch_mode={run.launch_mode} state={run.state}."
+            )
+
+        revision = (
+            self.session.query(RecipeRevision)
+            .filter(RecipeRevision.id == run.recipe_revision_id)
+            .first()
+        )
+        if revision is None:
+            raise ValueError("Queued run is missing its recipe revision.")
+
+        candidate = self._get_candidate(tenant, run.candidate_id) if run.candidate_id else None
+        provider = self._provider_for_name(run.provider)
+        run_context = self._run_context_for_provider(
+            tenant,
+            run,
+            analyst_name=actor,
+            candidate=candidate,
+        )
+        revision_content = self._revision_content_for_provider(
+            dict(revision.content or {}),
+            run.provider,
+        )
+        launch_result = provider.launch(
+            revision_content=revision_content,
+            run_context=run_context,
+        )
+        self._apply_provider_result(run, launch_result)
+        self._add_run_event(run, "provider_launch", launch_result)
+        run.started_at = run.started_at or utc_now()
+
+        allowed_states = {RunState.RUNNING.value, RunState.COMPLETED.value}
+        if run.state not in allowed_states:
+            run.ended_at = utc_now()
+            self.session.flush()
+            raise RuntimeError(
+                "Provider did not start queued execution: "
+                f"state={run.state} error={launch_result.error or 'unknown'}"
+            )
+
+        cleanup_result: Optional[ProviderResult] = None
+        try:
+            if self._should_collect_after_provider_launch(run):
+                artifacts = self._collect_and_generate(
+                    run=run,
+                    candidate=candidate,
+                    analyst_name=actor,
+                )
+                self._persist_run_artifacts(run=run, artifacts=artifacts)
+
+            from app.services.malware_lab_service import MalwareLabService
+
+            malware_outputs = MalwareLabService(self.session).materialize_run_outputs(
+                tenant,
+                run=run,
+            )
+            self.session.flush()
+
+            evidence_rows = (
+                self.session.query(EvidenceArtifact)
+                .filter(EvidenceArtifact.run_id == run.id)
+                .all()
+            )
+            live_evidence_count = sum(
+                1
+                for item in evidence_rows
+                if str(
+                    (item.payload or {}).get("collection_state")
+                    or ((item.payload or {}).get("collector_health") or {}).get("status")
+                    or ""
+                ).lower()
+                in {"live", "ok"}
+            )
+            if not evidence_rows or live_evidence_count < 1:
+                raise RuntimeError(
+                    "Queued execution produced no live evidence; "
+                    f"evidence_count={len(evidence_rows)} live_evidence_count={live_evidence_count}."
+                )
+
+            if run.state == RunState.RUNNING.value:
+                timeout_seconds = int(
+                    os.getenv("SHESHNAAG_WORKER_EXECUTION_TIMEOUT", "180")
+                )
+                deadline = time.monotonic() + max(1, timeout_seconds)
+                while True:
+                    health_result = provider.health(
+                        provider_run_ref=run.provider_run_ref
+                    )
+                    health_state = (
+                        health_result.state.value
+                        if isinstance(health_result.state, RunState)
+                        else str(health_result.state)
+                    )
+                    if health_state in {
+                        RunState.STOPPED.value,
+                        RunState.COMPLETED.value,
+                        RunState.DESTROYED.value,
+                    }:
+                        break
+                    if health_state in {
+                        RunState.ERRORED.value,
+                        RunState.UNHEALTHY.value,
+                        RunState.BLOCKED.value,
+                    }:
+                        raise RuntimeError(
+                            "Queued execution entered a failed provider state: "
+                            f"{health_state}."
+                        )
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            "Queued execution exceeded worker timeout: "
+                            f"{timeout_seconds}s."
+                        )
+                    time.sleep(0.25)
+
+            cleanup_result = provider.teardown(
+                provider_run_ref=run.provider_run_ref,
+                retain_workspace=False,
+            )
+            cleanup_state = (
+                cleanup_result.state.value
+                if isinstance(cleanup_result.state, RunState)
+                else str(cleanup_result.state)
+            )
+            if cleanup_state == RunState.ERRORED.value:
+                raise RuntimeError(
+                    "Provider cleanup failed after queued execution: "
+                    f"{cleanup_result.error or cleanup_result.transcript}"
+                )
+
+            run.state = RunState.COMPLETED.value
+            run.ended_at = utc_now()
+            run.run_transcript = (
+                "Sandbox worker completed provider execution, evidence collection, "
+                "and resource cleanup."
+            )
+            manifest = dict(run.manifest or {})
+            manifest["worker_execution"] = {
+                "status": "completed",
+                "actor": actor,
+                "evidence_count": len(evidence_rows),
+                "live_evidence_count": live_evidence_count,
+                "malware_outputs": malware_outputs,
+                "cleanup_state": cleanup_state,
+                "completed_at": run.ended_at.isoformat(),
+            }
+            run.manifest = manifest
+            self._ledger(
+                tenant.id,
+                run.analyst_id,
+                "run_completed",
+                "run",
+                str(run.id),
+                5.0,
+                {
+                    "state": run.state,
+                    "evidence_count": len(evidence_rows),
+                    "live_evidence_count": live_evidence_count,
+                },
+            )
+            self.session.flush()
+            return {
+                "run_id": run.id,
+                "state": run.state,
+                "evidence_count": len(evidence_rows),
+                "live_evidence_count": live_evidence_count,
+                "cleanup_state": cleanup_state,
+                "malware_outputs": malware_outputs,
+            }
+        except Exception:
+            if run.provider_run_ref and cleanup_result is None:
+                try:
+                    provider.teardown(
+                        provider_run_ref=run.provider_run_ref,
+                        retain_workspace=False,
+                    )
+                except Exception:
+                    pass
+            raise
+
     def plan_run(
         self,
         tenant: Tenant,

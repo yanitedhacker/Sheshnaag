@@ -2,7 +2,12 @@
 
 import pytest
 
-from app.lab.image_catalog import find_image_profile, resolve_catalog_entry
+from app.lab.docker_kali_provider import DockerKaliProvider
+from app.lab.image_catalog import (
+    KALI_ROLLING_MANIFEST_DIGEST,
+    find_image_profile,
+    resolve_catalog_entry,
+)
 from app.lab.provider_registry import build_default_provider_registry
 
 
@@ -19,6 +24,27 @@ def test_image_catalog_resolves_tracee_profile_from_collectors():
     entry = resolve_catalog_entry(provider="docker_kali", collectors=["process_tree", "tracee_events"])
     assert entry.profile == "tracee_capable"
     assert entry.supports_tracee is True
+
+
+@pytest.mark.unit
+def test_baseline_image_is_bound_to_the_verified_kali_manifest():
+    entry = resolve_catalog_entry(provider="docker_kali")
+
+    assert entry.image == f"kalilinux/kali-rolling@{KALI_ROLLING_MANIFEST_DIGEST}"
+    assert entry.digest == KALI_ROLLING_MANIFEST_DIGEST.removeprefix("sha256:")
+
+
+@pytest.mark.unit
+def test_docker_kali_uses_engine_default_confinement_without_fake_profile_paths():
+    plan = DockerKaliProvider().build_plan(
+        revision_content={"command": ["true"]},
+        run_context={"tenant_slug": "test", "analyst_name": "test", "run_id": 1},
+    )
+
+    assert plan["security_options"] == ["no-new-privileges:true"]
+    assert "--security-opt" in plan["docker_args"]
+    assert "seccomp=default" not in plan["docker_args"]
+    assert "apparmor=sheshnaag-default" not in plan["docker_args"]
 
 
 @pytest.mark.unit

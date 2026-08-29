@@ -398,6 +398,16 @@ class RecipeSchemaValidator:
                     execution_policy.get("secure_mode_required"), bool
                 ):
                     errors.append("'execution_policy.secure_mode_required' must be a boolean when present")
+                if "allow_privileged_tracee" in execution_policy:
+                    if not isinstance(execution_policy.get("allow_privileged_tracee"), bool):
+                        errors.append(
+                            "'execution_policy.allow_privileged_tracee' must be a boolean when present"
+                        )
+                    elif execution_policy.get("allow_privileged_tracee") is True:
+                        errors.append(
+                            "privileged Tracee is not available through docker_kali; "
+                            "use a separately managed disposable Linux worker"
+                        )
 
         if secure_mode_required and provider != "lima":
             errors.append("secure-mode-required recipes must use provider 'lima'")
