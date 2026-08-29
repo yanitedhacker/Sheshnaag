@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models.capability import AuditLogEntry, AuthorizationArtifact
 from app.models.sheshnaag import AutonomousAgentRun
 from app.models.v2 import Tenant
-from app.services.autonomous_agent import AutonomousAgent
+from app.services.autonomous_agent import AgentPersistenceError, AutonomousAgent
 from app.services.capability_policy import CapabilityPolicy
 
 
@@ -133,3 +133,35 @@ def test_no_artifact_denies_before_tools_ai_or_events(
     durable = session.query(AutonomousAgentRun).filter_by(run_id=run.run_id).one()
     assert durable.status == "denied"
     assert durable.action_digest == run.action_digest
+
+
+def test_run_flush_failure_raises_and_creates_no_replay_entry(
+    monkeypatch,
+    session,
+    tenant,
+):
+    ai = RecordingAI()
+    bus = RecordingBus()
+    agent = AutonomousAgent(session, ai=ai, event_bus=bus)
+    monkeypatch.setattr(agent, "_tool_attack_summary", _fail_if_tool_runs)
+
+    def fail_run_flush(db_session, flush_context, instances):
+        if any(isinstance(row, AutonomousAgentRun) for row in db_session.new):
+            raise RuntimeError("run database unavailable")
+
+    event.listen(session, "before_flush", fail_run_flush)
+    try:
+        with pytest.raises(AgentPersistenceError):
+            agent.run(
+                tenant,
+                goal="Persist this denied action before returning it.",
+                actor="analyst@example.com",
+                case_id=None,
+                max_steps=3,
+            )
+    finally:
+        event.remove(session, "before_flush", fail_run_flush)
+
+    assert agent.list_runs(tenant=tenant) == []
+    assert ai.calls == 0
+    assert bus.events == []

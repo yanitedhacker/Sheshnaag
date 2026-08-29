@@ -116,3 +116,21 @@ Focused P0 result after this change:
 ```text
 36 passed
 ```
+
+## Durable response boundary
+
+The persistence-error unit test raises only when SQLAlchemy flushes an `AutonomousAgentRun`. The agent now raises `AgentPersistenceError`, creates no replay item, and publishes no event.
+
+The route commit-error test injects a failing session commit. The route returns:
+
+```text
+HTTP 503 autonomous_run_persistence_unavailable
+```
+
+The positive route test issues an exact-action artifact, receives HTTP 200 with `status=completed`, and then opens a new database session. The new session finds the committed run with the same action digest and authorization artifact ID.
+
+Focused P0 result after this change:
+
+```text
+38 passed
+```

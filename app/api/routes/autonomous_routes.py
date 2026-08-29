@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_sync_session
 from app.core.security import TokenData, verify_token
 from app.core.tenancy import resolve_tenant
-from app.services.autonomous_agent import AutonomousAgent
+from app.services.autonomous_agent import (
+    AgentPersistenceError,
+    AgentReplayError,
+    AutonomousAgent,
+)
 
 
 def _actor_from_token(token_data: TokenData, fallback: str) -> str:
@@ -29,12 +33,6 @@ def _actor_from_token(token_data: TokenData, fallback: str) -> str:
     return fallback
 
 router = APIRouter(prefix="/api/v4/autonomous", tags=["Sheshnaag V4 Autonomous"])
-
-# Process-level instance keeps the in-memory replay log. Callers that need
-# durability should persist the returned payload onto their own AISession or
-# AnalysisCase rows.
-_AGENT: Optional[AutonomousAgent] = None
-
 
 class AutonomousRunRequest(BaseModel):
     goal: str = Field(min_length=4, max_length=2000)
@@ -57,18 +55,30 @@ def run_autonomous_agent(
         tenant_slug=payload.tenant_slug,
         default_to_demo=False,
     )
-    global _AGENT
-    if _AGENT is None:
-        _AGENT = AutonomousAgent(session)
-    else:
-        _AGENT.session = session
-    run = _AGENT.run(
-        tenant,
-        goal=payload.goal,
-        actor=_actor_from_token(token_data, payload.actor),
-        case_id=payload.case_id,
-        max_steps=payload.max_steps,
-    )
+    agent = AutonomousAgent(session)
+    try:
+        run = agent.run(
+            tenant,
+            goal=payload.goal,
+            actor=_actor_from_token(token_data, payload.actor),
+            case_id=payload.case_id,
+            max_steps=payload.max_steps,
+        )
+    except AgentPersistenceError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="autonomous_run_persistence_unavailable",
+        ) from exc
+    try:
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="autonomous_run_persistence_unavailable",
+        ) from exc
+    agent.publish_committed(run)
     return run.to_dict()
 
 
@@ -82,10 +92,11 @@ def list_autonomous_runs(
     tenant = resolve_tenant(
         session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False
     )
-    global _AGENT
-    if _AGENT is None:
-        _AGENT = AutonomousAgent(session)
-    else:
-        _AGENT.session = session
-    runs = _AGENT.list_runs(tenant=tenant)
+    try:
+        runs = AutonomousAgent(session).list_runs(tenant=tenant)
+    except AgentReplayError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="autonomous_run_replay_unavailable",
+        ) from exc
     return {"items": runs, "count": len(runs)}

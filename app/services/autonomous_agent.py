@@ -40,6 +40,14 @@ from app.services.ai_provider_harness import AIProviderHarness
 logger = logging.getLogger(__name__)
 
 
+class AgentPersistenceError(RuntimeError):
+    """The durable run record could not be written."""
+
+
+class AgentReplayError(RuntimeError):
+    """Durable agent replay rows could not be read."""
+
+
 @dataclass
 class AgentStep:
     step: int
@@ -91,10 +99,6 @@ class AutonomousAgent:
         self.session = session
         self.ai = ai or AIProviderHarness()
         self._bus = event_bus
-        # Runs are now persisted in the autonomous_agent_runs table; we keep
-        # a per-instance cache of the most recently produced runs so the API
-        # can return them even if a flush failed mid-request.
-        self._recent: List[AgentRun] = []
 
     @property
     def bus(self) -> EventBus:
@@ -258,7 +262,6 @@ class AutonomousAgent:
                     citations=[{"label": f"case:{case_id}"}] if "case" in output else [],
                 )
             )
-            self._publish(run_id, "agent_step", {"step": 1, "tool": "summarise_case"})
 
         # Step 2: ATT&CK posture as deterministic context.
         att_output = self._tool_attack_summary(tenant)
@@ -272,7 +275,6 @@ class AutonomousAgent:
                 citations=[{"label": "attack_coverage"}],
             )
         )
-        self._publish(run_id, "agent_step", {"step": steps[-1].step, "tool": "attack_summary"})
 
         # Step 3+: optional LLM synthesis when a provider is configured.
         synthesis = self._synthesise(goal=goal, steps=steps, tenant=tenant)
@@ -304,7 +306,6 @@ class AutonomousAgent:
             authorization_artifact_id=authorization_artifact_id,
         )
         self._persist(tenant=tenant, run=run, actor=actor, case_id=case_id)
-        self._publish(run_id, "agent_done", {"summary": synthesis["summary"]})
         return run
 
     def _publish(self, run_id: str, event_type: str, payload: Dict[str, Any]) -> None:
@@ -322,6 +323,23 @@ class AutonomousAgent:
             )
         except Exception:  # pragma: no cover - infra-dependent
             pass
+
+    def publish_committed(self, run: AgentRun) -> None:
+        """Publish telemetry only after the caller commits the run row."""
+
+        if run.status != "completed":
+            return
+        for step in run.steps:
+            self._publish(
+                run.run_id,
+                "agent_step",
+                {"step": step.step, "tool": step.tool},
+            )
+        self._publish(
+            run.run_id,
+            "agent_done",
+            {"summary": run.final_summary},
+        )
 
     def _synthesise(self, *, goal: str, steps: List[AgentStep], tenant: Tenant) -> Dict[str, Any]:
         # Default deterministic summary so the agent works even when no LLM
@@ -378,9 +396,8 @@ class AutonomousAgent:
         actor: str,
         case_id: Optional[int],
     ) -> None:
-        """Insert the run into autonomous_agent_runs and cache it locally."""
+        """Insert the run and fail when the durable write cannot flush."""
 
-        self._recent.append(run)
         try:
             row = AutonomousAgentRun(
                 tenant_id=tenant.id,
@@ -399,12 +416,19 @@ class AutonomousAgent:
             )
             self.session.add(row)
             self.session.flush()
-        except Exception as exc:  # pragma: no cover - persistence is best-effort
-            logger.warning("autonomous run persistence failed (run_id=%s): %s", run.run_id, exc)
+        except Exception as exc:
+            logger.error(
+                "autonomous run persistence failed (run_id=%s): %s",
+                run.run_id,
+                exc,
+            )
             try:
                 self.session.rollback()
             except Exception:  # pragma: no cover
                 pass
+            raise AgentPersistenceError(
+                "autonomous_run_persistence_unavailable"
+            ) from exc
 
     # ------------------------------------------------------------- replay log
 
@@ -416,14 +440,11 @@ class AutonomousAgent:
     ) -> List[Dict[str, Any]]:
         """Return persisted runs, newest first.
 
-        When ``tenant`` is supplied we scope to it (the route layer should
-        always pass one); without a tenant we return the in-process recent
-        cache so legacy tests that don't seed the table still see runs they
-        just produced.
+        A tenant is required so replay cannot cross a tenant boundary.
         """
 
         if tenant is None:
-            return [run.to_dict() for run in self._recent]
+            raise AgentReplayError("tenant_required_for_agent_replay")
         try:
             rows = (
                 self.session.query(AutonomousAgentRun)
@@ -432,9 +453,11 @@ class AutonomousAgent:
                 .limit(max(1, min(limit, 500)))
                 .all()
             )
-        except Exception as exc:  # pragma: no cover - degraded mode
-            logger.warning("autonomous run listing failed: %s", exc)
-            return [run.to_dict() for run in self._recent]
+        except Exception as exc:
+            logger.error("autonomous run listing failed: %s", exc)
+            raise AgentReplayError(
+                "autonomous_run_replay_unavailable"
+            ) from exc
         return [
             {
                 "run_id": row.run_id,
@@ -455,4 +478,10 @@ class AutonomousAgent:
         ]
 
 
-__all__ = ["AgentRun", "AgentStep", "AutonomousAgent"]
+__all__ = [
+    "AgentPersistenceError",
+    "AgentReplayError",
+    "AgentRun",
+    "AgentStep",
+    "AutonomousAgent",
+]
