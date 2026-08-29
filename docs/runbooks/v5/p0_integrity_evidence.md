@@ -100,3 +100,19 @@ Production build completed in 732ms
 ```
 
 `npm ci` reported 6 dependency audit findings: 3 moderate and 3 high. This is not treated as a pass. The dependency findings need a separate validated update because an automatic audit fix can make breaking dependency changes.
+
+## Fail-closed autonomous policy boundary
+
+The agent tests replace only policy evaluation for the infrastructure-error case and use real SQLite persistence. A policy exception now creates a denied durable run before any agent tool, AI call, or event publication. A normal no-artifact decision has the same stop-before-work property.
+
+The stored run includes:
+
+- structured denial disposition
+- server-derived action digest
+- authorization artifact ID when permitted
+
+Focused P0 result after this change:
+
+```text
+36 passed
+```
