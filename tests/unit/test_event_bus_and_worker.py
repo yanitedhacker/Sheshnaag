@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -11,6 +13,57 @@ from app.core.event_bus import EventBus
 from app.models.sheshnaag import LabRecipe, LabRun, RecipeRevision, RunEvent
 from app.models.v2 import Tenant
 from app.workers import sandbox_worker
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_worker_healthcheck_requires_redis_and_database(monkeypatch):
+    calls: list[str] = []
+
+    class FakeRedis:
+        def ping(self):
+            calls.append("redis")
+            return True
+
+        def close(self):
+            calls.append("redis_close")
+
+    class FakeSession:
+        def execute(self, statement):
+            assert str(statement) == "SELECT 1"
+            calls.append("database")
+
+        def close(self):
+            calls.append("database_close")
+
+    monkeypatch.setattr(sandbox_worker.redis, "from_url", lambda *_args, **_kwargs: FakeRedis())
+    monkeypatch.setattr(sandbox_worker, "SessionLocal", FakeSession)
+
+    assert sandbox_worker.check_worker_dependencies() is True
+    assert calls == ["redis", "database", "database_close", "redis_close"]
+
+
+def test_worker_healthcheck_cli_fails_closed(monkeypatch):
+    monkeypatch.setattr(sandbox_worker, "check_worker_dependencies", lambda: False)
+    monkeypatch.setattr(
+        sandbox_worker,
+        "run_forever",
+        lambda: (_ for _ in ()).throw(AssertionError("worker loop must not start")),
+    )
+
+    assert sandbox_worker.main(["--healthcheck"]) == 1
+
+
+def test_compose_worker_overrides_api_http_healthcheck():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    worker = compose.split("  worker:\n", 1)[1].split("  frontend:\n", 1)[0]
+
+    assert "healthcheck:" in worker
+    assert (
+        '["CMD", "python", "-m", "app.workers.sandbox_worker", "--healthcheck"]'
+        in worker
+    )
 
 
 def test_sandbox_worker_treats_redis_read_timeout_as_empty_poll():

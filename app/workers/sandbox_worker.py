@@ -31,7 +31,9 @@ import time
 from typing import Any
 
 import redis
+from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.event_bus import SANDBOX_WORK_STREAM, EventBus, run_event_stream
 from app.core.time import utc_now
@@ -41,6 +43,35 @@ from app.services.malware_lab_service import MalwareLabService
 from app.services.sheshnaag_service import SheshnaagService
 
 logger = logging.getLogger(__name__)
+
+
+def check_worker_dependencies() -> bool:
+    """Return true only when the worker can reach Redis and the database."""
+
+    redis_client = None
+    session = None
+    try:
+        redis_client = redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
+        if redis_client.ping() is not True:
+            return False
+        session = SessionLocal()
+        session.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        logger.warning("sandbox worker dependency health check failed")
+        return False
+    finally:
+        for resource in (session, redis_client):
+            if resource is None:
+                continue
+            try:
+                resource.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +372,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--supervised", action="store_true", help="Run as a supervised process pool"
     )
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="Check worker Redis and database dependencies, then exit",
+    )
     parser.add_argument("--concurrency", type=int, default=None)
     parser.add_argument("--max-restarts", type=int, default=10)
     return parser.parse_args(argv)
@@ -348,6 +384,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.healthcheck:
+        return 0 if check_worker_dependencies() else 1
     if args.supervised:
         return run_supervised(concurrency=args.concurrency, max_restarts=args.max_restarts)
     run_forever()

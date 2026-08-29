@@ -175,6 +175,12 @@ services:
       SHESHNAAG_REQUIRE_BETA_HEALTH: ${SHESHNAAG_REQUIRE_BETA_HEALTH:-false}
       SHESHNAAG_EGRESS_ENFORCE: ${SHESHNAAG_EGRESS_ENFORCE:-0}
       SHESHNAAG_SANDBOX_WORKER_CONCURRENCY: ${SHESHNAAG_SANDBOX_WORKER_CONCURRENCY:-2}
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.sandbox_worker", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     depends_on:
       db:
         condition: service_healthy
