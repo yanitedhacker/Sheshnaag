@@ -18,6 +18,7 @@ from app.services.capability_policy import (
     HmacDevSigner,
     IssuanceRequest,
     Reviewer,
+    exact_action_digest,
 )
 
 
@@ -70,6 +71,43 @@ def _issue(policy, capability, *, requester="alice@example.com", reviewers=None,
         requested_ttl=ttl,
     )
     return policy.issue(request, reviewers)
+
+
+def test_exact_action_digest_is_stable_for_argument_key_order():
+    first = exact_action_digest(
+        "autonomous_agent_run",
+        {
+            "tenant_id": 7,
+            "goal": "Review case",
+            "case_id": 42,
+            "max_steps": 3,
+        },
+    )
+    second = exact_action_digest(
+        "autonomous_agent_run",
+        {
+            "max_steps": 3,
+            "case_id": 42,
+            "goal": "Review case",
+            "tenant_id": 7,
+        },
+    )
+
+    assert first == second
+    assert first == "sha256:97e41ffa5eaa44acf40a95949482c43d87cfcbdb6107d60b31609fe28d48ee56"
+
+
+def test_exact_action_digest_changes_when_an_argument_changes():
+    approved = exact_action_digest(
+        "autonomous_agent_run",
+        {"tenant_id": 7, "goal": "A", "case_id": 42, "max_steps": 3},
+    )
+    changed = exact_action_digest(
+        "autonomous_agent_run",
+        {"tenant_id": 7, "goal": "B", "case_id": 42, "max_steps": 3},
+    )
+
+    assert changed != approved
 
 
 def test_denies_without_artifact(policy):

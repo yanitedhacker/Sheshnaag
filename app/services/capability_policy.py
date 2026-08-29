@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = "v4.1"
 GENESIS_HASH = b"\x00" * 32
 _DEFAULT_TTL = timedelta(days=30)
+EXACT_ACTION_CAPABILITIES = frozenset({"autonomous_agent_run"})
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +300,32 @@ def canonical_json(body: Any) -> bytes:
         ensure_ascii=False,
         default=_default_json,
     ).encode("utf-8")
+
+
+def exact_action_digest(action: str, arguments: dict[str, Any]) -> str:
+    """Return the SHA-256 digest for one validated action request."""
+
+    body = canonical_json({"action": action, "arguments": arguments})
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+def exact_action_scope(
+    action: str,
+    arguments: dict[str, Any],
+    *,
+    tenant_id: int,
+    case_id: Optional[int] = None,
+) -> dict[str, Any]:
+    """Build the capability scope that binds an artifact to one action."""
+
+    scope: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "action": action,
+        "action_digest": exact_action_digest(action, arguments),
+    }
+    if case_id is not None:
+        scope["case_id"] = case_id
+    return scope
 
 
 def _sha256(data: bytes) -> bytes:
@@ -979,6 +1006,7 @@ class CapabilityPolicy:
 
 __all__ = [
     "CAPABILITIES",
+    "EXACT_ACTION_CAPABILITIES",
     "Capability",
     "CapabilityPolicy",
     "CosignSigner",
@@ -992,4 +1020,6 @@ __all__ = [
     "VerificationResult",
     "build_signer",
     "canonical_json",
+    "exact_action_digest",
+    "exact_action_scope",
 ]
