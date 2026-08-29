@@ -71,7 +71,7 @@ A separate empty-database `alembic upgrade head` did not reach `v5a08`. Migratio
 sqlalchemy.exc.NoSuchTableError: advisory_records
 ```
 
-This is a confirmed pre-existing fresh-install migration blocker. It is not a `v5a08` result. It must be repaired and retested before the deployment gate can pass.
+This was a confirmed pre-existing fresh-install migration blocker. It was not a `v5a08` result. The repair and current result are recorded below.
 
 ## Independent exact-action HTTP lifecycle
 
@@ -188,7 +188,35 @@ v4a03_to_v4a04_creates_maintainer_assessments=true
 v4a04_downgrade_removes_maintainer_assessments=true
 ```
 
-The stamped `v4a03` upgrade path reached `v5a08`, and the downgrade returned to `v4a03`. This does not remove the separate empty-database Alembic blocker recorded above.
+The stamped `v4a03` upgrade path reached `v5a08`, and the downgrade returned to `v4a03`.
+
+### Fresh-database repair
+
+Alembic now handles `upgrade head` on a truly empty database as a current-schema bootstrap. It creates the current SQLAlchemy metadata snapshot, resolves one concrete Alembic head, writes that revision, and commits the SQLite version row. A nonempty database still uses the normal revision chain.
+
+The executable test proved:
+
+```text
+fresh upgrade head: exit 0
+alembic revision: v5a08
+repeat upgrade head: exit 0
+alembic current --check-heads: exit 0
+```
+
+The migration rehearsal now uses Alembic for the fresh bootstrap. All five checks passed, including `fresh_bootstrap_reaches_head=true`.
+
+The container entrypoint no longer ignores migration failure. An injected Alembic exit code 23 stopped the entrypoint with the same code, and the Uvicorn test marker was not created.
+
+The post-repair full local backend regression completed:
+
+```text
+742 passed
+135 skipped
+0 failed
+0 errors
+```
+
+The 135 skipped tests remain external integration gates. They are not passes.
 
 ## Full local regression
 

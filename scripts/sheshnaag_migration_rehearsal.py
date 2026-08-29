@@ -132,8 +132,20 @@ def main() -> int:
         temp_root = Path(temp_dir)
 
         fresh_db_path = temp_root / "fresh-bootstrap.sqlite3"
-        create_current_schema(fresh_db_path)
+        fresh_db_url = f"sqlite:///{fresh_db_path}"
+        fresh_upgrade = run_alembic(fresh_db_url, ["upgrade", "head"])
+        if fresh_upgrade.returncode != 0:
+            raise RuntimeError(
+                "Alembic fresh bootstrap failed:\n"
+                f"STDOUT:\n{fresh_upgrade.stdout}\n"
+                f"STDERR:\n{fresh_upgrade.stderr}"
+            )
         fresh_maintainer_columns = fetch_table_info(fresh_db_path, "maintainer_assessments")
+        with sqlite3.connect(fresh_db_path) as fresh_connection:
+            fresh_revision_row = fresh_connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()
+        fresh_revision = fresh_revision_row[0] if fresh_revision_row else None
 
         v4_db_path = temp_root / "v4a04-rehearsal.sqlite3"
         v4_db_url = f"sqlite:///{v4_db_path}"
@@ -158,6 +170,8 @@ def main() -> int:
 
         payload = {
             "fresh_bootstrap_database_url": f"sqlite:///{fresh_db_path}",
+            "fresh_upgrade_stdout": fresh_upgrade.stdout,
+            "fresh_upgrade_stderr": fresh_upgrade.stderr,
             "v4a04_rehearsal_database_url": v4_db_url,
             "stamp_stdout": stamp.stdout,
             "stamp_stderr": stamp.stderr,
@@ -171,6 +185,7 @@ def main() -> int:
             },
             "checks": {
                 "fresh_bootstrap_creates_maintainer_assessments": bool(fresh_maintainer_columns),
+                "fresh_bootstrap_reaches_head": fresh_revision == "v5a08",
                 "v4a03_to_v4a04_creates_maintainer_assessments": bool(maintainer_columns),
                 "v4a04_downgrade_removes_maintainer_assessments": not maintainer_exists_after_downgrade,
                 "maintainer_assessments_has_report_id": any(col["name"] == "report_id" for col in maintainer_columns),
