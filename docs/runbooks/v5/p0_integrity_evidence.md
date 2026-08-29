@@ -134,3 +134,20 @@ Focused P0 result after this change:
 ```text
 38 passed
 ```
+
+## Production signer fail-closed boundary
+
+Signer selection now rejects these states:
+
+- staging or production with a non-cosign signer
+- beta or release profile with a non-cosign signer
+- secure runtime with `cosign` selected but Sigstore unavailable
+- unknown signer names
+
+Development can still select HMAC explicitly. The production-missing-Sigstore test uses a controlled dummy module so it does not depend on the host package set.
+
+Focused P0 result after this change:
+
+```text
+41 passed
+```

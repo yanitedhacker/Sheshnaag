@@ -391,6 +391,10 @@ class Signer(Protocol):
         """Return True iff ``signature`` is valid for ``body`` under ``cert``."""
 
 
+class ProductionSignerUnavailable(RuntimeError):
+    """A secure deployment could not construct its required signer."""
+
+
 class HmacDevSigner:
     """HMAC-SHA256 signer for development / test.
 
@@ -454,15 +458,18 @@ class CosignSigner:
 
     name = "cosign-sigstore"
 
-    def __init__(self) -> None:
+    def __init__(self, *, allow_hmac_fallback: bool = True) -> None:
         try:
             import sigstore  # noqa: F401  # keep optional
             self._impl: Any = _SigstoreImpl()
         except Exception as exc:  # pragma: no cover — optional dep missing in dev
+            if not allow_hmac_fallback:
+                raise ProductionSignerUnavailable(
+                    f"sigstore_unavailable:{exc.__class__.__name__}"
+                ) from exc
             logger.warning(
                 "CosignSigner requested but sigstore unavailable (%s); "
-                "falling back to HmacDevSigner. Production deployments must "
-                "install 'sigstore>=3' so signatures land in Rekor.",
+                "falling back to HmacDevSigner for development only.",
                 exc,
             )
             self._impl = HmacDevSigner()
@@ -545,9 +552,25 @@ def build_signer() -> Signer:
     """Pick a signer based on the ``SHESHNAAG_AUDIT_SIGNER`` env var."""
 
     choice = os.getenv("SHESHNAAG_AUDIT_SIGNER", "hmac").strip().lower()
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    deployment_profile = os.getenv(
+        "DEPLOYMENT_PROFILE", "local_dev"
+    ).strip().lower()
+    secure_profiles = {
+        "design_partner_beta",
+        "full_v4_beta",
+        "release_verification",
+    }
+    secure_runtime = environment in {"staging", "production"} or (
+        deployment_profile in secure_profiles
+    )
+    if secure_runtime and choice != "cosign":
+        raise ProductionSignerUnavailable("cosign_required_for_secure_runtime")
     if choice == "cosign":
-        return CosignSigner()
-    return HmacDevSigner()
+        return CosignSigner(allow_hmac_fallback=not secure_runtime)
+    if choice == "hmac":
+        return HmacDevSigner()
+    raise ValueError(f"unknown_audit_signer:{choice}")
 
 
 # ---------------------------------------------------------------------------
@@ -1288,6 +1311,7 @@ __all__ = [
     "HmacDevSigner",
     "IssuanceRequest",
     "Reviewer",
+    "ProductionSignerUnavailable",
     "SCHEMA_VERSION",
     "Signer",
     "VerificationResult",

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import timedelta
+from types import ModuleType
 
 import pytest
 from sqlalchemy import create_engine
@@ -17,7 +19,9 @@ from app.services.capability_policy import (
     CapabilityPolicy,
     HmacDevSigner,
     IssuanceRequest,
+    ProductionSignerUnavailable,
     Reviewer,
+    build_signer,
     exact_action_digest,
     exact_action_scope,
 )
@@ -109,6 +113,34 @@ def test_exact_action_digest_changes_when_an_argument_changes():
     )
 
     assert changed != approved
+
+
+def test_production_cosign_does_not_fall_back_when_sigstore_is_missing(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DEPLOYMENT_PROFILE", "design_partner_beta")
+    monkeypatch.setenv("SHESHNAAG_AUDIT_SIGNER", "cosign")
+    monkeypatch.setitem(sys.modules, "sigstore", ModuleType("sigstore"))
+    monkeypatch.delitem(sys.modules, "sigstore.sign", raising=False)
+
+    with pytest.raises(ProductionSignerUnavailable, match="sigstore_unavailable"):
+        build_signer()
+
+
+def test_staging_rejects_hmac_signer_selection(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("DEPLOYMENT_PROFILE", "shared_server")
+    monkeypatch.setenv("SHESHNAAG_AUDIT_SIGNER", "hmac")
+
+    with pytest.raises(ProductionSignerUnavailable, match="cosign_required"):
+        build_signer()
+
+
+def test_development_can_explicitly_use_hmac(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("DEPLOYMENT_PROFILE", "local_dev")
+    monkeypatch.setenv("SHESHNAAG_AUDIT_SIGNER", "hmac")
+
+    assert isinstance(build_signer(), HmacDevSigner)
 
 
 def _agent_action_scope(goal="Review case", case_id=42, tenant_id=7, max_steps=3):
