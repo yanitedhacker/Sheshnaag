@@ -9,8 +9,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _current_alembic_head() -> str:
+    heads = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_heads()
+    assert len(heads) == 1
+    return heads[0]
 
 
 def test_current_schema_snapshot_can_adopt_v4_migration_history(tmp_path):
@@ -68,6 +77,7 @@ def test_current_schema_snapshot_installs_postgres_vector_extension_first():
 
 
 def test_alembic_upgrade_head_bootstraps_empty_database(tmp_path):
+    expected_head = _current_alembic_head()
     database = tmp_path / "fresh.sqlite3"
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite:///{database}"
@@ -95,7 +105,7 @@ def test_alembic_upgrade_head_bootstraps_empty_database(tmp_path):
             row[1]
             for row in connection.execute("PRAGMA table_info('autonomous_agent_runs')")
         }
-    assert revision == ("v5a08",)
+    assert revision == (expected_head,)
     assert {
         "tenants",
         "advisory_records",
@@ -128,10 +138,11 @@ def test_alembic_upgrade_head_bootstraps_empty_database(tmp_path):
     )
     assert repeated.returncode == 0, repeated.stderr
     assert current.returncode == 0, current.stderr
-    assert "v5a08 (head)" in current.stdout
+    assert f"{expected_head} (head)" in current.stdout
 
 
 def test_alembic_console_script_can_import_application(tmp_path):
+    expected_head = _current_alembic_head()
     database = tmp_path / "console-script.sqlite3"
     alembic_executable = Path(sys.executable).with_name("alembic")
     env = os.environ.copy()
@@ -151,7 +162,7 @@ def test_alembic_console_script_can_import_application(tmp_path):
     assert result.returncode == 0, result.stderr
     with sqlite3.connect(database) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-    assert revision == ("v5a08",)
+    assert revision == (expected_head,)
 
 
 def test_container_entrypoint_does_not_start_api_after_migration_failure(tmp_path):

@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_current_frontend_has_one_to_one_gated_routes_permissions_and_nav():
     result = smoke.validate_frontend(ROOT)
 
-    assert result["route_count"] == 26
-    assert result["permission_count"] == 26
-    assert result["nav_count"] == 26
+    assert result["route_count"] == 28
+    assert result["permission_count"] == 28
+    assert result["nav_count"] == 28
     assert result["index_permission_key"] == "intel"
 
 

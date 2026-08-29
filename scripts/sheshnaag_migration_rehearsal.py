@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path
 
 import sqlalchemy as sa
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -174,6 +176,14 @@ def create_current_schema(path: Path) -> None:
     engine.dispose()
 
 
+def current_alembic_head() -> str:
+    config = Config(str(ROOT / "alembic.ini"))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    if len(heads) != 1:
+        raise RuntimeError(f"migration_rehearsal_requires_single_head:{heads}")
+    return heads[0]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -183,6 +193,7 @@ def main() -> int:
         help="Optional path to write the rehearsal summary JSON.",
     )
     args = parser.parse_args()
+    expected_head = current_alembic_head()
 
     with tempfile.TemporaryDirectory(prefix="sheshnaag-migration-rehearsal-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -246,7 +257,7 @@ def main() -> int:
             },
             "checks": {
                 "fresh_bootstrap_creates_maintainer_assessments": bool(fresh_maintainer_columns),
-                "fresh_bootstrap_reaches_head": fresh_revision == "v5a08",
+                "fresh_bootstrap_reaches_head": fresh_revision == expected_head,
                 "v4a03_to_v4a04_creates_maintainer_assessments": bool(maintainer_columns),
                 "v4a04_downgrade_removes_maintainer_assessments": not maintainer_exists_after_downgrade,
                 "maintainer_assessments_has_report_id": any(
