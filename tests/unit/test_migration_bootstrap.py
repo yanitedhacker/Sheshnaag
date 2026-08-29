@@ -52,12 +52,46 @@ EXPECTED_PERMISSION_NAMES = {
     "runs.read",
     "specimens.write",
 }
+EXPECTED_V5_PERMISSION_NAMES = {
+    "admin.roles.assign",
+    "ai_sessions.read",
+    "analytics.read",
+    "artifacts.write",
+    "attack.read",
+    "authorization.review",
+    "autonomous.run",
+    "candidates.read",
+    "cases.read",
+    "defang.review",
+    "disclosure.write",
+    "evidence.read",
+    "findings.read",
+    "indicators.write",
+    "intel.read",
+    "ledger.read",
+    "policy.write",
+    "prevention.write",
+    "profiles.write",
+    "provenance.read",
+    "recipes.write",
+    "reports.read",
+    "review.read",
+    "runs.read",
+    "specimens.write",
+}
 EXPECTED_GRANT_COUNTS = {
     "analyst": 13,
     "lab_lead": 27,
     "read_only": 8,
     "reviewer": 16,
     "senior_analyst": 22,
+}
+EXPECTED_V5_GRANT_COUNTS = {
+    "analyst": 13,
+    "lab_lead": 25,
+    "read_only": 8,
+    "reviewer": 16,
+    "senior_analyst": 20,
 }
 
 
@@ -79,6 +113,34 @@ def _read_rbac_catalog(database: Path):
             )
         )
     return roles, permissions, grant_counts
+
+
+def _create_v5a08_snapshot(database: Path) -> dict[str, str]:
+    import app.models  # noqa: F401
+    from app.core.database import Base
+
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite:///{database}"
+    engine = sa.create_engine(env["DATABASE_URL"])
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE exploit_validation_runs")
+        connection.exec_driver_sql(
+            "ALTER TABLE analysis_cases ADD COLUMN status VARCHAR(32)"
+        )
+    engine.dispose()
+
+    stamp = subprocess.run(
+        [sys.executable, "-m", "alembic", "stamp", "v5a08"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert stamp.returncode == 0, stamp.stderr
+    return env
 
 
 def test_current_schema_snapshot_can_adopt_v4_migration_history(tmp_path):
@@ -212,33 +274,9 @@ def test_alembic_upgrade_head_bootstraps_empty_database(tmp_path):
 
 
 def test_alembic_upgrade_head_repairs_empty_v5a08_rbac_catalog(tmp_path):
-    import app.models  # noqa: F401
-    from app.core.database import Base
-
     expected_head = _current_alembic_head()
     database = tmp_path / "empty-v5-rbac.sqlite3"
-    env = os.environ.copy()
-    env["DATABASE_URL"] = f"sqlite:///{database}"
-
-    engine = sa.create_engine(env["DATABASE_URL"])
-    Base.metadata.create_all(engine)
-    with engine.begin() as connection:
-        connection.exec_driver_sql("DROP TABLE exploit_validation_runs")
-        connection.exec_driver_sql(
-            "ALTER TABLE analysis_cases ADD COLUMN status VARCHAR(32)"
-        )
-    engine.dispose()
-
-    stamp = subprocess.run(
-        [sys.executable, "-m", "alembic", "stamp", "v5a08"],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    assert stamp.returncode == 0, stamp.stderr
+    env = _create_v5a08_snapshot(database)
     assert _read_rbac_catalog(database) == (set(), set(), {})
 
     upgrade = subprocess.run(
@@ -261,49 +299,119 @@ def test_alembic_upgrade_head_repairs_empty_v5a08_rbac_catalog(tmp_path):
     )
 
 
-def test_current_rbac_catalog_preserves_existing_custom_descriptions(tmp_path):
-    import app.models  # noqa: F401
-    from app.core.database import Base
-    from app.migrations.rbac_catalog import ensure_current_rbac_catalog
-
+def test_alembic_upgrade_preserves_partial_v5a08_rbac_catalog(tmp_path):
     database = tmp_path / "partial-rbac.sqlite3"
-    engine = sa.create_engine(f"sqlite:///{database}")
-    Base.metadata.create_all(engine)
-    with engine.begin() as connection:
+    env = _create_v5a08_snapshot(database)
+    with sqlite3.connect(database) as connection:
         connection.execute(
-            sa.text(
-                "INSERT INTO roles (name, description) "
-                "VALUES ('analyst', 'operator-custom-role')"
-            )
+            "INSERT INTO roles (name, description) VALUES (?, ?)",
+            ("analyst", "operator-custom-role"),
         )
         connection.execute(
-            sa.text(
-                "INSERT INTO permissions (name, description) "
-                "VALUES ('intel.read', 'operator-custom-permission')"
-            )
+            "INSERT INTO permissions (name, description) VALUES (?, ?)",
+            ("intel.read", "operator-custom-permission"),
         )
         connection.execute(
-            sa.text(
-                "INSERT INTO role_permissions (role_name, permission_name) "
-                "VALUES ('analyst', 'intel.read')"
-            )
+            "INSERT INTO role_permissions (role_name, permission_name) VALUES (?, ?)",
+            ("analyst", "intel.read"),
         )
-        ensure_current_rbac_catalog(connection)
-        role_description = connection.execute(
-            sa.text("SELECT description FROM roles WHERE name = 'analyst'")
-        ).scalar_one()
-        permission_description = connection.execute(
-            sa.text("SELECT description FROM permissions WHERE name = 'intel.read'")
-        ).scalar_one()
-    engine.dispose()
 
-    assert role_description == "operator-custom-role"
-    assert permission_description == "operator-custom-permission"
+    upgrade = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert upgrade.returncode == 0, upgrade.stderr
+    with sqlite3.connect(database) as connection:
+        role_description = connection.execute(
+            "SELECT description FROM roles WHERE name = 'analyst'"
+        ).fetchone()
+        permission_description = connection.execute(
+            "SELECT description FROM permissions WHERE name = 'intel.read'"
+        ).fetchone()
+        existing_grant = connection.execute(
+            "SELECT 1 FROM role_permissions "
+            "WHERE role_name = 'analyst' AND permission_name = 'intel.read'"
+        ).fetchone()
+
+    assert role_description == ("operator-custom-role",)
+    assert permission_description == ("operator-custom-permission",)
+    assert existing_grant == (1,)
     assert _read_rbac_catalog(database) == (
         EXPECTED_ROLE_NAMES,
         EXPECTED_PERMISSION_NAMES,
         EXPECTED_GRANT_COUNTS,
     )
+
+
+def test_alembic_downgrade_v6a01_removes_only_v6_rbac_entries(tmp_path):
+    database = tmp_path / "v6-downgrade.sqlite3"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite:///{database}"
+
+    upgrade = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert upgrade.returncode == 0, upgrade.stderr
+
+    downgrade = subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "v6a01"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert downgrade.returncode == 0, downgrade.stderr
+    with sqlite3.connect(database) as connection:
+        revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+    assert revision == ("v6a01",)
+    assert _read_rbac_catalog(database) == (
+        EXPECTED_ROLE_NAMES,
+        EXPECTED_V5_PERMISSION_NAMES,
+        EXPECTED_V5_GRANT_COUNTS,
+    )
+
+
+def test_v6a02_offline_sql_contains_only_v6_rbac_inserts(tmp_path):
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite:///{tmp_path / 'offline.sqlite3'}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "v6a01:v6a02",
+            "--sql",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("INSERT INTO permissions") == 2
+    assert result.stdout.count("INSERT INTO role_permissions") == 4
+    assert "INSERT INTO roles" not in result.stdout
+    assert result.stdout.count("'purple.replay'") == 3
+    assert result.stdout.count("'research.write'") == 3
 
 
 def test_alembic_console_script_can_import_application(tmp_path):

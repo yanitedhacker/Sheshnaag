@@ -51,7 +51,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     for perm, _ in NEW_PERMISSIONS:
         op.execute(
-            sa.text("DELETE FROM role_permissions WHERE permission_name = :p"),
-            {"p": perm},
+            sa.text(
+                "DELETE FROM role_permissions WHERE permission_name = :p"
+            ).bindparams(p=perm)
         )
-        op.execute(sa.text("DELETE FROM permissions WHERE name = :p"), {"p": perm})
+        op.execute(
+            sa.text("DELETE FROM permissions WHERE name = :p").bindparams(p=perm)
+        )
