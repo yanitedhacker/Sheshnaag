@@ -30,16 +30,9 @@ OSQUERY_SMOKE_HOLD_SECONDS = 30
 
 
 def osquery_smoke_command() -> list[str]:
-    """Keep the guest alive for all curated osquery and baseline collectors."""
+    """Keep the guest alive without a shell or pre-collection workspace write."""
 
-    return [
-        "bash",
-        "-lc",
-        (
-            "echo osquery-smoke > /workspace/osquery-smoke.txt && "
-            f"sleep {OSQUERY_SMOKE_HOLD_SECONDS}"
-        ),
-    ]
+    return ["sleep", str(OSQUERY_SMOKE_HOLD_SECONDS)]
 
 
 def docker_ready() -> bool:

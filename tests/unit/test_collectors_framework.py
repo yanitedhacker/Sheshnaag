@@ -271,9 +271,10 @@ def test_pcap_payload_marks_sensitive_bounded_capture(monkeypatch):
 @pytest.mark.unit
 def test_osquery_smoke_keeps_guest_alive_for_collection_window():
     assert OSQUERY_SMOKE_HOLD_SECONDS >= 30
-    assert osquery_smoke_command()[-1].endswith(
-        f"sleep {OSQUERY_SMOKE_HOLD_SECONDS}"
-    )
+    assert osquery_smoke_command() == [
+        "sleep",
+        str(OSQUERY_SMOKE_HOLD_SECONDS),
+    ]
 
 
 @pytest.mark.unit
