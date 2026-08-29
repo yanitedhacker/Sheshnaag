@@ -17,6 +17,8 @@ import logging
 from alembic import op
 import sqlalchemy as sa
 
+from app.migrations.guards import existing_tables, table_row_count
+
 
 revision = "v5a01"
 down_revision = "v4a04"
@@ -148,43 +150,46 @@ VALID_ROLE_NAMES = tuple(name for name, _ in ROLES)
 
 
 def upgrade() -> None:
-    op.create_table(
-        "roles",
-        sa.Column("name", sa.String(length=50), primary_key=True, nullable=False),
-        sa.Column("description", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-    )
+    bind = op.get_bind()
+    tables = existing_tables(bind)
 
-    op.create_table(
-        "permissions",
-        sa.Column("name", sa.String(length=80), primary_key=True, nullable=False),
-        sa.Column("description", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-    )
+    if "roles" not in tables:
+        op.create_table(
+            "roles",
+            sa.Column("name", sa.String(length=50), primary_key=True, nullable=False),
+            sa.Column("description", sa.Text(), nullable=False),
+            sa.Column("created_at", sa.DateTime(), nullable=True),
+        )
 
-    op.create_table(
-        "role_permissions",
-        sa.Column(
-            "role_name",
-            sa.String(length=50),
-            sa.ForeignKey("roles.name", ondelete="CASCADE"),
-            primary_key=True,
-            nullable=False,
-        ),
-        sa.Column(
-            "permission_name",
-            sa.String(length=80),
-            sa.ForeignKey("permissions.name", ondelete="CASCADE"),
-            primary_key=True,
-            nullable=False,
-        ),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-    )
+    if "permissions" not in tables:
+        op.create_table(
+            "permissions",
+            sa.Column("name", sa.String(length=80), primary_key=True, nullable=False),
+            sa.Column("description", sa.Text(), nullable=False),
+            sa.Column("created_at", sa.DateTime(), nullable=True),
+        )
+
+    if "role_permissions" not in tables:
+        op.create_table(
+            "role_permissions",
+            sa.Column(
+                "role_name",
+                sa.String(length=50),
+                sa.ForeignKey("roles.name", ondelete="CASCADE"),
+                primary_key=True,
+                nullable=False,
+            ),
+            sa.Column(
+                "permission_name",
+                sa.String(length=80),
+                sa.ForeignKey("permissions.name", ondelete="CASCADE"),
+                primary_key=True,
+                nullable=False,
+            ),
+            sa.Column("created_at", sa.DateTime(), nullable=True),
+        )
 
     # Seed roles
-    bind = op.get_bind()
-    now_expr = sa.func.now()
-
     role_table = sa.table(
         "roles",
         sa.column("name", sa.String),
@@ -204,24 +209,27 @@ def upgrade() -> None:
         sa.column("created_at", sa.DateTime),
     )
 
-    op.bulk_insert(
-        role_table,
-        [{"name": name, "description": desc} for name, desc in ROLES],
-    )
-    op.bulk_insert(
-        permission_table,
-        [{"name": name, "description": desc} for name, desc in PERMISSIONS],
-    )
+    if op.get_context().as_sql or table_row_count(bind, "roles") == 0:
+        op.bulk_insert(
+            role_table,
+            [{"name": name, "description": desc} for name, desc in ROLES],
+        )
+    if op.get_context().as_sql or table_row_count(bind, "permissions") == 0:
+        op.bulk_insert(
+            permission_table,
+            [{"name": name, "description": desc} for name, desc in PERMISSIONS],
+        )
 
     role_perm_map = _build_role_perm_map()
-    op.bulk_insert(
-        role_perm_table,
-        [
-            {"role_name": role, "permission_name": perm}
-            for role, perms in role_perm_map.items()
-            for perm in sorted(perms)
-        ],
-    )
+    if op.get_context().as_sql or table_row_count(bind, "role_permissions") == 0:
+        op.bulk_insert(
+            role_perm_table,
+            [
+                {"role_name": role, "permission_name": perm}
+                for role, perms in role_perm_map.items()
+                for perm in sorted(perms)
+            ],
+        )
 
     # Backfill + CHECK constraint only run in online mode. In offline
     # (``alembic upgrade --sql``) the bind is a MockConnection that does

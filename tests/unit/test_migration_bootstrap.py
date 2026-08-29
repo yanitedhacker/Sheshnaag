@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -10,6 +11,33 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_current_schema_snapshot_can_adopt_v4_migration_history(tmp_path):
+    output = tmp_path / "migration-rehearsal.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "sheshnaag_migration_rehearsal.py"),
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["checks"] == {
+        "fresh_bootstrap_creates_maintainer_assessments": True,
+        "fresh_bootstrap_reaches_head": True,
+        "maintainer_assessments_has_report_id": True,
+        "v4a03_to_v4a04_creates_maintainer_assessments": True,
+        "v4a04_downgrade_removes_maintainer_assessments": True,
+    }
 
 
 def test_current_schema_snapshot_installs_postgres_vector_extension_first():

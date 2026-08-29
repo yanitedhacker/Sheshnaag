@@ -54,17 +54,48 @@ def upgrade() -> None:
         sa.column("permission_name", sa.String),
     )
 
-    op.bulk_insert(
-        permission_table,
-        [{"name": PERMISSION_NAME, "description": PERMISSION_DESCRIPTION}],
-    )
-    op.bulk_insert(
-        role_perm_table,
-        [
-            {"role_name": role, "permission_name": PERMISSION_NAME}
-            for role in GRANT_TO_ROLES
-        ],
-    )
+    if op.get_context().as_sql:
+        op.bulk_insert(
+            permission_table,
+            [{"name": PERMISSION_NAME, "description": PERMISSION_DESCRIPTION}],
+        )
+        op.bulk_insert(
+            role_perm_table,
+            [
+                {"role_name": role, "permission_name": PERMISSION_NAME}
+                for role in GRANT_TO_ROLES
+            ],
+        )
+        return
+
+    bind = op.get_bind()
+    permission_exists = bind.execute(
+        sa.text("SELECT 1 FROM permissions WHERE name = :permission").bindparams(
+            permission=PERMISSION_NAME
+        )
+    ).first()
+    if not permission_exists:
+        op.bulk_insert(
+            permission_table,
+            [{"name": PERMISSION_NAME, "description": PERMISSION_DESCRIPTION}],
+        )
+
+    existing_grants = {
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                "SELECT role_name FROM role_permissions "
+                "WHERE permission_name = :permission"
+            ).bindparams(permission=PERMISSION_NAME)
+        )
+    }
+    missing_grants = [
+        {"role_name": role, "permission_name": PERMISSION_NAME}
+        for role in GRANT_TO_ROLES
+        if role not in existing_grants
+    ]
+    if missing_grants:
+        op.bulk_insert(role_perm_table, missing_grants)
 
 
 def downgrade() -> None:

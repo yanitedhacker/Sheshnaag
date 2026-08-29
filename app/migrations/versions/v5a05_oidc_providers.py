@@ -14,6 +14,8 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
+from app.migrations.guards import existing_tables
+
 
 revision = "v5a05"
 down_revision = "v5a04"
@@ -22,6 +24,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if "oidc_providers" in existing_tables(op.get_bind()):
+        return
+
     op.create_table(
         "oidc_providers",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),

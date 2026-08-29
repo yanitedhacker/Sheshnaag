@@ -16,6 +16,8 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
+from app.migrations.guards import column_exists, existing_tables, index_exists
+
 
 revision = "v5a02"
 down_revision = "v5a01"
@@ -53,56 +55,66 @@ VALID_LIFECYCLE_STATES = (
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+
     # Add the 3 new columns to analysis_cases. Use server_default so
     # existing rows get a value without needing UPDATE before the
     # backfill runs.
-    op.add_column(
-        "analysis_cases",
-        sa.Column(
-            "lifecycle_state",
-            sa.String(length=40),
-            nullable=False,
-            server_default="triage",
-        ),
-    )
-    op.add_column(
-        "analysis_cases",
-        sa.Column("state_changed_at", sa.DateTime(), nullable=True),
-    )
-    op.add_column(
-        "analysis_cases",
-        sa.Column("state_changed_by", sa.String(length=200), nullable=True),
-    )
+    if not column_exists(bind, "analysis_cases", "lifecycle_state"):
+        op.add_column(
+            "analysis_cases",
+            sa.Column(
+                "lifecycle_state",
+                sa.String(length=40),
+                nullable=False,
+                server_default="triage",
+            ),
+        )
+    if not column_exists(bind, "analysis_cases", "state_changed_at"):
+        op.add_column(
+            "analysis_cases",
+            sa.Column("state_changed_at", sa.DateTime(), nullable=True),
+        )
+    if not column_exists(bind, "analysis_cases", "state_changed_by"):
+        op.add_column(
+            "analysis_cases",
+            sa.Column("state_changed_by", sa.String(length=200), nullable=True),
+        )
 
-    op.create_table(
+    if "case_state_transitions" not in existing_tables(bind):
+        op.create_table(
+            "case_state_transitions",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column(
+                "case_id",
+                sa.Integer(),
+                sa.ForeignKey("analysis_cases.id", ondelete="CASCADE"),
+                nullable=False,
+                index=True,
+            ),
+            sa.Column("from_state", sa.String(length=40), nullable=False),
+            sa.Column("to_state", sa.String(length=40), nullable=False),
+            sa.Column("actor", sa.String(length=200), nullable=False),
+            sa.Column("role_at_transition", sa.String(length=50), nullable=False),
+            sa.Column("reason", sa.Text(), nullable=True),
+            sa.Column("occurred_at", sa.DateTime(), nullable=False),
+        )
+    if not index_exists(
+        bind,
         "case_state_transitions",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column(
-            "case_id",
-            sa.Integer(),
-            sa.ForeignKey("analysis_cases.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-        sa.Column("from_state", sa.String(length=40), nullable=False),
-        sa.Column("to_state", sa.String(length=40), nullable=False),
-        sa.Column("actor", sa.String(length=200), nullable=False),
-        sa.Column("role_at_transition", sa.String(length=50), nullable=False),
-        sa.Column("reason", sa.Text(), nullable=True),
-        sa.Column("occurred_at", sa.DateTime(), nullable=False),
-    )
-    op.create_index(
         "ix_case_state_transitions_occurred_at",
-        "case_state_transitions",
-        ["occurred_at"],
-        unique=False,
-    )
+    ):
+        op.create_index(
+            "ix_case_state_transitions_occurred_at",
+            "case_state_transitions",
+            ["occurred_at"],
+            unique=False,
+        )
 
     if op.get_context().as_sql:
         return
 
     # Backfill lifecycle_state from the existing status column.
-    bind = op.get_bind()
     for legacy, new in LEGACY_STATUS_MAP.items():
         op.execute(
             sa.text(
