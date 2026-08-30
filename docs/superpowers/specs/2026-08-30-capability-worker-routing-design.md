@@ -30,10 +30,11 @@ Every message includes a sorted `required_capabilities` list and a
 stored run provider, launch mode, and analysis mode. It does not accept worker
 requirements from the HTTP client.
 
-Standard work requires `docker`. Risky execute-mode work requires `linux`,
-`kvm`, `libvirt`, `pcap`, `zeek`, and `secure-mode`. A worker subscribes only to
-streams for which it has the complete capability set. It also checks every
-message before it calls the execution handler.
+Standard work requires `docker`. Risky execute-mode work always requires
+`pcap`, `zeek`, and `secure-mode`. A libvirt job also requires `linux`, `kvm`,
+and `libvirt`; a Lima job also requires `lima`. A worker subscribes only to
+streams for which it has a complete capability set for at least one routed job.
+It also checks every message before it calls the execution handler.
 
 All consumers use the same group on a given stream. Redis therefore assigns an
 entry to one consumer only. A completed run is idempotent if a pending entry is
@@ -77,4 +78,3 @@ Unit tests will prove stream selection, canonical group use, incompatible
 worker rejection, matching-worker acceptance, provider selection, and
 idempotent handling of a completed run. Existing worker and provider tests must
 remain green.
-
