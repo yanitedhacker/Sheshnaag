@@ -40,6 +40,7 @@ STEPS = [
         "tests/unit/test_recipe_schema.py "
         "tests/unit/test_sheshnaag_service.py "
         "tests/unit/test_collectors_framework.py "
+        "tests/unit/test_compose_beta_contract.py "
         "tests/unit/test_sheshnaag_parity.py "
         "tests/integration/test_lab_lifecycle.py "
         "tests/integration/test_evidence_collectors.py "
