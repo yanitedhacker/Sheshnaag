@@ -29,6 +29,7 @@ jobs:
           tests/unit/test_sheshnaag_service.py
           tests/unit/test_collectors_framework.py
           tests/unit/test_compose_beta_contract.py
+          tests/unit/test_tenant_bootstrap_contract.py
           tests/unit/test_sheshnaag_parity.py
           tests/unit/test_maintainer_assessment.py
           tests/integration/test_lab_lifecycle.py

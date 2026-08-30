@@ -1,9 +1,10 @@
 """Tenant onboarding and listing APIs."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_sync_session
 from app.core.security import TokenData, verify_token_optional
 from app.models.v2 import Tenant
@@ -26,7 +27,15 @@ def onboard_tenant(
     request: TenantOnboardRequest,
     session: Session = Depends(get_sync_session),
 ):
-    """Create a private tenant and owner account."""
+    """Create a private tenant outside production when explicitly enabled."""
+    if (
+        settings.environment.strip().lower() == "production"
+        or not settings.tenant_onboarding_enabled
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant_onboarding_disabled",
+        )
     service = AuthService(session)
     return service.onboard_private_tenant(
         tenant_name=request.tenant_name,
@@ -59,7 +68,7 @@ def list_tenants(
                 "tenant_id": tenant.id,
                 "tenant_slug": tenant.slug,
                 "tenant_name": tenant.name,
-                "role": "viewer" if tenant.is_demo else None,
+                "role": "read_only" if tenant.is_demo else None,
                 "scopes": ["tenant:read"] if tenant.is_demo else [],
                 "is_demo": tenant.is_demo,
                 "is_read_only": tenant.is_read_only,
