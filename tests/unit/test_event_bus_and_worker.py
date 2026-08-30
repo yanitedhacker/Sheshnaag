@@ -4,16 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.core.event_bus import EventBus
-from app.models.sheshnaag import LabRecipe, LabRun, RecipeRevision, RunEvent
+from app.models.sheshnaag import EvidenceArtifact, LabRecipe, LabRun, RecipeRevision, RunEvent
 from app.models.v2 import Tenant
 from app.workers import sandbox_worker
-
+from app.workers.routing import (
+    SANDBOX_CONSUMER_GROUP,
+    WorkerCapabilityMismatch,
+    WorkerRequirementMismatch,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -64,14 +69,18 @@ def test_compose_worker_overrides_api_http_healthcheck():
         '["CMD", "python", "-m", "app.workers.sandbox_worker", "--healthcheck"]'
         in worker
     )
+    assert (
+        "SHESHNAAG_WORKER_CAPABILITIES: ${SHESHNAAG_WORKER_CAPABILITIES:-docker}"
+        in worker
+    )
 
 
 def test_sandbox_worker_treats_redis_read_timeout_as_empty_poll():
     class TimedOutClient:
         def xreadgroup(self, group, consumer, streams, *, block, count):
-            assert group == "sandbox-workers"
+            assert group == SANDBOX_CONSUMER_GROUP
             assert consumer == "sandbox-worker-1"
-            assert streams == {"sheshnaag:sandbox:work": ">"}
+            assert streams == {"sheshnaag:sandbox:work:standard": ">"}
             assert block == 1000
             assert count == 1
             raise sandbox_worker.redis.exceptions.TimeoutError(
@@ -80,9 +89,134 @@ def test_sandbox_worker_treats_redis_read_timeout_as_empty_poll():
 
     assert sandbox_worker._read_work_rows(
         TimedOutClient(),
-        group="sandbox-workers",
+        group=SANDBOX_CONSUMER_GROUP,
         consumer="sandbox-worker-1",
+        streams={"sheshnaag:sandbox:work:standard": ">"},
     ) == []
+
+
+def test_sandbox_worker_rejects_incompatible_job_before_database_access(monkeypatch):
+    monkeypatch.setattr(
+        sandbox_worker,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(AssertionError("database must not be opened")),
+    )
+    message = {
+        "run_id": 10,
+        "tenant_id": 2,
+        "routing_version": 1,
+        "required_capabilities": [
+            "kvm",
+            "libvirt",
+            "linux",
+            "pcap",
+            "secure-mode",
+            "zeek",
+        ],
+    }
+
+    with pytest.raises(WorkerCapabilityMismatch):
+        sandbox_worker.process_sandbox_work(message, worker_capabilities={"docker"})
+
+
+def test_sandbox_worker_selects_run_with_skip_locked():
+    sentinel = object()
+
+    class FakeQuery:
+        def __init__(self):
+            self.lock_options = None
+
+        def filter(self, *_criteria):
+            return self
+
+        def with_for_update(self, **options):
+            self.lock_options = options
+            return self
+
+        def first(self):
+            return sentinel
+
+    query = FakeQuery()
+
+    class FakeSession:
+        def query(self, model):
+            assert model is LabRun
+            return query
+
+    selected = sandbox_worker._select_run_for_execution(
+        FakeSession(),
+        run_id=12,
+        tenant_id=4,
+    )
+
+    assert selected is sentinel
+    assert query.lock_options == {"skip_locked": True}
+
+
+def test_sandbox_worker_rejects_downgraded_queue_claim_without_poisoning_run(
+    monkeypatch,
+):
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    session = TestingSession()
+    tenant = Tenant(slug="worker-routing", name="Worker Routing")
+    session.add(tenant)
+    session.flush()
+    recipe = LabRecipe(
+        tenant_id=tenant.id,
+        name="Routing recipe",
+        provider="libvirt",
+        current_revision_number=1,
+    )
+    session.add(recipe)
+    session.flush()
+    revision = RecipeRevision(
+        recipe_id=recipe.id,
+        revision_number=1,
+        approval_state="approved",
+        content={},
+    )
+    session.add(revision)
+    session.flush()
+    run = LabRun(
+        tenant_id=tenant.id,
+        recipe_revision_id=revision.id,
+        provider="libvirt",
+        launch_mode="execute",
+        state="queued",
+        manifest={"analysis_mode": "malware_detonation", "specimen_ids": [1]},
+    )
+    session.add(run)
+    session.commit()
+    run_id = run.id
+    tenant_id = tenant.id
+    session.close()
+
+    class NoPublishBus:
+        def publish(self, stream, event):
+            raise AssertionError("a rejected queue contract must not publish events")
+
+    monkeypatch.setattr(sandbox_worker, "SessionLocal", TestingSession)
+
+    with pytest.raises(WorkerRequirementMismatch):
+        sandbox_worker.process_sandbox_work(
+            {
+                "run_id": run_id,
+                "tenant_id": tenant_id,
+                "routing_version": 1,
+                "required_capabilities": ["docker"],
+            },
+            bus=NoPublishBus(),
+            worker_capabilities={"docker"},
+        )
+
+    verify = TestingSession()
+    assert verify.get(LabRun, run_id).state == "queued"
+    assert verify.query(RunEvent).filter(RunEvent.run_id == run_id).count() == 0
+    verify.close()
 
 
 def test_event_bus_uses_in_memory_fallback_when_redis_unavailable():
@@ -159,8 +293,16 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
     monkeypatch.setattr(sandbox_worker, "SheshnaagService", FakeExecutionService)
 
     result = sandbox_worker.process_sandbox_work(
-        {"run_id": run_id, "tenant_id": tenant_id, "actor": "analyst", "correlation_id": "abc"},
+        {
+            "run_id": run_id,
+            "tenant_id": tenant_id,
+            "actor": "analyst",
+            "correlation_id": "abc",
+            "routing_version": 1,
+            "required_capabilities": ["docker"],
+        },
         bus=FakeBus(),
+        worker_capabilities={"docker"},
     )
 
     verify = TestingSession()
@@ -175,6 +317,91 @@ def test_sandbox_worker_marks_run_completed_and_publishes_events(monkeypatch):
     assert stored.state == "completed"
     assert {"run_started", "run_completed"}.issubset(set(event_types))
     assert [event["type"] for _, event in published] == ["run_started", "run_completed"]
+
+
+def test_sandbox_worker_completed_replay_is_idempotent(monkeypatch):
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    session = TestingSession()
+    tenant = Tenant(slug="worker-replay", name="Worker Replay")
+    session.add(tenant)
+    session.flush()
+    recipe = LabRecipe(
+        tenant_id=tenant.id,
+        name="Replay recipe",
+        provider="docker_kali",
+        current_revision_number=1,
+    )
+    session.add(recipe)
+    session.flush()
+    revision = RecipeRevision(
+        recipe_id=recipe.id,
+        revision_number=1,
+        approval_state="approved",
+        content={},
+    )
+    session.add(revision)
+    session.flush()
+    run = LabRun(
+        tenant_id=tenant.id,
+        recipe_revision_id=revision.id,
+        provider="docker_kali",
+        launch_mode="execute",
+        state="completed",
+        manifest={
+            "worker_execution": {
+                "evidence_count": 1,
+                "live_evidence_count": 1,
+                "cleanup_state": "destroyed",
+            }
+        },
+    )
+    session.add(run)
+    session.flush()
+    session.add(
+        EvidenceArtifact(
+            run_id=run.id,
+            artifact_kind="service_logs",
+            title="Replay evidence",
+            sha256="a" * 64,
+            payload={"collection_state": "live"},
+        )
+    )
+    session.commit()
+    run_id = run.id
+    tenant_id = tenant.id
+    session.close()
+
+    class NoPublishBus:
+        def publish(self, stream, event):
+            raise AssertionError("idempotent replay must not publish lifecycle events")
+
+    monkeypatch.setattr(sandbox_worker, "SessionLocal", TestingSession)
+
+    result = sandbox_worker.process_sandbox_work(
+        {
+            "run_id": run_id,
+            "tenant_id": tenant_id,
+            "routing_version": 1,
+            "required_capabilities": ["docker"],
+        },
+        bus=NoPublishBus(),
+        worker_capabilities={"docker"},
+    )
+
+    assert result == {
+        "run_id": run_id,
+        "status": "completed",
+        "result": {
+            "state": "completed",
+            "evidence_count": 1,
+            "live_evidence_count": 1,
+            "cleanup_state": "destroyed",
+        },
+    }
 
 
 def test_sandbox_worker_marks_run_errored_when_preflight_fails(monkeypatch):
@@ -231,13 +458,24 @@ def test_sandbox_worker_marks_run_errored_when_preflight_fails(monkeypatch):
     monkeypatch.setattr(sandbox_worker, "SessionLocal", TestingSession)
     monkeypatch.setattr(sandbox_worker, "MalwareLabService", FakeService)
 
-    try:
+    with pytest.raises(ValueError, match="capability_required"):
         sandbox_worker.process_sandbox_work(
-            {"run_id": run_id, "tenant_id": tenant_id, "actor": "analyst", "correlation_id": "abc"},
+            {
+                "run_id": run_id,
+                "tenant_id": tenant_id,
+                "actor": "analyst",
+                "correlation_id": "abc",
+                "routing_version": 1,
+                "required_capabilities": [
+                    "lima",
+                    "pcap",
+                    "secure-mode",
+                    "zeek",
+                ],
+            },
             bus=FakeBus(),
+            worker_capabilities={"lima", "pcap", "secure-mode", "zeek"},
         )
-    except ValueError:
-        pass
 
     verify = TestingSession()
     stored = verify.get(LabRun, run_id)

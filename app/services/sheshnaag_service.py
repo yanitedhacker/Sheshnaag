@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -33,6 +34,7 @@ from app.lab.docker_kali_provider import (
     DEFAULT_KALI_IMAGE,
     DEFAULT_OSQUERY_IMAGE,
 )
+from app.lab.execution_requirements import RISKY_ANALYSIS_MODES, SECURE_PROVIDER_NAMES
 from app.lab.image_catalog import list_image_catalog, resolve_catalog_entry
 from app.lab.interfaces import (
     HealthStatus,
@@ -341,8 +343,10 @@ class SheshnaagService:
             raise ValueError(f"Unsupported provider '{provider_name}'.")
         execution_policy = content.get("execution_policy") or {}
         secure_mode_required = bool(execution_policy.get("secure_mode_required"))
-        if secure_mode_required and provider_name != "lima":
-            raise ValueError("This recipe requires secure mode and must use the Lima provider.")
+        if secure_mode_required and provider_name not in SECURE_PROVIDER_NAMES:
+            raise ValueError(
+                "This recipe requires secure mode and must use a secure provider: lima or libvirt."
+            )
         allowed_modes = execution_policy.get("allowed_modes") or ["dry_run", "simulated", "execute"]
         if launch_mode not in allowed_modes:
             raise ValueError(f"Launch mode '{launch_mode}' is not allowed for this recipe.")
@@ -390,15 +394,21 @@ class SheshnaagService:
         )
 
     def _enqueue_sandbox_work(self, *, run: LabRun, tenant: Tenant, actor: str) -> str:
-        from app.core.event_bus import SANDBOX_WORK_STREAM, EventBus
+        from app.core.event_bus import EventBus
+        from app.lab.execution_requirements import required_worker_capabilities_for_run
+        from app.workers.routing import ROUTING_VERSION, stream_for_requirements
+
+        required = required_worker_capabilities_for_run(run)
 
         return EventBus().publish(
-            SANDBOX_WORK_STREAM,
+            stream_for_requirements(required),
             {
                 "run_id": run.id,
                 "tenant_id": tenant.id,
                 "actor": actor,
                 "correlation_id": uuid.uuid4().hex,
+                "required_capabilities": sorted(required),
+                "routing_version": ROUTING_VERSION,
             },
         )
 
@@ -420,15 +430,18 @@ class SheshnaagService:
         *,
         analyst_name: str,
         candidate: ResearchCandidate | None,
+        sandbox_profile: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        manifest = dict(run.manifest or {})
         return {
             "run_id": run.id,
             "tenant_slug": tenant.slug,
             "analyst_name": analyst_name,
             "provider": run.provider,
             "launch_mode": run.launch_mode,
-            "analysis_mode": (run.manifest or {}).get("analysis_mode", "cve_validation"),
-            "specimen_ids": (run.manifest or {}).get("specimen_ids") or [],
+            "analysis_mode": manifest.get("analysis_mode", "cve_validation"),
+            "specimen_ids": manifest.get("specimen_ids") or [],
+            "sandbox_profile": sandbox_profile or manifest.get("sandbox_profile") or {},
             "candidate": self._candidate_payload(candidate) if candidate else {},
             "cve_id": candidate.cve.cve_id if candidate and candidate.cve else None,
         }
@@ -458,13 +471,14 @@ class SheshnaagService:
             ai_assist_enabled=ai_assist_enabled,
             ai_provider_hint=ai_provider_hint,
         )
-        risky_modes = {"malware_detonation", "url_analysis", "email_analysis"}
         if (
-            resolved["analysis_mode"] in risky_modes
-            and resolved["resolved_provider_name"] != "lima"
+            resolved["analysis_mode"] in RISKY_ANALYSIS_MODES
+            and resolved["resolved_provider_name"] not in SECURE_PROVIDER_NAMES
             and launch_mode in {"simulated", "execute"}
         ):
-            raise ValueError("Risky malware analysis modes require the Lima provider.")
+            raise ValueError(
+                "Risky malware analysis modes require a secure provider: lima or libvirt."
+            )
         return resolved
 
     def _persist_v3_run_context(self, run: LabRun, *, v3_context: dict[str, Any]) -> None:
@@ -900,7 +914,7 @@ class SheshnaagService:
             .group_by(ResearchCandidate.status)
             .all()
         )
-        by_status = {status: count for status, count in status_rows}
+        by_status = dict(status_rows)
 
         return {
             "tenant": {"id": tenant.id, "slug": tenant.slug, "name": tenant.name},
@@ -1391,7 +1405,11 @@ class SheshnaagService:
         self.session.flush()
 
         run_context = self._run_context_for_provider(
-            tenant, run, analyst_name=analyst_name, candidate=candidate
+            tenant,
+            run,
+            analyst_name=analyst_name,
+            candidate=candidate,
+            sandbox_profile=v3_context.get("sandbox_profile"),
         )
         provider_revision_content = self._revision_content_for_provider(
             revision.content or {}, provider_name
@@ -1512,7 +1530,7 @@ class SheshnaagService:
         *,
         run_id: int,
         actor: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute one queued run and require live evidence before completion."""
 
         run = self._get_run(tenant, run_id)
@@ -1559,7 +1577,7 @@ class SheshnaagService:
                 f"state={run.state} error={launch_result.error or 'unknown'}"
             )
 
-        cleanup_result: Optional[ProviderResult] = None
+        cleanup_result: ProviderResult | None = None
         try:
             if self._should_collect_after_provider_launch(run):
                 artifacts = self._collect_and_generate(
@@ -1576,6 +1594,16 @@ class SheshnaagService:
                 run=run,
             )
             self.session.flush()
+
+            if run.state == RunState.RUNNING.value:
+                stop_result = provider.stop(provider_run_ref=run.provider_run_ref)
+                self._apply_provider_result(run, stop_result)
+                self._add_run_event(run, "provider_stop", stop_result)
+                if run.state != RunState.STOPPED.value:
+                    raise RuntimeError(
+                        "Provider did not stop after specimen execution: "
+                        f"state={run.state} error={stop_result.error or 'unknown'}"
+                    )
 
             evidence_rows = (
                 self.session.query(EvidenceArtifact)
@@ -1695,13 +1723,11 @@ class SheshnaagService:
             }
         except Exception:
             if run.provider_run_ref and cleanup_result is None:
-                try:
+                with contextlib.suppress(Exception):
                     provider.teardown(
                         provider_run_ref=run.provider_run_ref,
                         retain_workspace=False,
                     )
-                except Exception:
-                    pass
             raise
 
     def plan_run(
@@ -1773,7 +1799,11 @@ class SheshnaagService:
         self.session.flush()
 
         run_context = self._run_context_for_provider(
-            tenant, run, analyst_name=analyst_name, candidate=candidate
+            tenant,
+            run,
+            analyst_name=analyst_name,
+            candidate=candidate,
+            sandbox_profile=v3_context.get("sandbox_profile"),
         )
         provider_revision_content = self._revision_content_for_provider(
             revision.content or {}, provider_name
@@ -3815,11 +3845,13 @@ class SheshnaagService:
             return False
         if manifest.get("container_id"):
             return True
-        if run.provider == "lima" and (
-            manifest.get("instance_name") or (manifest.get("snapshot_refs") or {}).get("booted")
-        ):
-            return True
-        return False
+        return bool(
+            run.provider == "lima"
+            and (
+                manifest.get("instance_name")
+                or (manifest.get("snapshot_refs") or {}).get("booted")
+            )
+        )
 
     def _get_candidate(self, tenant: Tenant, candidate_id: int) -> ResearchCandidate:
         candidate = (
@@ -4966,7 +4998,7 @@ class SheshnaagService:
     def _version_token_tuple(value: str | None) -> tuple:
         raw = str(value or "").strip()
         if not raw:
-            return tuple()
+            return ()
         parts: list[Any] = []
         for token in raw.replace("-", ".").split("."):
             if token.isdigit():

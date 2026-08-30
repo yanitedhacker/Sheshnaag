@@ -126,6 +126,42 @@ def decode_token(token: str) -> dict:
         ) from exc
 
 
+def token_data_from_payload(payload: dict[str, Any]) -> TokenData:
+    """Convert a verified JWT payload into the canonical actor context."""
+
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing subject",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    scopes = payload.get("scopes", []) or []
+    memberships = payload.get("memberships", []) or []
+
+    explicit_roles = payload.get("roles", []) or []
+    membership_roles = [
+        membership.get("role")
+        for membership in memberships
+        if isinstance(membership, dict) and membership.get("role")
+    ]
+    seen: set[str] = set()
+    roles: list[str] = []
+    for role in list(explicit_roles) + membership_roles:
+        if role and role not in seen:
+            seen.add(role)
+            roles.append(role)
+
+    return TokenData(
+        username=str(username),
+        user_id=payload.get("user_id"),
+        scopes=list(scopes),
+        memberships=list(memberships),
+        roles=roles,
+    )
+
+
 def verify_token(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> TokenData:
     """
     Dependency to verify JWT token from request.
@@ -158,43 +194,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials | None = Depends(secu
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = decode_token(credentials.credentials)
-    username: str = payload.get("sub")
-
-    if username is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token: missing subject",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    scopes = payload.get("scopes", [])
-    memberships = payload.get("memberships", [])
-
-    # Roles can arrive in two shapes:
-    #   1) A top-level ``roles: ["analyst", ...]`` claim (post-OIDC,
-    #      W1a-onward, or service-to-service tokens).
-    #   2) Embedded as ``role`` on each membership dict (the v2-era
-    #      shape — TenantMembership.role per tenant).
-    # We union both so this dependency works for tokens minted by either
-    # path. Order: explicit ``roles`` claim wins on ordering, then the
-    # union with membership-derived roles, deduplicated.
-    explicit_roles = payload.get("roles", []) or []
-    membership_roles = [m.get("role") for m in memberships if isinstance(m, dict) and m.get("role")]
-    seen: set[str] = set()
-    roles: list[str] = []
-    for r in list(explicit_roles) + membership_roles:
-        if r and r not in seen:
-            seen.add(r)
-            roles.append(r)
-
-    return TokenData(
-        username=username,
-        user_id=payload.get("user_id"),
-        scopes=scopes,
-        memberships=memberships,
-        roles=roles,
-    )
+    return token_data_from_payload(decode_token(credentials.credentials))
 
 
 def verify_token_optional(

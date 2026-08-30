@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -12,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
+from app.api.routes import taxii_routes
 from app.api.routes.taxii_routes import TAXII_CONTENT_TYPE
 from app.api.routes.taxii_routes import router as taxii_router
 from app.core.database import Base, get_sync_session
@@ -69,9 +72,16 @@ client = TestClient(test_app)
 
 TENANT_ID: int
 CASE_ID: int
+TAXII_STORE_DIR: tempfile.TemporaryDirectory[str]
 
 
 def setup_module() -> None:
+    store_dir = tempfile.TemporaryDirectory(prefix="sheshnaag-taxii-test-")
+    globals()["TAXII_STORE_DIR"] = store_dir
+    taxii_routes._STORE_PATH = Path(store_dir.name) / "taxii_ingest_store.json"
+    taxii_routes._INGEST_STORE = {}
+    taxii_routes._STATUS_STORE = {}
+    taxii_routes._STORE_LOADED = False
     Base.metadata.create_all(bind=engine)
     session = TestingSession()
     try:
@@ -142,6 +152,7 @@ def setup_module() -> None:
 
 def teardown_module() -> None:
     Base.metadata.drop_all(bind=engine)
+    TAXII_STORE_DIR.cleanup()
 
 
 def _issue_external_disclosure_artifact():

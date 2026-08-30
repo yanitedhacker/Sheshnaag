@@ -22,12 +22,14 @@ to the SSE stream so the analyst sees the error in real time.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import multiprocessing as mp
 import os
 import signal
 import time
+from collections.abc import Collection
 from typing import Any
 
 import redis
@@ -35,12 +37,25 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.event_bus import SANDBOX_WORK_STREAM, EventBus, run_event_stream
+from app.core.event_bus import EventBus, run_event_stream
 from app.core.time import utc_now
-from app.models.sheshnaag import LabRun, RunEvent
+from app.lab.execution_requirements import required_worker_capabilities_for_run
+from app.models.sheshnaag import EvidenceArtifact, LabRun, RunEvent
 from app.models.v2 import Tenant
 from app.services.malware_lab_service import MalwareLabService
 from app.services.sheshnaag_service import SheshnaagService
+from app.workers.routing import (
+    SANDBOX_CONSUMER_GROUP,
+    WorkEntryLease,
+    WorkerRoutingError,
+    WorkerRunClaimUnavailable,
+    assert_message_matches_persisted_requirements,
+    assert_worker_can_process,
+    claim_stale_work_rows,
+    ensure_consumer_groups,
+    normalize_capabilities,
+    streams_for_worker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +83,8 @@ def check_worker_dependencies() -> bool:
         for resource in (session, redis_client):
             if resource is None:
                 continue
-            try:
+            with contextlib.suppress(Exception):
                 resource.close()
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -111,18 +124,86 @@ def _record_event(
     )
 
 
-def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None) -> dict[str, Any]:
+def configured_worker_capabilities() -> frozenset[str]:
+    """Return the explicit capability set for this worker process."""
+
+    raw = os.getenv("SHESHNAAG_WORKER_CAPABILITIES", "docker")
+    return normalize_capabilities(raw.split(","))
+
+
+def _select_run_for_execution(session, *, run_id: int, tenant_id: int):
+    """Claim one run row without waiting behind another active worker."""
+
+    return (
+        session.query(LabRun)
+        .filter(LabRun.id == run_id, LabRun.tenant_id == tenant_id)
+        .with_for_update(skip_locked=True)
+        .first()
+    )
+
+
+def process_sandbox_work(
+    message: dict[str, Any],
+    *,
+    bus: EventBus | None = None,
+    worker_capabilities: Collection[str] | None = None,
+) -> dict[str, Any]:
+    capabilities = (
+        configured_worker_capabilities()
+        if worker_capabilities is None
+        else normalize_capabilities(worker_capabilities)
+    )
+    assert_worker_can_process(message, capabilities)
     bus = bus or EventBus()
     run_id = int(message["run_id"])
     tenant_id = int(message["tenant_id"])
     session = SessionLocal()
     try:
-        run = (
-            session.query(LabRun).filter(LabRun.id == run_id, LabRun.tenant_id == tenant_id).first()
+        run = _select_run_for_execution(
+            session,
+            run_id=run_id,
+            tenant_id=tenant_id,
         )
         tenant = session.query(Tenant).filter(Tenant.id == tenant_id).first()
-        if run is None or tenant is None:
+        if run is None:
+            raise WorkerRunClaimUnavailable("run_claim_unavailable")
+        if tenant is None:
             raise ValueError("run_or_tenant_not_found")
+
+        persisted_requirements = required_worker_capabilities_for_run(run)
+        assert_message_matches_persisted_requirements(
+            message,
+            persisted_requirements,
+            capabilities,
+        )
+
+        if run.state == "completed":
+            evidence_rows = (
+                session.query(EvidenceArtifact)
+                .filter(EvidenceArtifact.run_id == run.id)
+                .all()
+            )
+            worker_execution = dict((run.manifest or {}).get("worker_execution") or {})
+            live_evidence_count = sum(
+                1
+                for item in evidence_rows
+                if str(
+                    (item.payload or {}).get("collection_state")
+                    or ((item.payload or {}).get("collector_health") or {}).get("status")
+                    or ""
+                ).lower()
+                in {"live", "ok"}
+            )
+            return {
+                "run_id": run_id,
+                "status": "completed",
+                "result": {
+                    "state": "completed",
+                    "evidence_count": len(evidence_rows),
+                    "live_evidence_count": live_evidence_count,
+                    "cleanup_state": worker_execution.get("cleanup_state"),
+                },
+            }
 
         run.started_at = run.started_at or utc_now()
         started = _event(
@@ -130,7 +211,7 @@ def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None
         )
         _record_event(session, run_id, "run_started", started)
         bus.publish(run_event_stream(run_id), started)
-        session.commit()
+        session.flush()
 
         preflight_fn = getattr(
             MalwareLabService(session),
@@ -156,6 +237,10 @@ def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None
         bus.publish(run_event_stream(run_id), completed)
         session.commit()
         return {"run_id": run_id, "status": "completed", "result": result}
+    except WorkerRoutingError:
+        session.rollback()
+        logger.warning("Rejected sandbox routing contract for run_id=%s", run_id)
+        raise
     except Exception as exc:
         session.rollback()
         run = (
@@ -197,23 +282,21 @@ def _install_signal_handlers() -> None:
         logger.info("sandbox worker received signal %s; draining", signum)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(ValueError, OSError):
             signal.signal(sig, _request_shutdown)
-        except (ValueError, OSError):
             # Signals can only be registered from the main thread of the
             # main interpreter — multiprocessing workers fall back to
             # default handlers, which is fine.
-            pass
 
 
-def _read_work_rows(client, *, group: str, consumer: str) -> list:
+def _read_work_rows(client, *, group: str, consumer: str, streams: dict[str, str]) -> list:
     """Read one queue item without crashing when an idle poll times out."""
 
     try:
         return client.xreadgroup(
             group,
             consumer,
-            {SANDBOX_WORK_STREAM: ">"},
+            streams,
             block=_WORK_READ_BLOCK_MS,
             count=1,
         )
@@ -231,31 +314,49 @@ def run_forever(*, max_messages: int | None = None) -> None:
     if client is None:
         raise RuntimeError("Redis is required for the sandbox worker")
 
-    group = os.getenv("SHESHNAAG_SANDBOX_CONSUMER_GROUP", "sandbox-workers")
+    capabilities = configured_worker_capabilities()
+    streams = streams_for_worker(capabilities)
+    if not streams:
+        raise RuntimeError("Worker has no complete capability set for any work stream")
+
+    group = SANDBOX_CONSUMER_GROUP
     consumer = os.getenv("SHESHNAAG_SANDBOX_CONSUMER_NAME", f"sandbox-worker-{os.getpid()}")
-    try:
-        client.xgroup_create(SANDBOX_WORK_STREAM, group, id="0-0", mkstream=True)
-    except redis.ResponseError as exc:
-        if "BUSYGROUP" not in str(exc):
-            raise
+    ensure_consumer_groups(client, streams)
 
     logger.info(
-        "sandbox worker consuming %s group=%s consumer=%s", SANDBOX_WORK_STREAM, group, consumer
+        "sandbox worker consuming %s group=%s consumer=%s",
+        sorted(streams),
+        group,
+        consumer,
     )
     processed = 0
     while not _SHUTDOWN:
-        rows = _read_work_rows(client, group=group, consumer=consumer)
+        rows = _read_work_rows(client, group=group, consumer=consumer, streams=streams)
         if not rows:
-            time.sleep(0.05)
-            continue
-        for _, messages in rows:
+            rows = claim_stale_work_rows(client, streams, consumer=consumer)
+            if not rows:
+                time.sleep(0.05)
+                continue
+        for stream_name, messages in rows:
+            if isinstance(stream_name, bytes):
+                stream_name = stream_name.decode("utf-8")
             for entry_id, fields in messages:
                 try:
-                    process_sandbox_work(_decode_message(fields), bus=bus)
+                    with WorkEntryLease(
+                        client,
+                        stream=stream_name,
+                        consumer=consumer,
+                        entry_id=entry_id,
+                    ):
+                        process_sandbox_work(
+                            _decode_message(fields),
+                            bus=bus,
+                            worker_capabilities=capabilities,
+                        )
                 except Exception:
                     logger.exception("leaving failed sandbox work message pending: %s", entry_id)
                     continue
-                client.xack(SANDBOX_WORK_STREAM, group, entry_id)
+                client.xack(stream_name, group, entry_id)
                 processed += 1
                 if max_messages is not None and processed >= max_messages:
                     return
@@ -275,10 +376,10 @@ def _child_entrypoint(child_index: int) -> None:  # pragma: no cover - subproces
     logging.basicConfig(level=logging.INFO)
     try:
         run_forever()
-    except Exception:
+    except Exception as exc:
         logger.exception("sandbox worker child crashed")
         # Non-zero exit triggers the supervisor to restart with backoff.
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
 
 def run_supervised(*, concurrency: int | None = None, max_restarts: int = 10) -> int:
@@ -317,16 +418,12 @@ def run_supervised(*, concurrency: int | None = None, max_restarts: int = 10) ->
         logger.info("sandbox supervisor received signal %s; forwarding to children", signum)
         for proc in children.values():
             if proc.is_alive():
-                try:
+                with contextlib.suppress(Exception):
                     proc.terminate()
-                except Exception:
-                    pass
 
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(ValueError, OSError):
             signal.signal(sig, _shutdown)
-        except (ValueError, OSError):
-            pass
 
     exit_code = 0
     while not shutdown:

@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 from app.lab.launchers.base import LauncherResult
+from app.lab.libvirt_contract import LIBVIRT_URI, resolve_libvirt_domain
 
 # PE-ish specimen kinds. We accept the legacy ``file`` kind too because
 # the V3 schema stores all binary specimens as ``file`` and leans on
@@ -84,17 +85,32 @@ class PeLauncher:
         duration_target = int(
             (getattr(profile, "config", {}) or {}).get("detonation_timeout_s", 120)
         )
-        guest_name = (getattr(profile, "config", {}) or {}).get(
-            "vm_name", "sheshnaag-win-detonation"
-        )
+        profile_config = getattr(profile, "config", {}) or {}
+        guest_name = resolve_libvirt_domain(profile_config)
 
         pcap_path = os.path.join(quarantine_path, f"run-{getattr(run, 'id', 'x')}.pcap")
         memdump_path = os.path.join(quarantine_path, f"run-{getattr(run, 'id', 'x')}.mem")
 
         real_mode = self._has_binary("virsh")
         if real_mode:
-            logs.append(f"virsh present: booting guest {guest_name}")
-            self._exec(["virsh", "start", guest_name], timeout=30)
+            virsh = ["virsh", "-c", LIBVIRT_URI]
+            domain_info = self._exec([*virsh, "dominfo", guest_name], timeout=15)
+            if domain_info.returncode != 0:
+                raise RuntimeError(
+                    f"libvirt domain check failed: {domain_info.stderr or guest_name}"
+                )
+            domain_state = self._exec([*virsh, "domstate", guest_name], timeout=15)
+            if domain_state.returncode != 0:
+                raise RuntimeError(
+                    f"libvirt domain state failed: {domain_state.stderr or guest_name}"
+                )
+            if "running" not in str(domain_state.stdout or "").strip().lower():
+                started = self._exec([*virsh, "start", guest_name], timeout=30)
+                if started.returncode != 0:
+                    raise RuntimeError(
+                        f"libvirt domain start failed: {started.stderr or guest_name}"
+                    )
+            logs.append(f"libvirt guest ready: {guest_name}")
             specimen_ref = getattr(revision, "quarantine_path", None) or quarantine_path
             # Dispatch via winexe if available, else fall back to wmic.
             if self._has_binary("winexe"):
@@ -112,7 +128,7 @@ class PeLauncher:
                     + f"@{guest_name}",
                     f"C:\\stage\\{os.path.basename(specimen_ref)}",
                 ]
-            else:
+            elif self._has_binary("wmic"):
                 exec_argv = [
                     "wmic",
                     "/node:" + guest_name,
@@ -121,12 +137,25 @@ class PeLauncher:
                     "create",
                     f"C:\\stage\\{os.path.basename(specimen_ref)}",
                 ]
+            else:
+                raise RuntimeError("no supported Windows guest execution tool is available")
             completed = self._exec(exec_argv, timeout=duration_target)
             logs.append(f"guest_exec rc={completed.returncode}")
-            self._exec(["virsh", "dump", "--memory-only", guest_name, memdump_path], timeout=60)
-            artifacts.append(memdump_path)
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"Windows guest execution failed: {completed.stderr or completed.returncode}"
+                )
+            dumped = self._exec(
+                [*virsh, "dump", "--memory-only", guest_name, memdump_path],
+                timeout=60,
+            )
+            if dumped.returncode == 0:
+                artifacts.append(memdump_path)
+            else:
+                memdump_path = None
+                logs.append(f"memory_dump rc={dumped.returncode}")
             metadata["mode"] = "libvirt"
-            exit_code = int(completed.returncode or 0)
+            exit_code = 0
         elif self._has_binary("docker"):
             logs.append("virsh missing; falling back to wine container")
             container_name = f"sheshnaag-wine-{getattr(run, 'id', 'x')}"

@@ -9,9 +9,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.core.tenancy import get_or_create_demo_tenant
-from app.models import Asset
+from app.models import Asset, LabRecipe, RecipeRevision, Tenant
 from app.services.auth_service import AuthService
 from app.services.demo_seed_service import DemoSeedService
+from app.services.malware_lab_service import MalwareLabService
 from app.services.sheshnaag_service import SheshnaagService
 
 
@@ -24,6 +25,115 @@ def make_session():
     testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     return testing_session_local()
+
+
+@pytest.mark.unit
+def test_default_risky_run_contract_uses_linux_kvm_provider():
+    session = make_session()
+    tenant = Tenant(slug="provider-default", name="Provider Default")
+    session.add(tenant)
+    session.flush()
+    lab = MalwareLabService(session)
+    specimen = lab.create_specimen(
+        tenant,
+        name="EICAR fixture",
+        specimen_kind="file",
+        source_type="test_harness",
+        source_reference="quarantine://eicar",
+        submitted_by="Lab Lead",
+        metadata={"mime_type": "application/x-msdownload"},
+    )
+
+    contract = lab.resolve_run_contract(
+        tenant,
+        provider_name="docker_kali",
+        analysis_mode="malware_detonation",
+        sandbox_profile_id=None,
+        specimen_ids=[specimen["id"]],
+        egress_mode=None,
+        ai_assist_enabled=False,
+        ai_provider_hint=None,
+    )
+
+    assert contract["resolved_provider_name"] == "libvirt"
+    assert contract["execution_plan"]["provider"] == "libvirt"
+
+
+@pytest.mark.unit
+def test_explicit_lima_profile_remains_a_valid_secure_provider():
+    session = make_session()
+    tenant = Tenant(slug="provider-lima", name="Provider Lima")
+    session.add(tenant)
+    session.flush()
+    lab = MalwareLabService(session)
+    profile = lab.create_sandbox_profile(
+        tenant,
+        name="Secure Lima",
+        profile_type="file_detonation",
+        provider_hint="lima",
+        risk_level="critical",
+        egress_mode="sinkhole",
+        config={"filesystem_rollback": True},
+    )
+    specimen = lab.create_specimen(
+        tenant,
+        name="Lima fixture",
+        specimen_kind="file",
+        source_type="test_harness",
+        source_reference="quarantine://lima-fixture",
+        submitted_by="Lab Lead",
+        metadata={"mime_type": "application/x-executable"},
+    )
+
+    contract = lab.resolve_run_contract(
+        tenant,
+        provider_name="docker_kali",
+        analysis_mode="malware_detonation",
+        sandbox_profile_id=profile["id"],
+        specimen_ids=[specimen["id"]],
+        egress_mode=None,
+        ai_assist_enabled=False,
+        ai_provider_hint=None,
+    )
+
+    assert contract["resolved_provider_name"] == "lima"
+
+
+@pytest.mark.unit
+def test_secure_execution_policy_accepts_only_secure_providers():
+    session = make_session()
+    service = SheshnaagService(session)
+
+    for provider in ("lima", "libvirt"):
+        recipe = LabRecipe(provider=provider)
+        revision = RecipeRevision(
+            content={
+                "provider": provider,
+                "execution_policy": {"secure_mode_required": True},
+            }
+        )
+        assert (
+            service._enforce_execution_policy(
+                recipe=recipe,
+                revision=revision,
+                launch_mode="execute",
+            )
+            == provider
+        )
+
+    docker_recipe = LabRecipe(provider="docker_kali")
+    docker_revision = RecipeRevision(
+        content={
+            "provider": "docker_kali",
+            "execution_policy": {"secure_mode_required": True},
+        }
+    )
+    with pytest.raises(ValueError, match="secure provider"):
+        service._enforce_execution_policy(
+            recipe=docker_recipe,
+            revision=docker_revision,
+            launch_mode="execute",
+        )
 
 
 @pytest.mark.unit

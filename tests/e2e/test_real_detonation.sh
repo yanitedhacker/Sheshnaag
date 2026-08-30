@@ -1,117 +1,214 @@
 #!/usr/bin/env bash
-# Real detonation E2E harness for Sheshnaag V4.
-#
-# Detonates a benign EICAR-class test sample through the real launcher
-# pipeline and asserts the run reaches a completed state with telemetry
-# events on the live SSE stream.
-#
-# Requirements:
-#   - Linux host with KVM (use scripts/v4/install_host_deps.sh).
-#   - Sheshnaag V4 API running (the script blocks until /health responds).
-#   - Redis available for the event bus.
-#
-# Exits non-zero on the first failed assertion; safe to run as part of CI
-# nightly jobs once a hardened test host is provisioned.
+# Fail-closed Linux/KVM detonation proof harness.
 set -euo pipefail
+umask 077
 
-API="${SHESHNAAG_API:-http://localhost:8000}"
-TENANT_SLUG="${SHESHNAAG_TENANT:-demo-public}"
-TIMEOUT="${SHESHNAAG_TIMEOUT:-180}"
-WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "${WORK_DIR}"' EXIT
+API="${SHESHNAAG_API:-http://127.0.0.1:8000}"
+ACCESS_TOKEN="${SHESHNAAG_ACCESS_TOKEN:-}"
+TENANT_SLUG="${SHESHNAAG_TENANT:-}"
+RECIPE_ID="${SHESHNAAG_RECIPE_ID:-}"
+TIMEOUT="${SHESHNAAG_TIMEOUT:-300}"
+KVM_DEVICE="${SHESHNAAG_KVM_DEVICE:-/dev/kvm}"
+LIBVIRT_URI="${SHESHNAAG_LIBVIRT_URI:-qemu:///system}"
+RETAINED_OUTPUT="${SHESHNAAG_E2E_OUTPUT_DIR:-}"
 
 log() { printf '[real_detonation] %s\n' "$*"; }
+fail_preflight() { log "FAIL: $*"; exit 2; }
+fail_proof() { log "FAIL: $*"; exit 1; }
 
-require() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    log "FAIL: required tool not found: $1"
-    exit 2
-  fi
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || fail_preflight "required tool not found: $1"
 }
-require curl
-require jq
 
-log "Waiting for ${API}/health"
-deadline=$((SECONDS + TIMEOUT))
-until curl -fsS -m 5 "${API}/health" >/dev/null 2>&1; do
-  if (( SECONDS > deadline )); then
-    log "FAIL: API never came up at ${API}"
-    exit 2
-  fi
-  sleep 2
+[[ -n "${ACCESS_TOKEN}" ]] || fail_preflight "SHESHNAAG_ACCESS_TOKEN is required"
+[[ -n "${TENANT_SLUG}" ]] || fail_preflight "SHESHNAAG_TENANT is required"
+[[ "${TENANT_SLUG}" != "demo-public" ]] || fail_preflight "demo-public is read-only"
+[[ "${RECIPE_ID}" =~ ^[1-9][0-9]*$ ]] || fail_preflight "SHESHNAAG_RECIPE_ID must be a positive integer"
+[[ "${TIMEOUT}" =~ ^[1-9][0-9]*$ ]] || fail_preflight "SHESHNAAG_TIMEOUT must be a positive integer"
+[[ "$(uname -s)" == "Linux" ]] || fail_preflight "Linux is required"
+[[ -r "${KVM_DEVICE}" && -w "${KVM_DEVICE}" ]] || fail_preflight "KVM device is not readable and writable: ${KVM_DEVICE}"
+
+for tool in curl jq virsh zeek git grep; do
+  require_tool "${tool}"
 done
 
-log "Writing benign EICAR test sample"
-EICAR='X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
-printf '%s' "${EICAR}" > "${WORK_DIR}/eicar.txt"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)" \
+  || fail_preflight "cannot resolve the repository root"
+PROOF_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
+  || fail_preflight "cannot resolve the proof commit"
+[[ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ]] \
+  || fail_preflight "the proof repository must be clean"
 
-log "Creating specimen via API"
-SPECIMEN=$(curl -fsS -X POST "${API}/api/specimens" \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg slug "${TENANT_SLUG}" '{
-    tenant_slug: $slug,
-    name: "EICAR test sample",
-    specimen_kind: "file",
-    source_type: "test_harness",
-    summary: "Synthetic benign payload for V4 detonation E2E."
-  }')")
+if command -v sha256sum >/dev/null 2>&1; then
+  CHECKSUM_COMMAND=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  CHECKSUM_COMMAND=(shasum -a 256)
+else
+  fail_preflight "sha256sum or shasum is required"
+fi
 
-SPECIMEN_ID=$(jq -r '.id' <<<"${SPECIMEN}")
-log "specimen_id=${SPECIMEN_ID}"
+virsh -c "${LIBVIRT_URI}" list --all >/dev/null 2>&1 \
+  || fail_preflight "virsh cannot list domains through ${LIBVIRT_URI}"
 
+TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TEMP_DIR}"' EXIT
+if [[ -n "${RETAINED_OUTPUT}" ]]; then
+  EVIDENCE_DIR="${RETAINED_OUTPUT}"
+else
+  EVIDENCE_DIR="${TEMP_DIR}/evidence"
+fi
+mkdir -p "${EVIDENCE_DIR}"
+
+AUTH_HEADER_FILE="${TEMP_DIR}/curl-headers"
+printf 'Authorization: Bearer %s\n' "${ACCESS_TOKEN}" > "${AUTH_HEADER_FILE}"
+AUTH_HEADER=(--header "@${AUTH_HEADER_FILE}")
+
+redact_json_file() {
+  local source_file="$1"
+  local redacted_file="${source_file}.redacted"
+  jq 'walk(if type == "object" then del(.access_token, .refresh_token, .token, .secret) else . end)' \
+    "${source_file}" > "${redacted_file}" \
+    || fail_proof "invalid JSON response for $(basename "${source_file}")"
+  mv "${redacted_file}" "${source_file}"
+}
+
+request_json() {
+  local output_file="$1"
+  shift
+  curl -fsS "${AUTH_HEADER[@]}" "$@" > "${output_file}" \
+    || fail_proof "HTTP request failed for $(basename "${output_file}")"
+  redact_json_file "${output_file}"
+}
+
+OPS_FILE="${EVIDENCE_DIR}/ops-health.json"
+log "Checking API and secure runtime health"
+request_json "${OPS_FILE}" --max-time 10 "${API}/api/ops/health"
+jq -e '
+  .api == "ok" and
+  .lab_deps.kvm == "ok" and
+  .lab_deps.virsh == "ok" and
+  .lab_deps.zeek == "ok" and
+  .detonation_runtime.egress_enforce == "on" and
+  .detonation_runtime.pcap == "on"
+' "${OPS_FILE}" >/dev/null || fail_preflight "API secure runtime health is blocked"
+
+SAMPLE_FILE="${TEMP_DIR}/eicar.txt"
+EICAR='X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
+printf '%s' "${EICAR}" > "${SAMPLE_FILE}"
+LOCAL_SPECIMEN_SHA="$("${CHECKSUM_COMMAND[@]}" "${SAMPLE_FILE}")"
+LOCAL_SPECIMEN_SHA="${LOCAL_SPECIMEN_SHA%%[[:space:]]*}"
+printf '%s  %s\n' "${LOCAL_SPECIMEN_SHA}" "eicar.txt" \
+  > "${EVIDENCE_DIR}/specimen-local.sha256"
+
+SPECIMEN_FILE="${EVIDENCE_DIR}/specimen.json"
+log "Uploading benign EICAR-class specimen bytes"
+request_json "${SPECIMEN_FILE}" \
+  --request POST "${API}/api/specimens/upload" \
+  --form "tenant_slug=${TENANT_SLUG}" \
+  --form "name=EICAR proof sample" \
+  --form "specimen_kind=file" \
+  --form "submitted_by=real-detonation-harness" \
+  --form "summary=Benign proof payload" \
+  --form "labels=[\"proof-harness\"]" \
+  --form "metadata={\"source\":\"tests/e2e/test_real_detonation.sh\"}" \
+  --form "file=@${SAMPLE_FILE};type=application/octet-stream"
+SPECIMEN_ID="$(jq -er '.id | select(type == "number")' "${SPECIMEN_FILE}")" \
+  || fail_proof "specimen response has no numeric id"
+REMOTE_SPECIMEN_SHA="$(jq -er '.latest_revision.sha256 | strings | select(test("^[0-9a-f]{64}$"))' \
+  "${SPECIMEN_FILE}")" || fail_proof "specimen response has no SHA-256 digest"
+[[ "${REMOTE_SPECIMEN_SHA}" == "${LOCAL_SPECIMEN_SHA}" ]] \
+  || fail_proof "uploaded specimen SHA-256 does not match local bytes"
+
+CASE_FILE="${EVIDENCE_DIR}/case.json"
+CASE_BODY="$(jq -nc \
+  --arg slug "${TENANT_SLUG}" \
+  --argjson specimen_id "${SPECIMEN_ID}" \
+  '{tenant_slug:$slug,title:"Real detonation proof",analyst_name:"real-detonation-harness",summary:"Commit-bound Linux KVM proof",priority:"high",specimen_ids:[$specimen_id],tags:["proof-harness"]}')"
 log "Creating analysis case"
-CASE=$(curl -fsS -X POST "${API}/api/analysis-cases" \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg slug "${TENANT_SLUG}" --argjson sid "${SPECIMEN_ID}" '{
-    tenant_slug: $slug,
-    name: "V4 E2E detonation",
-    summary: "Auto-generated by tests/e2e/test_real_detonation.sh",
-    specimen_ids: [ $sid ]
-  }')")
-CASE_ID=$(jq -r '.id' <<<"${CASE}")
-log "case_id=${CASE_ID}"
+request_json "${CASE_FILE}" \
+  --request POST "${API}/api/analysis-cases" \
+  --header 'Content-Type: application/json' \
+  --data "${CASE_BODY}"
+CASE_ID="$(jq -er '.id | select(type == "number")' "${CASE_FILE}")" \
+  || fail_proof "case response has no numeric id"
 
-log "Launching execute-mode run"
-RUN=$(curl -fsS -X POST "${API}/api/runs" \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg slug "${TENANT_SLUG}" --argjson cid "${CASE_ID}" --argjson sid "${SPECIMEN_ID}" '{
-    tenant_slug: $slug,
-    mode: "execute",
-    manifest: {
-      analysis_mode: "malware_detonation",
-      specimen_ids: [ $sid ],
-      linked_case_ids: [ $cid ]
-    }
-  }')")
-RUN_ID=$(jq -r '.id // .run.id' <<<"${RUN}")
-log "run_id=${RUN_ID}"
+RUN_FILE="${EVIDENCE_DIR}/launch.json"
+RUN_BODY="$(jq -nc \
+  --arg slug "${TENANT_SLUG}" \
+  --argjson recipe_id "${RECIPE_ID}" \
+  --argjson specimen_id "${SPECIMEN_ID}" \
+  '{tenant_slug:$slug,recipe_id:$recipe_id,analyst_name:"real-detonation-harness",launch_mode:"execute",acknowledge_sensitive:true,analysis_mode:"malware_detonation",specimen_ids:[$specimen_id],egress_mode:"sinkhole",workstation:{hostname:"linux-kvm-worker",os_family:"Linux",architecture:"x86_64",fingerprint:"real-detonation-harness"}}')"
+log "Launching execute-mode run for case_id=${CASE_ID}"
+request_json "${RUN_FILE}" \
+  --request POST "${API}/api/runs" \
+  --header 'Content-Type: application/json' \
+  --data "${RUN_BODY}"
+RUN_ID="$(jq -er '.id | select(type == "number")' "${RUN_FILE}")" \
+  || fail_proof "run response has no numeric id"
+jq -e '.provider == "libvirt"' "${RUN_FILE}" >/dev/null \
+  || fail_proof "run did not route to libvirt"
 
-log "Polling run state"
+FINAL_RUN_FILE="${EVIDENCE_DIR}/final-run.json"
+log "Polling run_id=${RUN_ID}"
 deadline=$((SECONDS + TIMEOUT))
 state=""
-while (( SECONDS < deadline )); do
-  state=$(curl -fsS "${API}/api/runs/${RUN_ID}?tenant_slug=${TENANT_SLUG}" | jq -r '.state // .run.state')
+while (( SECONDS <= deadline )); do
+  request_json "${FINAL_RUN_FILE}" \
+    --max-time 10 "${API}/api/runs/${RUN_ID}?tenant_slug=${TENANT_SLUG}"
+  state="$(jq -er '.state | strings' "${FINAL_RUN_FILE}")" \
+    || fail_proof "run response has no state"
   case "${state}" in
     completed) break ;;
-    errored|failed)
-      log "FAIL: run reached terminal state ${state}"
-      exit 1
-      ;;
+    queued|planned|booting|ready|running) sleep 2 ;;
+    *) fail_proof "run reached terminal state ${state}" ;;
   esac
-  sleep 2
 done
+[[ "${state}" == "completed" ]] \
+  || fail_proof "run did not complete within ${TIMEOUT}s; last state=${state}"
 
-if [[ "${state}" != "completed" ]]; then
-  log "FAIL: run did not reach completed state within ${TIMEOUT}s (last=${state})"
-  exit 1
+jq -e '
+  .provider == "libvirt" and
+  .manifest.detonation_preflight.status == "ok" and
+  .manifest.worker_execution.status == "completed" and
+  (.manifest.worker_execution.live_evidence_count | type == "number" and . >= 1) and
+  ([.timeline[].event_type] | contains(["run_queued", "run_started", "run_completed"]))
+' "${FINAL_RUN_FILE}" >/dev/null || fail_proof "final run is missing required completion proof"
+
+EVIDENCE_FILE="${EVIDENCE_DIR}/evidence.json"
+request_json "${EVIDENCE_FILE}" \
+  --max-time 10 "${API}/api/evidence?tenant_slug=${TENANT_SLUG}&run_id=${RUN_ID}"
+jq -e --argjson run_id "${RUN_ID}" '
+  (.count | type == "number" and . >= 1) and
+  ([.items[] | select(.run_id == $run_id)] | length >= 1)
+' "${EVIDENCE_FILE}" >/dev/null || fail_proof "evidence API returned no item for the run"
+
+SSE_FILE="${EVIDENCE_DIR}/events.sse"
+sse_status=0
+curl -fsS --max-time 8 "${AUTH_HEADER[@]}" \
+  "${API}/api/v4/runs/${RUN_ID}/events?tenant_slug=${TENANT_SLUG}&last_id=0-0" \
+  > "${SSE_FILE}" || sse_status=$?
+if (( sse_status != 0 && sse_status != 28 )); then
+  fail_proof "SSE replay request failed with curl status ${sse_status}"
 fi
+grep -Eq 'data:.*"type"[[:space:]]*:[[:space:]]*"run_completed"' "${SSE_FILE}" \
+  || fail_proof "SSE replay has no run_completed event"
 
-log "Asserting telemetry events on the SSE stream"
-EVENT_LOG="${WORK_DIR}/events.log"
-( curl -fsS --max-time 8 "${API}/api/v4/runs/${RUN_ID}/events?last_id=0" || true ) > "${EVENT_LOG}" &
-sleep 6 || true
-if ! grep -q '"run_completed"' "${EVENT_LOG}" 2>/dev/null; then
-  log "WARN: run_completed event not observed via SSE (stream may have replayed earlier)"
+FINAL_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
+  || fail_proof "cannot re-read the proof commit"
+[[ "${FINAL_COMMIT}" == "${PROOF_COMMIT}" ]] \
+  || fail_proof "repository HEAD changed during the proof"
+[[ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ]] \
+  || fail_proof "the proof repository became dirty during the proof"
+printf '%s\n' "${PROOF_COMMIT}" > "${EVIDENCE_DIR}/git-commit.txt"
+(
+  cd "${EVIDENCE_DIR}"
+  "${CHECKSUM_COMMAND[@]}" \
+    ops-health.json specimen-local.sha256 specimen.json case.json launch.json final-run.json \
+    evidence.json events.sse git-commit.txt > manifest.sha256
+)
+
+log "PASS: real detonation proof completed run_id=${RUN_ID} state=${state}"
+if [[ -n "${RETAINED_OUTPUT}" ]]; then
+  log "Evidence retained at ${EVIDENCE_DIR}"
 fi
-
-log "PASS: V4 real detonation E2E completed run_id=${RUN_ID} state=${state}"

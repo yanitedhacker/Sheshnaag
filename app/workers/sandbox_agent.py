@@ -42,9 +42,16 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
 
 from app.core.event_bus import (
-    SANDBOX_WORK_STREAM,
     build_tls_redis_client,
     sandbox_return_stream,
+)
+from app.workers.routing import (
+    SANDBOX_CONSUMER_GROUP,
+    WorkEntryLease,
+    claim_stale_work_rows,
+    ensure_consumer_groups,
+    normalize_capabilities,
+    streams_for_worker,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,9 +65,6 @@ _CA_FILE = "ca.pem"
 _STATE_FILE = "state.json"
 
 _HEARTBEAT_INTERVAL_SECONDS = 30
-_CONSUMER_GROUP = "sheshnaag:sandbox:workers"
-
-
 @dataclass
 class AgentState:
     """Runtime state read from / written to ``state.json``."""
@@ -287,6 +291,11 @@ def run_agent(
 
     state_path = key_dir / _STATE_FILE
     hostname = hostname or socket.getfqdn()
+    normalized_capabilities = normalize_capabilities(capability_flags)
+    streams = streams_for_worker(normalized_capabilities)
+    if not streams:
+        logger.error("worker has no complete capability set for any work stream")
+        return 3
 
     if not state_path.exists():
         if not enrollment_token:
@@ -314,13 +323,8 @@ def run_agent(
         ssl_ca_certs=str(key_dir / _CA_FILE),
     )
 
-    # Ensure consumer group exists. ``mkstream=True`` auto-creates the
-    # work stream if absent, matching the V4 sandbox_worker behavior.
-    try:
-        redis_client.xgroup_create(SANDBOX_WORK_STREAM, _CONSUMER_GROUP, id="$", mkstream=True)
-    except Exception:
-        # Already exists.
-        pass
+    # A new group starts at 0-0 so jobs queued before worker boot are not lost.
+    ensure_consumer_groups(redis_client, streams)
 
     consumer = consumer_name or f"agent-{state.worker_uuid}"
 
@@ -360,9 +364,9 @@ def run_agent(
 
         try:
             rows = redis_client.xreadgroup(
-                _CONSUMER_GROUP,
+                SANDBOX_CONSUMER_GROUP,
                 consumer,
-                {SANDBOX_WORK_STREAM: ">"},
+                streams,
                 block=5000,
                 count=1,
             )
@@ -372,9 +376,17 @@ def run_agent(
             continue
 
         if not rows:
-            continue
+            rows = claim_stale_work_rows(
+                redis_client,
+                streams,
+                consumer=consumer,
+            )
+            if not rows:
+                continue
 
-        for _, messages in rows:
+        for stream_name, messages in rows:
+            if isinstance(stream_name, bytes):
+                stream_name = stream_name.decode("utf-8")
             for entry_id, fields in messages:
                 raw = fields.get(b"data") or fields.get("data")
                 if isinstance(raw, bytes):
@@ -383,12 +395,21 @@ def run_agent(
                     message = json.loads(raw or "{}")
                 except json.JSONDecodeError:
                     logger.error("malformed work entry %s", entry_id)
-                    redis_client.xack(SANDBOX_WORK_STREAM, _CONSUMER_GROUP, entry_id)
+                    redis_client.xack(stream_name, SANDBOX_CONSUMER_GROUP, entry_id)
                     continue
 
                 run_id = int(message.get("run_id", 0))
                 try:
-                    result = process_sandbox_work(message)
+                    with WorkEntryLease(
+                        redis_client,
+                        stream=stream_name,
+                        consumer=consumer,
+                        entry_id=entry_id,
+                    ):
+                        result = process_sandbox_work(
+                            message,
+                            worker_capabilities=normalized_capabilities,
+                        )
                 except Exception as exc:
                     logger.exception("process_sandbox_work failed: %s", exc)
                     # Leave entry pending so a peer can retry.
@@ -404,7 +425,7 @@ def run_agent(
                     signature=signature,
                 )
 
-                redis_client.xack(SANDBOX_WORK_STREAM, _CONSUMER_GROUP, entry_id)
+                redis_client.xack(stream_name, SANDBOX_CONSUMER_GROUP, entry_id)
 
     return 0
 
