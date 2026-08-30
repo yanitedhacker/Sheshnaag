@@ -90,6 +90,7 @@ services:
       # Security settings - MUST be set in production
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      TENANT_ONBOARDING_ENABLED: ${TENANT_ONBOARDING_ENABLED:-false}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
       SIGNING_KEY_DIR: ${SIGNING_KEY_DIR:?SIGNING_KEY_DIR is required}
       SIGNING_KEY_BACKEND: ${SIGNING_KEY_BACKEND:-mounted-secret}

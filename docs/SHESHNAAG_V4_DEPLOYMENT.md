@@ -122,7 +122,21 @@ sudo systemctl enable --now sheshnaag-egress-enforcer
 After bootstrap, perform in order:
 
 1. **Verify audit chain** — `docker compose exec api sheshnaag audit verify` exits 0 on an empty chain. This confirms the signing key is loaded.
-2. **Issue tenant admin** — via `scripts/v4/bootstrap_tenant_admin.py`. Stores the admin account as the root of capability policy.
+2. **Issue tenant admin** — keep `TENANT_ONBOARDING_ENABLED=false` in production and use the direct-database operator command. It reads the password from standard input and prints no credential or token:
+
+   ```bash
+   read -rs BOOTSTRAP_PASSWORD
+   printf '%s\n' "$BOOTSTRAP_PASSWORD" | docker compose exec -T api \
+     python scripts/v4/bootstrap_tenant_admin.py \
+       --tenant-name "Partner Name" \
+       --tenant-slug "partner-slug" \
+       --admin-email "lead@example.com" \
+       --admin-name "Partner Lead" \
+       --password-stdin
+   unset BOOTSTRAP_PASSWORD
+   ```
+
+   The command creates or verifies the exact `lab_lead` membership. Repeated use with a different identity, password, membership, or non-administrator role fails closed.
 3. **Set tenant-default capabilities** — `AuthorizationCenterPage → Tenant Defaults`. Typically `dynamic_detonation` = tenant-default, `cloud_ai_provider_use` = tenant-default, others off.
 4. **Issue capability artifacts as needed** — e.g. `external_disclosure` for a coming partner share, with two-reviewer sign-off.
 5. **Test AI providers** — visit `/api/v3/ai/providers` and confirm each configured provider returns `healthy: true`.

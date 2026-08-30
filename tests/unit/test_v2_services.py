@@ -117,7 +117,7 @@ def test_private_tenant_onboarding_and_login_work():
     )
 
     assert onboard["tenant"]["slug"] == "acme-private"
-    assert onboard["memberships"][0]["role"] == "owner"
+    assert onboard["memberships"][0]["role"] == "lab_lead"
     assert login["memberships"][0]["tenant_slug"] == "acme-private"
     assert login["token"]["token_type"] == "bearer"
 

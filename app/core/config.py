@@ -38,6 +38,7 @@ class Settings(BaseSettings):
 
     # JWT Authentication Settings
     auth_enabled: bool = False  # Set to True in production
+    tenant_onboarding_enabled: bool = False
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7

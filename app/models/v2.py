@@ -3,6 +3,7 @@
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -528,7 +529,13 @@ class TenantMembership(Base):
     """Tenant-scoped role binding for RBAC."""
 
     __tablename__ = "tenant_memberships"
-    __table_args__ = (UniqueConstraint("tenant_id", "user_id", name="uq_tenant_membership"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", name="uq_tenant_membership"),
+        CheckConstraint(
+            "role IN ('read_only', 'analyst', 'senior_analyst', 'reviewer', 'lab_lead')",
+            name="ck_tenant_memberships_role_v5_valid_v6a03",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(
@@ -537,7 +544,7 @@ class TenantMembership(Base):
     user_id = Column(
         Integer, ForeignKey("tenant_users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    role = Column(String(50), default="viewer", nullable=False)
+    role = Column(String(50), default="read_only", nullable=False)
     scopes = Column(JSON, default=list, nullable=False)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

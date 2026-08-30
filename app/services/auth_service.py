@@ -12,16 +12,20 @@ from app.core.security import TokenData, create_access_token, get_password_hash,
 from app.models.v2 import Tenant, TenantMembership, TenantUser
 
 ROLE_SCOPES: dict[str, list[str]] = {
-    "viewer": ["tenant:read"],
+    "read_only": ["tenant:read"],
     "analyst": ["tenant:read", "tenant:write", "model:feedback", "governance:read"],
-    "admin": [
+    "senior_analyst": [
         "tenant:read",
         "tenant:write",
         "model:feedback",
         "governance:read",
         "governance:write",
     ],
-    "owner": [
+    "reviewer": [
+        "tenant:read",
+        "governance:read",
+    ],
+    "lab_lead": [
         "tenant:read",
         "tenant:write",
         "model:feedback",
@@ -31,9 +35,9 @@ ROLE_SCOPES: dict[str, list[str]] = {
     ],
 }
 
-READ_ROLES = {"viewer", "analyst", "admin", "owner"}
-WRITE_ROLES = {"analyst", "admin", "owner"}
-ADMIN_ROLES = {"admin", "owner"}
+READ_ROLES = set(ROLE_SCOPES)
+WRITE_ROLES = {"analyst", "senior_analyst", "lab_lead"}
+ADMIN_ROLES = {"lab_lead"}
 
 
 class AuthService:
@@ -52,7 +56,7 @@ class AuthService:
         admin_name: str | None = None,
         description: str | None = None,
     ) -> dict[str, object]:
-        """Create a private tenant with an owner membership and JWT."""
+        """Create a private tenant with a V5 lab-lead membership and JWT."""
         existing_tenant = self.session.query(Tenant).filter(Tenant.slug == tenant_slug).first()
         if existing_tenant is not None:
             raise HTTPException(status_code=409, detail="Tenant slug already exists")
@@ -87,8 +91,8 @@ class AuthService:
         membership = TenantMembership(
             tenant_id=tenant.id,
             user_id=user.id,
-            role="owner",
-            scopes=self._scopes_for_role("owner"),
+            role="lab_lead",
+            scopes=self._scopes_for_role("lab_lead"),
         )
         self.session.add(membership)
         self.session.flush()
@@ -99,6 +103,89 @@ class AuthService:
             "user": self._serialize_user(user),
             "memberships": [self._serialize_membership(membership)],
             "token": token,
+        }
+
+    def bootstrap_tenant_admin(
+        self,
+        *,
+        tenant_name: str,
+        tenant_slug: str,
+        admin_email: str,
+        admin_password: str,
+        admin_name: str | None = None,
+    ) -> dict[str, object]:
+        """Create or verify one exact operator-owned tenant administrator.
+
+        This method is for the direct-database operator CLI. It does not mint
+        or return an access token. Repeated use is allowed only for the same
+        tenant, user, and password. A legacy owner/admin membership is repaired
+        to the V5 ``lab_lead`` role.
+        """
+
+        normalized_email = admin_email.strip().lower()
+        normalized_slug = tenant_slug.strip()
+        tenant = self.session.query(Tenant).filter(Tenant.slug == normalized_slug).first()
+        user = self.session.query(TenantUser).filter(TenantUser.email == normalized_email).first()
+
+        if tenant is None:
+            if user is not None and not verify_password(admin_password, user.password_hash):
+                raise HTTPException(
+                    status_code=409,
+                    detail="User already exists with a different password",
+                )
+            if user is None:
+                user = TenantUser(
+                    email=normalized_email,
+                    full_name=admin_name,
+                    password_hash=get_password_hash(admin_password),
+                )
+                self.session.add(user)
+                self.session.flush()
+            tenant = Tenant(
+                slug=normalized_slug,
+                name=tenant_name,
+                is_demo=False,
+                is_read_only=False,
+                is_active=True,
+            )
+            self.session.add(tenant)
+            self.session.flush()
+            membership = TenantMembership(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                role="lab_lead",
+                scopes=self._scopes_for_role("lab_lead"),
+            )
+            self.session.add(membership)
+            self.session.flush()
+            operation_status = "created"
+        else:
+            if user is None or not verify_password(admin_password, user.password_hash):
+                raise HTTPException(status_code=409, detail="Bootstrap identity mismatch")
+            membership = (
+                self.session.query(TenantMembership)
+                .filter(
+                    TenantMembership.tenant_id == tenant.id,
+                    TenantMembership.user_id == user.id,
+                )
+                .first()
+            )
+            if membership is None:
+                raise HTTPException(status_code=409, detail="Bootstrap membership mismatch")
+            if membership.role not in {"lab_lead", "owner", "admin"}:
+                raise HTTPException(status_code=409, detail="Bootstrap role mismatch")
+            repaired = membership.role != "lab_lead"
+            membership.role = "lab_lead"
+            membership.scopes = self._scopes_for_role("lab_lead")
+            self.session.flush()
+            operation_status = "repaired" if repaired else "existing"
+
+        return {
+            "status": operation_status,
+            "tenant_id": tenant.id,
+            "tenant_slug": tenant.slug,
+            "admin_user_id": user.id,
+            "role": membership.role,
         }
 
     def login(
@@ -235,7 +322,7 @@ class AuthService:
 
     @staticmethod
     def _scopes_for_role(role: str) -> list[str]:
-        return list(ROLE_SCOPES.get(role, ROLE_SCOPES["viewer"]))
+        return list(ROLE_SCOPES.get(role, ROLE_SCOPES["read_only"]))
 
     def _build_token_for_user(
         self, user: TenantUser, *, memberships: Sequence[TenantMembership]
