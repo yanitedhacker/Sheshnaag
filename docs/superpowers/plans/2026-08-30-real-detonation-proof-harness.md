@@ -102,4 +102,3 @@ Expected: syntax check and all harness tests pass.
 - [ ] **Step 6: Commit**
 
 Commit with: `git commit -m "fix: make real detonation proof fail closed"`.
-

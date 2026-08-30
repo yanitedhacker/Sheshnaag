@@ -100,4 +100,3 @@ Expected: all pass.
 
 Commit the middleware, tenancy helper, main registration, and tests with:
 `git commit -m "fix: enforce HTTP tenant membership centrally"`.
-
