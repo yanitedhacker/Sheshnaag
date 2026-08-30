@@ -78,6 +78,7 @@ from app.core.logging import bind_log_context, clear_log_context, configure_logg
 from app.core.observability import configure_telemetry
 from app.core.rate_limit import rate_limiter
 from app.core.security import decode_token
+from app.core.tenant_auth import TenantAuthorizationContextMiddleware
 from app.ingestion.scheduler import FeedScheduler
 from app.ml.model_registry import preload_models
 from app.models.v2 import (
@@ -330,6 +331,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Add rate limiting middleware
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(MetricsAuthMiddleware)
+app.add_middleware(TenantAuthorizationContextMiddleware)
 
 # Add CORS middleware with restricted origins
 app.add_middleware(

@@ -34,8 +34,9 @@ def resolve_tenant(
     tenant_id: int | None = None,
     tenant_slug: str | None = None,
     default_to_demo: bool = True,
+    access: str = "read",
 ) -> Tenant:
-    """Resolve a tenant by id or slug, optionally defaulting to demo-public."""
+    """Resolve a tenant and enforce request-bound membership when present."""
     query = session.query(Tenant)
 
     tenant = None
@@ -49,6 +50,14 @@ def resolve_tenant(
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
+    from app.core.tenant_auth import current_request_token
+
+    request_bound, token_data = current_request_token()
+    if request_bound:
+        from app.services.auth_service import AuthService
+
+        AuthService(session).assert_tenant_access(tenant, token_data, access=access)
+
     return tenant
 
 
@@ -60,7 +69,11 @@ def require_writable_tenant(
 ) -> Tenant:
     """Resolve a tenant and reject writes to read-only demo workspaces."""
     tenant = resolve_tenant(
-        session, tenant_id=tenant_id, tenant_slug=tenant_slug, default_to_demo=False
+        session,
+        tenant_id=tenant_id,
+        tenant_slug=tenant_slug,
+        default_to_demo=False,
+        access="write",
     )
     if tenant.is_read_only:
         raise HTTPException(status_code=403, detail="This tenant is read-only")
