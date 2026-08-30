@@ -32,6 +32,14 @@ for tool in curl jq virsh zeek git grep; do
   require_tool "${tool}"
 done
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)" \
+  || fail_preflight "cannot resolve the repository root"
+PROOF_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
+  || fail_preflight "cannot resolve the proof commit"
+[[ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ]] \
+  || fail_preflight "the proof repository must be clean"
+
 if command -v sha256sum >/dev/null 2>&1; then
   CHECKSUM_COMMAND=(sha256sum)
 elif command -v shasum >/dev/null 2>&1; then
@@ -52,7 +60,9 @@ else
 fi
 mkdir -p "${EVIDENCE_DIR}"
 
-AUTH_HEADER=(--header "Authorization: Bearer ${ACCESS_TOKEN}")
+AUTH_HEADER_FILE="${TEMP_DIR}/curl-headers"
+printf 'Authorization: Bearer %s\n' "${ACCESS_TOKEN}" > "${AUTH_HEADER_FILE}"
+AUTH_HEADER=(--header "@${AUTH_HEADER_FILE}")
 
 redact_json_file() {
   local source_file="$1"
@@ -86,6 +96,10 @@ jq -e '
 SAMPLE_FILE="${TEMP_DIR}/eicar.txt"
 EICAR='X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
 printf '%s' "${EICAR}" > "${SAMPLE_FILE}"
+LOCAL_SPECIMEN_SHA="$("${CHECKSUM_COMMAND[@]}" "${SAMPLE_FILE}")"
+LOCAL_SPECIMEN_SHA="${LOCAL_SPECIMEN_SHA%%[[:space:]]*}"
+printf '%s  %s\n' "${LOCAL_SPECIMEN_SHA}" "eicar.txt" \
+  > "${EVIDENCE_DIR}/specimen-local.sha256"
 
 SPECIMEN_FILE="${EVIDENCE_DIR}/specimen.json"
 log "Uploading benign EICAR-class specimen bytes"
@@ -101,8 +115,10 @@ request_json "${SPECIMEN_FILE}" \
   --form "file=@${SAMPLE_FILE};type=application/octet-stream"
 SPECIMEN_ID="$(jq -er '.id | select(type == "number")' "${SPECIMEN_FILE}")" \
   || fail_proof "specimen response has no numeric id"
-jq -e '.latest_revision.sha256 | strings | test("^[0-9a-f]{64}$")' \
-  "${SPECIMEN_FILE}" >/dev/null || fail_proof "specimen response has no SHA-256 digest"
+REMOTE_SPECIMEN_SHA="$(jq -er '.latest_revision.sha256 | strings | select(test("^[0-9a-f]{64}$"))' \
+  "${SPECIMEN_FILE}")" || fail_proof "specimen response has no SHA-256 digest"
+[[ "${REMOTE_SPECIMEN_SHA}" == "${LOCAL_SPECIMEN_SHA}" ]] \
+  || fail_proof "uploaded specimen SHA-256 does not match local bytes"
 
 CASE_FILE="${EVIDENCE_DIR}/case.json"
 CASE_BODY="$(jq -nc \
@@ -178,12 +194,17 @@ fi
 grep -Eq 'data:.*"type"[[:space:]]*:[[:space:]]*"run_completed"' "${SSE_FILE}" \
   || fail_proof "SSE replay has no run_completed event"
 
-REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)"
-git -C "${REPO_ROOT}" rev-parse HEAD > "${EVIDENCE_DIR}/git-commit.txt"
+FINAL_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
+  || fail_proof "cannot re-read the proof commit"
+[[ "${FINAL_COMMIT}" == "${PROOF_COMMIT}" ]] \
+  || fail_proof "repository HEAD changed during the proof"
+[[ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ]] \
+  || fail_proof "the proof repository became dirty during the proof"
+printf '%s\n' "${PROOF_COMMIT}" > "${EVIDENCE_DIR}/git-commit.txt"
 (
   cd "${EVIDENCE_DIR}"
   "${CHECKSUM_COMMAND[@]}" \
-    ops-health.json specimen.json case.json launch.json final-run.json \
+    ops-health.json specimen-local.sha256 specimen.json case.json launch.json final-run.json \
     evidence.json events.sse git-commit.txt > manifest.sha256
 )
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -123,6 +123,25 @@ def test_missing_binaries_records_errors_not_raises(monkeypatch):
 
 
 @pytest.mark.unit
+def test_strict_egress_rejects_missing_kernel_enforcement(monkeypatch):
+    profile = _profile(egress_mode="default_deny")
+    monkeypatch.setattr(ee_module.shutil, "which", lambda _name: None)
+    enforcer = EgressEnforcer(profile, run_id="strict", dry_run=False, strict=True)
+
+    with pytest.raises(RuntimeError, match="egress enforcement failed"), enforcer:
+        raise AssertionError("strict mode must fail before specimen execution")
+
+
+@pytest.mark.unit
+def test_strict_egress_rejects_dry_run(monkeypatch):
+    profile = _profile(egress_mode="default_deny")
+    enforcer = EgressEnforcer(profile, run_id="strict-dry", dry_run=True, strict=True)
+
+    with pytest.raises(RuntimeError, match="dry-run"), enforcer:
+        pass
+
+
+@pytest.mark.unit
 def test_context_manager_tears_down_on_exit(monkeypatch):
     profile = _profile(egress_mode="default_deny")
 
@@ -152,9 +171,10 @@ def test_context_manager_tears_down_on_exception(monkeypatch):
 
     monkeypatch.setattr(EgressEnforcer, "teardown", _spy_teardown)
 
-    with pytest.raises(RuntimeError, match="boom"):
-        with EgressEnforcer(profile, run_id="ctx-exc", dry_run=True):
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"), EgressEnforcer(
+        profile, run_id="ctx-exc", dry_run=True
+    ):
+        raise RuntimeError("boom")
 
     assert teardown_calls == ["called"]
 

@@ -47,6 +47,7 @@ from app.core.event_bus import (
 )
 from app.workers.routing import (
     SANDBOX_CONSUMER_GROUP,
+    WorkEntryLease,
     claim_stale_work_rows,
     ensure_consumer_groups,
     normalize_capabilities,
@@ -399,10 +400,16 @@ def run_agent(
 
                 run_id = int(message.get("run_id", 0))
                 try:
-                    result = process_sandbox_work(
-                        message,
-                        worker_capabilities=normalized_capabilities,
-                    )
+                    with WorkEntryLease(
+                        redis_client,
+                        stream=stream_name,
+                        consumer=consumer,
+                        entry_id=entry_id,
+                    ):
+                        result = process_sandbox_work(
+                            message,
+                            worker_capabilities=normalized_capabilities,
+                        )
                 except Exception as exc:
                     logger.exception("process_sandbox_work failed: %s", exc)
                     # Leave entry pending so a peer can retry.

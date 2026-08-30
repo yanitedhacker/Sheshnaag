@@ -195,6 +195,12 @@ def _install_upstream_mocks():
     # _optional_import sees them.
     egress_mod = types.ModuleType("app.lab.egress_enforcer")
     egress_mod.EgressEnforcer = egress_enforcer_mock
+    egress_mod.SUPPORTED_MODES = (
+        "none",
+        "default_deny",
+        "sinkhole",
+        "fake_internet",
+    )
     sys.modules["app.lab.egress_enforcer"] = egress_mod
 
     snap_mod = types.ModuleType("app.lab.snapshot_manager")
@@ -239,6 +245,14 @@ def _uninstall_upstream_mocks():
 def test_materialize_run_outputs_v4_dispatches_launcher_and_persists_real_payloads(monkeypatch):
     session = _make_session()
     tenant, specimen, revision, profile, case, run = _seed_run(session)
+    run.launch_mode = "execute"
+    run.provider = "libvirt"
+    profile.provider_hint = "libvirt"
+    profile.config = {
+        **dict(profile.config or {}),
+        "domain": "win-proof",
+        "vm_name": "win-proof",
+    }
     session.commit()
 
     mocks = _install_upstream_mocks()
@@ -288,8 +302,6 @@ def test_materialize_run_outputs_v4_dispatches_launcher_and_persists_real_payloa
         from app.services.malware_lab_service import MalwareLabService
 
         eval_calls: list = []
-        original_eval = cap_mod.CapabilityPolicy.evaluate
-
         def spy_evaluate(self, *, capability, scope, actor):
             eval_calls.append({"capability": capability, "scope": scope, "actor": actor})
             return cap_mod.Decision(permitted=True, reason="test_permit", artifact_id=None)
@@ -306,10 +318,21 @@ def test_materialize_run_outputs_v4_dispatches_launcher_and_persists_real_payloa
     assert launched, "launcher.launch must be invoked"
     # Snapshot + egress context managers entered and exited.
     mocks["snapshot_manager"].return_value.with_snapshot.assert_called_once()
+    mocks["snapshot_manager"].assert_called_once_with(
+        profile,
+        run_id=run.id,
+        provider="libvirt",
+        strict=True,
+    )
     mocks["snapshot_cm"].__enter__.assert_called_once()
     mocks["snapshot_cm"].__exit__.assert_called_once()
     mocks["egress_instance"].__enter__.assert_called_once()
     mocks["egress_instance"].__exit__.assert_called_once()
+    mocks["egress_enforcer"].assert_called_once_with(
+        profile,
+        run_id=run.id,
+        strict=True,
+    )
     # eBPF tracer start/stop pair.
     mocks["ebpf_tracer"].return_value.start.assert_called_once()
     mocks["ebpf_tracer"].return_value.stop.assert_called_once_with("sid-1")
@@ -342,12 +365,12 @@ def test_materialize_run_outputs_v4_dispatches_launcher_and_persists_real_payloa
     assert evidence_rows[0].artifact_kind == "v4_launcher_telemetry"
     assert evidence_rows[0].collector_name == "v4-launcher-dispatcher"
     assert evidence_rows[0].payload["launcher"] == "PeLauncher"
+    assert evidence_rows[0].payload["collection_state"] == "live"
+    assert evidence_rows[0].payload["collector_health"]["status"] == "ok"
 
     finding_rows = session.query(BehaviorFinding).filter_by(run_id=run.id).all()
     indicator_rows = session.query(IndicatorArtifact).filter_by(analysis_case_id=case.id).all()
     prevention_rows = session.query(PreventionArtifact).filter_by(analysis_case_id=case.id).all()
-    defang_rows = session.query(DefangAction).filter_by(analysis_case_id=case.id).all()
-
     # --- Confidence de-hardcoding check --------------------------------
     for row in finding_rows:
         assert row.confidence not in _BANNED_CONFIDENCES, (

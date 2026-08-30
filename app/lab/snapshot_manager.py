@@ -35,6 +35,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from app.core.time import utc_now
+from app.lab.libvirt_contract import LIBVIRT_URI, resolve_libvirt_domain
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class SnapshotManager:
         *,
         run_id: Any,
         provider: str | None = None,
+        strict: bool = False,
     ) -> None:
         self._profile = profile
         self._run_id = run_id
@@ -87,6 +89,7 @@ class SnapshotManager:
             )
             resolved_provider = "docker"
         self._provider = resolved_provider
+        self._strict = bool(strict)
         self._events: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
@@ -113,6 +116,8 @@ class SnapshotManager:
             ``"details"``.
         """
         no_revert = _bool_env("SHESHNAAG_SNAPSHOT_NO_REVERT")
+        if self._strict and no_revert:
+            raise RuntimeError("snapshot revert cannot be disabled in strict mode")
         created = self._create_snapshot()
         handle = {
             "snapshot_id": created["snapshot_id"],
@@ -125,8 +130,17 @@ class SnapshotManager:
             "errors": list(created.get("errors", [])),
         }
         self._events.append({"event": "snapshot_created", "at": utc_now().isoformat(), **created})
+        if self._strict and (handle["dry_run"] or handle["errors"]):
+            details = "; ".join(handle["errors"]) or str(
+                handle["details"].get("reason") or "dry-run"
+            )
+            raise RuntimeError(f"snapshot creation failed: {details}")
+        body_failed = False
         try:
             yield handle
+        except BaseException:
+            body_failed = True
+            raise
         finally:
             if no_revert:
                 self._events.append(
@@ -150,6 +164,15 @@ class SnapshotManager:
                         **revert_result,
                     }
                 )
+                if (
+                    self._strict
+                    and not body_failed
+                    and (revert_result.get("dry_run") or revert_result.get("errors"))
+                ):
+                    details = "; ".join(revert_result.get("errors") or []) or str(
+                        (revert_result.get("details") or {}).get("reason") or "dry-run"
+                    )
+                    raise RuntimeError(f"snapshot revert failed: {details}")
 
     # ------------------------------------------------------------------
     # Provider dispatch
@@ -179,10 +202,15 @@ class SnapshotManager:
         action: str,
         handle: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        domain = str(self._config.get("domain") or getattr(self._profile, "name", "")).strip()
-        errors: list[str] = []
+        try:
+            domain = resolve_libvirt_domain(self._config)
+        except ValueError as exc:
+            domain = ""
+            errors = [str(exc)]
+        else:
+            errors = []
         if not domain:
-            errors.append("libvirt provider requires profile.config['domain'] to be set")
+            errors.append("libvirt provider requires one configured domain")
 
         if not self._binary_ok("virsh"):
             return self._dry_result(
@@ -207,11 +235,12 @@ class SnapshotManager:
         if action == "create":
             cmd = [
                 "virsh",
+                "-c",
+                LIBVIRT_URI,
                 "snapshot-create-as",
                 domain,
                 snapshot_name,
                 "--atomic",
-                "--no-metadata",
             ]
             proc = self._run(cmd, timeout=120)
             if proc["returncode"] != 0:
@@ -227,12 +256,23 @@ class SnapshotManager:
             }
 
         # revert
-        cmd = ["virsh", "snapshot-revert", domain, snapshot_name, "--force"]
+        cmd = [
+            "virsh",
+            "-c",
+            LIBVIRT_URI,
+            "snapshot-revert",
+            domain,
+            snapshot_name,
+            "--force",
+        ]
         proc = self._run(cmd, timeout=180)
         if proc["returncode"] != 0:
             errors.append(f"virsh snapshot-revert failed: {proc['stderr'][:400]}")
         # Best-effort delete of the snapshot after revert so we don't leak.
-        self._run(["virsh", "snapshot-delete", domain, snapshot_name], timeout=60)
+        self._run(
+            ["virsh", "-c", LIBVIRT_URI, "snapshot-delete", domain, snapshot_name],
+            timeout=60,
+        )
         return {
             "snapshot_id": snapshot_name,
             "provider": self._provider,

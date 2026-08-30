@@ -80,6 +80,7 @@ class EgressEnforcer:
         *,
         run_id: Any,
         dry_run: bool | None = None,
+        strict: bool = False,
     ) -> None:
         self._profile = profile
         self._run_id = run_id
@@ -88,6 +89,7 @@ class EgressEnforcer:
         if dry_run is None:
             dry_run = not _bool_env("SHESHNAAG_EGRESS_ENFORCE")
         self._dry_run = bool(dry_run)
+        self._strict = bool(strict)
 
         self._mode = self._resolve_mode(profile)
         self._config: dict[str, Any] = dict(getattr(profile, "config", None) or {})
@@ -216,7 +218,14 @@ class EgressEnforcer:
     # Context-manager surface -------------------------------------------------
 
     def __enter__(self) -> EgressEnforcer:
-        self.apply()
+        plan = self.apply()
+        if self._strict and plan["dry_run"]:
+            self.teardown()
+            raise RuntimeError("egress enforcement failed: dry-run is not permitted")
+        if self._strict and (not plan["applied"] or plan["errors"]):
+            details = "; ".join(plan["errors"]) or "kernel rules were not applied"
+            self.teardown()
+            raise RuntimeError(f"egress enforcement failed: {details}")
         return self
 
     def __exit__(

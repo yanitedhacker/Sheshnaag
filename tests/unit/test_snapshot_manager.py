@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import shutil
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -72,7 +72,13 @@ def test_libvirt_snapshot_happy_path(monkeypatch):
         assert handle["errors"] == []
 
     # At minimum: one create and one revert + one delete.
-    action_verbs = [cmd[1] for cmd in captured_cmds if len(cmd) > 1 and cmd[0] == "virsh"]
+    action_verbs = [
+        verb
+        for cmd in captured_cmds
+        if cmd and cmd[0] == "virsh"
+        for verb in ("snapshot-create-as", "snapshot-revert", "snapshot-delete")
+        if verb in cmd
+    ]
     assert "snapshot-create-as" in action_verbs
     assert "snapshot-revert" in action_verbs
     assert "snapshot-delete" in action_verbs
@@ -173,7 +179,10 @@ def test_revert_on_exception(monkeypatch):
         raise RuntimeError("kaboom")
 
     # Even though the body raised, revert must still have run.
-    assert any(cmd[:2] == ["virsh", "snapshot-revert"] for cmd in captured)
+    assert any(
+        cmd and cmd[0] == "virsh" and "snapshot-revert" in cmd
+        for cmd in captured
+    )
     events = [evt["event"] for evt in mgr.events]
     assert "snapshot_reverted" in events
 
@@ -200,7 +209,13 @@ def test_no_revert_env_var_honored(monkeypatch):
         assert handle["revert_on_exit"] is False
 
     # The only virsh call should be snapshot-create-as; revert must NOT fire.
-    verbs = [cmd[1] for cmd in captured if cmd[0] == "virsh"]
+    verbs = [
+        verb
+        for cmd in captured
+        if cmd and cmd[0] == "virsh"
+        for verb in ("snapshot-create-as", "snapshot-revert")
+        if verb in cmd
+    ]
     assert "snapshot-create-as" in verbs
     assert "snapshot-revert" not in verbs
     event_names = [evt["event"] for evt in mgr.events]
@@ -229,6 +244,49 @@ def test_missing_binaries_dry_run(monkeypatch):
         "snapshot_created",
         "snapshot_reverted",
     ]
+
+
+@pytest.mark.unit
+def test_strict_libvirt_snapshot_rejects_create_failure(monkeypatch):
+    profile = _profile(provider_hint="libvirt", config={"domain": "dom-strict"})
+    monkeypatch.setattr(sm_module.shutil, "which", lambda _name: "/usr/bin/virsh")
+    monkeypatch.setattr(
+        sm_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _Completed(returncode=1, stderr="snapshot denied"),
+    )
+
+    mgr = SnapshotManager(profile, run_id="strict", strict=True)
+
+    with pytest.raises(RuntimeError, match="snapshot.*failed"), mgr.with_snapshot():
+        raise AssertionError("strict mode must fail before specimen execution")
+
+
+@pytest.mark.unit
+def test_strict_libvirt_snapshot_rejects_revert_failure(monkeypatch):
+    profile = _profile(provider_hint="libvirt", config={"domain": "dom-strict"})
+    monkeypatch.setattr(sm_module.shutil, "which", lambda _name: "/usr/bin/virsh")
+
+    def fake_run(cmd, **_kwargs):
+        if "snapshot-revert" in cmd:
+            return _Completed(returncode=1, stderr="revert denied")
+        return _Completed(returncode=0, stdout="ok")
+
+    monkeypatch.setattr(sm_module.subprocess, "run", fake_run)
+    mgr = SnapshotManager(profile, run_id="strict-revert", strict=True)
+
+    with pytest.raises(RuntimeError, match="revert.*failed"), mgr.with_snapshot():
+        pass
+
+
+@pytest.mark.unit
+def test_strict_snapshot_rejects_no_revert_escape_hatch(monkeypatch):
+    monkeypatch.setenv("SHESHNAAG_SNAPSHOT_NO_REVERT", "1")
+    profile = _profile(provider_hint="libvirt", config={"domain": "dom-strict"})
+    mgr = SnapshotManager(profile, run_id="strict-no-revert", strict=True)
+
+    with pytest.raises(RuntimeError, match="revert cannot be disabled"), mgr.with_snapshot():
+        pass
 
 
 @pytest.mark.unit

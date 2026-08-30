@@ -116,6 +116,24 @@ def test_pe_launcher_libvirt_path(tmp_path):
 
 
 @pytest.mark.unit
+def test_pe_launcher_rejects_conflicting_domain_names(tmp_path):
+    launcher = PeLauncher()
+    inputs = _make_inputs(
+        tmp_path,
+        profile=SimpleNamespace(
+            config={
+                "domain": "win-proof",
+                "vm_name": "different-guest",
+                "detonation_timeout_s": 5,
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="domain"):
+        launcher.launch(**inputs)
+
+
+@pytest.mark.unit
 def test_pe_launcher_dry_run_when_no_binaries(tmp_path):
     launcher = PeLauncher()
     inputs = _make_inputs(tmp_path)

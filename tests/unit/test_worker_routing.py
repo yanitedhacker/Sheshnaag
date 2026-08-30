@@ -74,6 +74,19 @@ def test_non_execute_run_needs_no_worker():
     assert required == frozenset()
 
 
+def test_persisted_run_requirements_use_saved_manifest_contract():
+    requirements = _requirements_module()
+    run = SimpleNamespace(
+        provider="libvirt",
+        launch_mode="execute",
+        manifest={"v3_context": {"analysis_mode": "malware_detonation"}},
+    )
+
+    assert requirements.required_worker_capabilities_for_run(run) == frozenset(
+        {"linux", "kvm", "libvirt", "pcap", "zeek", "secure-mode"}
+    )
+
+
 def test_routing_uses_versioned_streams_and_one_consumer_group():
     routing = _routing_module()
 
@@ -137,6 +150,37 @@ def test_compatible_worker_accepts_current_routing_version():
     }
 
     routing.assert_worker_can_process(message, capabilities)
+
+
+def test_queue_requirements_must_equal_persisted_run_requirements():
+    routing = _routing_module()
+    message = {
+        "routing_version": 1,
+        "required_capabilities": ["docker"],
+    }
+    persisted = {"linux", "kvm", "libvirt", "pcap", "zeek", "secure-mode"}
+
+    with pytest.raises(routing.WorkerRequirementMismatch):
+        routing.assert_message_matches_persisted_requirements(
+            message,
+            persisted,
+            {"docker"},
+        )
+
+
+def test_queue_requirements_accept_exact_persisted_contract():
+    routing = _routing_module()
+    persisted = {"linux", "kvm", "libvirt", "pcap", "zeek", "secure-mode"}
+    message = {
+        "routing_version": 1,
+        "required_capabilities": sorted(persisted),
+    }
+
+    routing.assert_message_matches_persisted_requirements(
+        message,
+        persisted,
+        persisted,
+    )
 
 
 def test_control_plane_enqueues_risky_run_on_provider_stream(monkeypatch):
@@ -271,5 +315,44 @@ def test_stale_pending_work_is_reclaimed_from_each_eligible_stream():
             45_000,
             "0-0",
             1,
+        )
+    ]
+
+
+def test_work_entry_lease_refreshes_pending_idle_time():
+    routing = _routing_module()
+    calls = []
+
+    class FakeClient:
+        def xclaim(
+            self,
+            stream,
+            group,
+            consumer,
+            min_idle_time,
+            message_ids,
+            *,
+            justid,
+        ):
+            calls.append(
+                (stream, group, consumer, min_idle_time, message_ids, justid)
+            )
+            return [message_ids[0]]
+
+    routing.refresh_work_entry_lease(
+        FakeClient(),
+        stream=routing.SANDBOX_STANDARD_WORK_STREAM,
+        consumer="worker-9",
+        entry_id=b"19-0",
+    )
+
+    assert calls == [
+        (
+            routing.SANDBOX_STANDARD_WORK_STREAM,
+            routing.SANDBOX_CONSUMER_GROUP,
+            "worker-9",
+            0,
+            [b"19-0"],
+            True,
         )
     ]

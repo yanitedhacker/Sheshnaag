@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+from typing import Any
 
 RISKY_ANALYSIS_MODES = frozenset(
     {"malware_detonation", "url_analysis", "email_analysis"}
@@ -48,3 +49,19 @@ def required_worker_capabilities(
 
     return STANDARD_WORKER_CAPABILITIES
 
+
+def required_worker_capabilities_for_run(run: Any) -> frozenset[str]:
+    """Derive requirements only from the saved run contract."""
+
+    manifest = dict(getattr(run, "manifest", None) or {})
+    v3_context = dict(manifest.get("v3_context") or {})
+    analysis_mode = str(
+        v3_context.get("analysis_mode")
+        or manifest.get("analysis_mode")
+        or "cve_validation"
+    )
+    return required_worker_capabilities(
+        provider=str(getattr(run, "provider", "") or ""),
+        launch_mode=str(getattr(run, "launch_mode", "") or ""),
+        analysis_mode=analysis_mode,
+    )

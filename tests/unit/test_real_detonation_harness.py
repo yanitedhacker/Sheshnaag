@@ -7,7 +7,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tests" / "e2e" / "test_real_detonation.sh"
 
@@ -36,11 +35,37 @@ def _fake_commands(tmp_path: Path) -> tuple[Path, Path]:
             """,
         )
     _write_executable(
+        bin_dir / "git",
+        r"""
+        #!/usr/bin/env bash
+        case " $* " in
+          *" status --porcelain "*)
+            if [[ "${FAKE_GIT_DIRTY:-0}" == "1" ]]; then
+              printf '%s\n' ' M app/main.py'
+            fi
+            ;;
+          *" rev-parse --show-toplevel "*)
+            printf '%s\n' "${FAKE_REPO_ROOT}"
+            ;;
+          *" rev-parse HEAD "*)
+            printf '%040d\n' 0
+            ;;
+          *)
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    _write_executable(
         bin_dir / "curl",
         r"""
         #!/usr/bin/env bash
         url=""
         for arg in "$@"; do
+          if [[ -n "${SHESHNAAG_ACCESS_TOKEN:-}" && "$arg" == *"${SHESHNAAG_ACCESS_TOKEN}"* ]]; then
+            printf '%s\n' 'access token appeared in curl argv' >&2
+            exit 92
+          fi
           case "$arg" in
             http://*|https://*) url="$arg" ;;
           esac
@@ -50,7 +75,7 @@ def _fake_commands(tmp_path: Path) -> tuple[Path, Path]:
             printf '%s\n' '{"api":"ok","lab_deps":{"kvm":"ok","virsh":"ok","zeek":"ok"},"detonation_runtime":{"egress_enforce":"on","pcap":"on"}}'
             ;;
           */api/specimens/upload)
-            printf '%s\n' '{"id":11,"latest_revision":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+            printf '%s\n' "{\"id\":11,\"latest_revision\":{\"sha256\":\"${FAKE_SPECIMEN_SHA:-275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f}\"}}"
             ;;
           */api/analysis-cases)
             printf '%s\n' '{"id":21}'
@@ -91,6 +116,8 @@ def _run_harness(
     kvm_exists: bool = True,
     sse_complete: bool = True,
     retain_output: bool = False,
+    git_dirty: bool = False,
+    specimen_sha_matches: bool = True,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     bin_dir, kvm = _fake_commands(tmp_path)
     output_dir = tmp_path / "proof"
@@ -104,6 +131,13 @@ def _run_harness(
             "SHESHNAAG_TIMEOUT": "2",
             "SHESHNAAG_KVM_DEVICE": str(kvm if kvm_exists else tmp_path / "missing-kvm"),
             "FAKE_SSE_COMPLETE": "1" if sse_complete else "0",
+            "FAKE_GIT_DIRTY": "1" if git_dirty else "0",
+            "FAKE_REPO_ROOT": str(ROOT),
+            "FAKE_SPECIMEN_SHA": (
+                "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f"
+                if specimen_sha_matches
+                else "b" * 64
+            ),
         }
     )
     if token is None:
@@ -155,6 +189,20 @@ def test_missing_sse_completion_is_a_hard_failure(tmp_path):
 
     assert result.returncode == 1
     assert "run_completed" in result.stdout
+
+
+def test_dirty_worktree_fails_before_any_api_mutation(tmp_path):
+    result, _ = _run_harness(tmp_path, git_dirty=True)
+
+    assert result.returncode == 2
+    assert "clean" in result.stdout.lower()
+
+
+def test_uploaded_specimen_digest_must_match_local_bytes(tmp_path):
+    result, _ = _run_harness(tmp_path, specimen_sha_matches=False)
+
+    assert result.returncode == 1
+    assert "sha-256" in result.stdout.lower()
 
 
 def test_complete_flow_writes_commit_bound_checksum_manifest(tmp_path):
