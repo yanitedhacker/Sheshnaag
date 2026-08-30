@@ -77,4 +77,3 @@ Automated tests execute the script against controlled fake command binaries.
 They prove that missing credentials, demo tenant use, missing KVM, and missing
 completion evidence fail, and that the complete current-API flow succeeds.
 The real Linux/KVM run remains an external qualification gate.
-

@@ -65,4 +65,3 @@ class TenantAuthorizationContextMiddleware(BaseHTTPMiddleware):
 
         with bind_request_token(token_data):
             return await call_next(request)
-

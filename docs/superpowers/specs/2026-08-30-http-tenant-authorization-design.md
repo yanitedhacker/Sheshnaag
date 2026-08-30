@@ -70,4 +70,3 @@ Integration tests will use a small FastAPI application with the middleware and
 real SQLAlchemy rows. They will prove missing-token denial, cross-tenant denial,
 read-only-role denial on write, authorized write success, and public demo read
 compatibility.
-
