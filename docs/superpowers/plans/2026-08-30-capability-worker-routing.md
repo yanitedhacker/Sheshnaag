@@ -32,7 +32,8 @@
 - Produces: `stream_for_requirements(required: Collection[str]) -> str`
 - Produces: `streams_for_worker(capabilities: Collection[str]) -> dict[str, str]`
 - Produces: `assert_worker_can_process(message: Mapping[str, Any], capabilities: Collection[str]) -> None`
-- Produces: `SANDBOX_CONSUMER_GROUP`, `SANDBOX_STANDARD_WORK_STREAM`, and `SANDBOX_DETONATION_WORK_STREAM`
+- Produces: `SANDBOX_CONSUMER_GROUP`, `SANDBOX_STANDARD_WORK_STREAM`,
+  `SANDBOX_LIBVIRT_WORK_STREAM`, and `SANDBOX_LIMA_WORK_STREAM`
 
 - [ ] **Step 1: Write failing pure-function tests**
 
@@ -75,7 +76,7 @@ Run the command from Step 2. Expected: all routing tests pass.
 
 - [ ] **Step 1: Add failing enqueue and consumer tests**
 
-Prove that a risky stored run publishes to the detonation stream with the full
+Prove that a risky stored run publishes to its provider stream with the full
 literal capability list, both worker entry points use the canonical group, an
 incompatible worker raises before `SessionLocal` is called, and a compatible
 worker reaches the handler.

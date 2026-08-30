@@ -28,6 +28,7 @@ import multiprocessing as mp
 import os
 import signal
 import time
+from collections.abc import Collection
 from typing import Any
 
 import redis
@@ -35,12 +36,20 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.event_bus import SANDBOX_WORK_STREAM, EventBus, run_event_stream
+from app.core.event_bus import EventBus, run_event_stream
 from app.core.time import utc_now
-from app.models.sheshnaag import LabRun, RunEvent
+from app.models.sheshnaag import EvidenceArtifact, LabRun, RunEvent
 from app.models.v2 import Tenant
 from app.services.malware_lab_service import MalwareLabService
 from app.services.sheshnaag_service import SheshnaagService
+from app.workers.routing import (
+    SANDBOX_CONSUMER_GROUP,
+    assert_worker_can_process,
+    claim_stale_work_rows,
+    ensure_consumer_groups,
+    normalize_capabilities,
+    streams_for_worker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +120,25 @@ def _record_event(
     )
 
 
-def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None) -> dict[str, Any]:
+def configured_worker_capabilities() -> frozenset[str]:
+    """Return the explicit capability set for this worker process."""
+
+    raw = os.getenv("SHESHNAAG_WORKER_CAPABILITIES", "docker")
+    return normalize_capabilities(raw.split(","))
+
+
+def process_sandbox_work(
+    message: dict[str, Any],
+    *,
+    bus: EventBus | None = None,
+    worker_capabilities: Collection[str] | None = None,
+) -> dict[str, Any]:
+    capabilities = (
+        configured_worker_capabilities()
+        if worker_capabilities is None
+        else normalize_capabilities(worker_capabilities)
+    )
+    assert_worker_can_process(message, capabilities)
     bus = bus or EventBus()
     run_id = int(message["run_id"])
     tenant_id = int(message["tenant_id"])
@@ -123,6 +150,34 @@ def process_sandbox_work(message: dict[str, Any], *, bus: EventBus | None = None
         tenant = session.query(Tenant).filter(Tenant.id == tenant_id).first()
         if run is None or tenant is None:
             raise ValueError("run_or_tenant_not_found")
+
+        if run.state == "completed":
+            evidence_rows = (
+                session.query(EvidenceArtifact)
+                .filter(EvidenceArtifact.run_id == run.id)
+                .all()
+            )
+            worker_execution = dict((run.manifest or {}).get("worker_execution") or {})
+            live_evidence_count = sum(
+                1
+                for item in evidence_rows
+                if str(
+                    (item.payload or {}).get("collection_state")
+                    or ((item.payload or {}).get("collector_health") or {}).get("status")
+                    or ""
+                ).lower()
+                in {"live", "ok"}
+            )
+            return {
+                "run_id": run_id,
+                "status": "completed",
+                "result": {
+                    "state": "completed",
+                    "evidence_count": len(evidence_rows),
+                    "live_evidence_count": live_evidence_count,
+                    "cleanup_state": worker_execution.get("cleanup_state"),
+                },
+            }
 
         run.started_at = run.started_at or utc_now()
         started = _event(
@@ -206,14 +261,14 @@ def _install_signal_handlers() -> None:
             pass
 
 
-def _read_work_rows(client, *, group: str, consumer: str) -> list:
+def _read_work_rows(client, *, group: str, consumer: str, streams: dict[str, str]) -> list:
     """Read one queue item without crashing when an idle poll times out."""
 
     try:
         return client.xreadgroup(
             group,
             consumer,
-            {SANDBOX_WORK_STREAM: ">"},
+            streams,
             block=_WORK_READ_BLOCK_MS,
             count=1,
         )
@@ -231,31 +286,43 @@ def run_forever(*, max_messages: int | None = None) -> None:
     if client is None:
         raise RuntimeError("Redis is required for the sandbox worker")
 
-    group = os.getenv("SHESHNAAG_SANDBOX_CONSUMER_GROUP", "sandbox-workers")
+    capabilities = configured_worker_capabilities()
+    streams = streams_for_worker(capabilities)
+    if not streams:
+        raise RuntimeError("Worker has no complete capability set for any work stream")
+
+    group = SANDBOX_CONSUMER_GROUP
     consumer = os.getenv("SHESHNAAG_SANDBOX_CONSUMER_NAME", f"sandbox-worker-{os.getpid()}")
-    try:
-        client.xgroup_create(SANDBOX_WORK_STREAM, group, id="0-0", mkstream=True)
-    except redis.ResponseError as exc:
-        if "BUSYGROUP" not in str(exc):
-            raise
+    ensure_consumer_groups(client, streams)
 
     logger.info(
-        "sandbox worker consuming %s group=%s consumer=%s", SANDBOX_WORK_STREAM, group, consumer
+        "sandbox worker consuming %s group=%s consumer=%s",
+        sorted(streams),
+        group,
+        consumer,
     )
     processed = 0
     while not _SHUTDOWN:
-        rows = _read_work_rows(client, group=group, consumer=consumer)
+        rows = _read_work_rows(client, group=group, consumer=consumer, streams=streams)
         if not rows:
-            time.sleep(0.05)
-            continue
-        for _, messages in rows:
+            rows = claim_stale_work_rows(client, streams, consumer=consumer)
+            if not rows:
+                time.sleep(0.05)
+                continue
+        for stream_name, messages in rows:
+            if isinstance(stream_name, bytes):
+                stream_name = stream_name.decode("utf-8")
             for entry_id, fields in messages:
                 try:
-                    process_sandbox_work(_decode_message(fields), bus=bus)
+                    process_sandbox_work(
+                        _decode_message(fields),
+                        bus=bus,
+                        worker_capabilities=capabilities,
+                    )
                 except Exception:
                     logger.exception("leaving failed sandbox work message pending: %s", entry_id)
                     continue
-                client.xack(SANDBOX_WORK_STREAM, group, entry_id)
+                client.xack(stream_name, group, entry_id)
                 processed += 1
                 if max_messages is not None and processed >= max_messages:
                     return

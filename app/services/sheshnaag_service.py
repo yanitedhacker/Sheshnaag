@@ -34,6 +34,7 @@ from app.lab.docker_kali_provider import (
     DEFAULT_OSQUERY_IMAGE,
 )
 from app.lab.image_catalog import list_image_catalog, resolve_catalog_entry
+from app.lab.execution_requirements import RISKY_ANALYSIS_MODES, SECURE_PROVIDER_NAMES
 from app.lab.interfaces import (
     HealthStatus,
     ProviderResult,
@@ -341,8 +342,10 @@ class SheshnaagService:
             raise ValueError(f"Unsupported provider '{provider_name}'.")
         execution_policy = content.get("execution_policy") or {}
         secure_mode_required = bool(execution_policy.get("secure_mode_required"))
-        if secure_mode_required and provider_name != "lima":
-            raise ValueError("This recipe requires secure mode and must use the Lima provider.")
+        if secure_mode_required and provider_name not in SECURE_PROVIDER_NAMES:
+            raise ValueError(
+                "This recipe requires secure mode and must use a secure provider: lima or libvirt."
+            )
         allowed_modes = execution_policy.get("allowed_modes") or ["dry_run", "simulated", "execute"]
         if launch_mode not in allowed_modes:
             raise ValueError(f"Launch mode '{launch_mode}' is not allowed for this recipe.")
@@ -390,15 +393,32 @@ class SheshnaagService:
         )
 
     def _enqueue_sandbox_work(self, *, run: LabRun, tenant: Tenant, actor: str) -> str:
-        from app.core.event_bus import SANDBOX_WORK_STREAM, EventBus
+        from app.core.event_bus import EventBus
+        from app.lab.execution_requirements import required_worker_capabilities
+        from app.workers.routing import ROUTING_VERSION, stream_for_requirements
+
+        manifest = dict(run.manifest or {})
+        v3_context = dict(manifest.get("v3_context") or {})
+        analysis_mode = str(
+            v3_context.get("analysis_mode")
+            or manifest.get("analysis_mode")
+            or "cve_validation"
+        )
+        required = required_worker_capabilities(
+            provider=run.provider,
+            launch_mode=run.launch_mode,
+            analysis_mode=analysis_mode,
+        )
 
         return EventBus().publish(
-            SANDBOX_WORK_STREAM,
+            stream_for_requirements(required),
             {
                 "run_id": run.id,
                 "tenant_id": tenant.id,
                 "actor": actor,
                 "correlation_id": uuid.uuid4().hex,
+                "required_capabilities": sorted(required),
+                "routing_version": ROUTING_VERSION,
             },
         )
 
@@ -458,13 +478,14 @@ class SheshnaagService:
             ai_assist_enabled=ai_assist_enabled,
             ai_provider_hint=ai_provider_hint,
         )
-        risky_modes = {"malware_detonation", "url_analysis", "email_analysis"}
         if (
-            resolved["analysis_mode"] in risky_modes
-            and resolved["resolved_provider_name"] != "lima"
+            resolved["analysis_mode"] in RISKY_ANALYSIS_MODES
+            and resolved["resolved_provider_name"] not in SECURE_PROVIDER_NAMES
             and launch_mode in {"simulated", "execute"}
         ):
-            raise ValueError("Risky malware analysis modes require the Lima provider.")
+            raise ValueError(
+                "Risky malware analysis modes require a secure provider: lima or libvirt."
+            )
         return resolved
 
     def _persist_v3_run_context(self, run: LabRun, *, v3_context: dict[str, Any]) -> None:

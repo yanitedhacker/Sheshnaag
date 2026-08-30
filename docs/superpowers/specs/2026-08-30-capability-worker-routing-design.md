@@ -19,11 +19,15 @@ Linux installer and beta health contract require KVM, libvirt, and `virsh`.
 
 ## Queue contract
 
-Use two streams and one canonical group name:
+Use three streams and one canonical group name:
 
 - `sheshnaag:sandbox:work:standard` for ordinary queued execution;
-- `sheshnaag:sandbox:work:detonation` for execute-mode risky analysis;
-- `sheshnaag:sandbox:workers:v1` as the consumer group on both streams.
+- `sheshnaag:sandbox:work:detonation:libvirt` for Libvirt risky analysis;
+- `sheshnaag:sandbox:work:detonation:lima` for Lima risky analysis;
+- `sheshnaag:sandbox:workers:v1` as the consumer group on all streams.
+
+The secure providers use separate streams. This prevents Redis from assigning
+a Lima job to a Libvirt-only worker, or a Libvirt job to a Lima-only worker.
 
 Every message includes a sorted `required_capabilities` list and a
 `routing_version` value of `1`. The control plane derives this list from the

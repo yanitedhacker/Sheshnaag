@@ -13,6 +13,7 @@ from typing import Any
 import redis
 
 from app.core.config import settings
+from app.workers.routing import SANDBOX_STANDARD_WORK_STREAM
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,9 @@ def sandbox_return_stream(run_id: int) -> str:
     return f"sheshnaag:sandbox:returns:{run_id}"
 
 
-SANDBOX_WORK_STREAM = "sheshnaag:sandbox:work"
+# Source-compatible alias. New publishers and consumers use the versioned
+# standard or detonation streams from ``app.workers.routing``.
+SANDBOX_WORK_STREAM = SANDBOX_STANDARD_WORK_STREAM
 
 
 def build_tls_redis_client(

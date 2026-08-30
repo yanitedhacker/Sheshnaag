@@ -215,6 +215,7 @@ services:
       SHESHNAAG_ENABLE_PCAP: ${SHESHNAAG_ENABLE_PCAP:-0}
       SHESHNAAG_REQUIRE_MEMORY_DUMP: ${SHESHNAAG_REQUIRE_MEMORY_DUMP:-0}
       SHESHNAAG_SANDBOX_WORKER_CONCURRENCY: ${SHESHNAAG_SANDBOX_WORKER_CONCURRENCY:-2}
+      SHESHNAAG_WORKER_CAPABILITIES: ${SHESHNAAG_WORKER_CAPABILITIES:-docker}
     healthcheck:
       test: ["CMD", "python", "-m", "app.workers.sandbox_worker", "--healthcheck"]
       interval: 30s
